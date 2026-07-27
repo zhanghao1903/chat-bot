@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 _CHAT_ID_RE = re.compile(r"^-?[0-9]+$")
+_TELEGRAM_TOKEN_RE = re.compile(r"^[0-9]+:[A-Za-z0-9_-]+$")
 _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 
 
@@ -23,6 +24,15 @@ def _required(env: Mapping[str, str], name: str) -> str:
     if not value:
         raise ConfigError(name, "is required")
     return value
+
+
+def _telegram_token(env: Mapping[str, str]) -> str:
+    token = env.get("TELEGRAM_BOT_TOKEN", "")
+    if not token:
+        raise ConfigError("TELEGRAM_BOT_TOKEN", "is required")
+    if not _TELEGRAM_TOKEN_RE.fullmatch(token):
+        raise ConfigError("TELEGRAM_BOT_TOKEN", "has an invalid format")
+    return token
 
 
 def _integer(
@@ -57,7 +67,7 @@ class Settings:
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
         env = os.environ if environ is None else environ
-        token = _required(env, "TELEGRAM_BOT_TOKEN")
+        token = _telegram_token(env)
         chat_id = _required(env, "TELEGRAM_CHAT_ID")
         if not _CHAT_ID_RE.fullmatch(chat_id) or int(chat_id) >= 0:
             raise ConfigError("TELEGRAM_CHAT_ID", "must be a negative group chat integer")

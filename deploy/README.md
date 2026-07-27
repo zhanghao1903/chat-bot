@@ -22,6 +22,8 @@
 4. 取得目标群的带符号数字 ID。
 
 不要把 token 贴到 Issue、PR、日志或命令输出中。
+服务会在联网前校验 BotFather token 结构；空白、控制字符或 URL
+不安全字符会触发不回显原值的 `configuration_error`。
 
 ## 首次启动
 
@@ -82,7 +84,7 @@ TELEGRAM_BOT_ENV_FILE=/secure/path/telegram-bot.env deploy/manage.sh start
 - `configuration_error`：补齐或修正 `.env`，再执行 `restart`。
 - `telegram_startup_failed`：检查 token、网络和 Telegram 服务，再执行 `restart`。
 - 启动成功但收不到普通文本：检查 bot 是否在正确群中，以及 privacy mode/群权限。
-- `poll_failed`：服务会按配置等待并重试；持续失败时检查网络。
+- `poll_failed`：连接失败或响应体读取超时后，服务会按配置等待并重试；持续失败时检查网络。
 - `reply_failed`：失败已记录且不会无限重发；修复 Telegram 权限或网络后，用新消息重新验证。
 - SQLite 错误：检查 volume 可写性和磁盘容量。
 

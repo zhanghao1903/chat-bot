@@ -4,12 +4,15 @@ import unittest
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Self
+from unittest.mock import patch
 
 from group_llm_agent.delivery import SQLiteDeliveryLedger
 from group_llm_agent.events import TelegramTextMessage
 from group_llm_agent.platforms.telegram import (
     TelegramAdapter,
     TelegramApiError,
+    TelegramBotApiClient,
 )
 from group_llm_agent.runtime import (
     FIXED_REPLY_ACTION,
@@ -39,6 +42,17 @@ class FakeTelegramClient:
         if reply_to_message_id in self.fail_message_ids:
             raise TelegramApiError("sendMessage", "transport_error")
         self.sent.append((chat_id, text, reply_to_message_id))
+
+
+class _BodyReadTimeoutResponse:
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        raise TimeoutError("response body timed out")
 
 
 class FixedReplyProcessorTests(unittest.TestCase):
@@ -189,6 +203,39 @@ class TelegramPollingServiceTests(unittest.TestCase):
                 service.run_forever()
 
             self.assertEqual(client.get_updates_calls, 2)
+            self.assertEqual(sleeps, [2.0])
+            store.close()
+
+    def test_response_body_timeout_follows_polling_retry_path(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            client = TelegramBotApiClient("123456:test-token")
+            store = _store(Path(tmpdir) / "ledger.sqlite3")
+            sleeps: list[float] = []
+            processor = FixedReplyProcessor(
+                allowed_chat_id="-1001",
+                bot_user_id="bot-7",
+                client=client,
+                store=store,
+            )
+            service = TelegramPollingService(
+                client=client,
+                adapter=TelegramAdapter(),
+                processor=processor,
+                polling_timeout_seconds=25,
+                retry_delay_seconds=2,
+                sleep=sleeps.append,
+            )
+
+            with (
+                patch(
+                    "urllib.request.urlopen",
+                    side_effect=[_BodyReadTimeoutResponse(), KeyboardInterrupt],
+                ) as urlopen,
+                self.assertRaises(KeyboardInterrupt),
+            ):
+                service.run_forever()
+
+            self.assertEqual(urlopen.call_count, 2)
             self.assertEqual(sleeps, [2.0])
             store.close()
 

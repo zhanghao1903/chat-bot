@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -34,22 +35,29 @@ class TelegramBotApiClient:
     ) -> Any:
         data = None
         headers = {}
-        url = f"{self.base_url}/{method}"
         if payload is not None:
             data = json.dumps(payload).encode("utf-8")
             headers["Content-Type"] = "application/json"
-        request = urllib.request.Request(url, data=data, headers=headers, method="POST")
         try:
+            url = f"{self.base_url}/{method}"
+            request = urllib.request.Request(url, data=data, headers=headers, method="POST")
             with urllib.request.urlopen(
                 request,
                 timeout=timeout_seconds or self.timeout_seconds,
             ) as response:
-                body = response.read().decode("utf-8")
+                raw_body = response.read()
         except urllib.error.HTTPError as exc:
-            raise TelegramApiError(method, "http_error", exc.code) from exc
-        except urllib.error.URLError as exc:
-            raise TelegramApiError(method, "transport_error") from exc
+            raise TelegramApiError(method, "http_error", exc.code) from None
+        except urllib.error.URLError:
+            raise TelegramApiError(method, "transport_error") from None
+        except (http.client.InvalidURL, ValueError):
+            raise TelegramApiError(method, "invalid_url") from None
+        except TimeoutError:
+            raise TelegramApiError(method, "timeout") from None
+        except (http.client.HTTPException, OSError):
+            raise TelegramApiError(method, "transport_error") from None
         try:
+            body = raw_body.decode("utf-8")
             parsed = json.loads(body)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise TelegramApiError(method, "invalid_json") from exc

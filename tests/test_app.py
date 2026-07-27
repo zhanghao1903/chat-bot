@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -37,6 +39,21 @@ class AppTests(unittest.TestCase):
     def test_missing_configuration_returns_non_zero(self) -> None:
         self.assertEqual(run({}), 2)
 
+    def test_unsafe_token_startup_output_never_exposes_token(self) -> None:
+        token = "123456:bad token"
+        environment = {
+            "TELEGRAM_BOT_TOKEN": token,
+            "TELEGRAM_CHAT_ID": "-1001",
+        }
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            result = run(environment)
+
+        self.assertEqual(result, 2)
+        self.assertIn("TELEGRAM_BOT_TOKEN", stderr.getvalue())
+        self.assertNotIn(token, stderr.getvalue())
+
     def test_verified_identity_can_start_and_shutdown_cleanly(self) -> None:
         with TemporaryDirectory() as tmpdir:
             result = run(
@@ -71,7 +88,7 @@ class AppTests(unittest.TestCase):
 
 def _environment(database_path: Path) -> dict[str, str]:
     return {
-        "TELEGRAM_BOT_TOKEN": "secret-token",
+        "TELEGRAM_BOT_TOKEN": "123456:test-token",
         "TELEGRAM_CHAT_ID": "-1001",
         "DATABASE_PATH": str(database_path),
     }

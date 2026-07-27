@@ -1,8 +1,9 @@
 # Verification: Telegram 群聊基础骨架 0.1
 
 - Lifecycle phase: F5 Verification, Examples, And Documentation
-- Status: Complete with explicitly deferred external smoke
+- Status: Complete with FINDING-001 remediated and explicitly deferred external smoke
 - Implementation snapshot: `6e01fec288439cd672df12dcdcbb0ff7bd5efe65`
+- Initial reviewed snapshot: `c5662b54d72769cc18157579f456f0ca7e8a3640`
 - Requirements snapshot: `dc620c1023a3cbadc5138036553ea8284f56ba70`
 - Verified: 2026-07-27
 
@@ -25,8 +26,8 @@ without a real secret.
 | Check | Result | Evidence |
 | --- | --- | --- |
 | Python compilation | PASS | `python3 -m compileall -q src tests` |
-| Clean scoped unit suite | PASS | `PYTHONPATH=src python3 -m unittest discover -s tests -v` — 23 tests |
-| Shared-checkout regression suite | PASS | Same command — 36 tests including pre-existing tests |
+| Clean scoped unit suite | PASS | `PYTHONPATH=src python3 -m unittest discover -s tests -v` — 28 tests |
+| Shared-checkout regression suite | PASS | Same command — 41 tests including pre-existing tests |
 | Ruff lint | PASS | `uv run --with ruff ruff check <scoped files>` |
 | Ruff formatting | PASS | `uv run --with ruff ruff format --check <scoped files>` |
 | Static typing | PASS | Mypy on the seven runtime modules |
@@ -41,6 +42,26 @@ without a real secret.
 The unavailable Docker and Telegram proofs are environmental limitations. They
 do not conceal a failing automated check.
 
+## Review Remediation
+
+`FINDING-001` from review dispatch
+`2e70ef2c1c9c85783c48e2d038fcc8d4ccc7cb888fbeb5424ab106551136cb1c`
+was reproduced and remediated:
+
+- startup rejects Bot API tokens containing whitespace, control characters, or
+  other characters outside the validated BotFather token shape;
+- configuration diagnostics name only `TELEGRAM_BOT_TOKEN` and a safe reason;
+- request construction, `urlopen`, context-entry, and response-body transport
+  failures become redacted `TelegramApiError` categories with suppressed
+  exception context;
+- `InvalidURL` and response-body `TimeoutError` have direct regression tests;
+- captured startup output proves the complete unsafe test token is absent; and
+- a real `TelegramBotApiClient` body-read timeout enters
+  `TelegramPollingService`'s configured wait-and-retry path.
+
+The remediation is locally verified and requires independent re-review of the
+new PR head before merge.
+
 ## Requirement Evidence
 
 | ID | Evidence | Status |
@@ -51,7 +72,7 @@ do not conceal a failing automated check.
 | REQ-004 | Runtime test asserts exact `1` sends reply `1` tied to message `10` | PASS |
 | REQ-005 | Runtime test asserts ` 1` and other-group text are silent | PASS |
 | REQ-006 | Self/bot filters plus same-process and reopened-ledger replay tests | PASS |
-| REQ-007 | Safe config errors, redacted Bot API failures, non-bot identity rejection, poll retry test | PASS |
+| REQ-007 | Unsafe-token rejection, captured redacted startup output, redacted request/open/read failures, non-bot identity rejection, and body-timeout polling retry | PASS |
 | REQ-008 | Malformed update followed by valid update still sends the valid reply | PASS |
 | REQ-009 | Clean snapshot has a top-level `deploy/` separate from `src/` | PASS |
 | REQ-010 | All new service/deployment assets are under `deploy/` | PASS |
@@ -67,7 +88,7 @@ do not conceal a failing automated check.
 | AC-003 | Exact-trigger runtime test asserts one `sendMessage` reply to the original message | PASS |
 | AC-004 | Whitespace/unmatched-text test asserts no send | PASS |
 | AC-005 | Bot-authored update and explicit authenticated-bot sender both remain silent | PASS |
-| AC-006 | Invalid token/identity exits non-zero; redacted polling failure waits then retries | PASS |
+| AC-006 | Unsafe/invalid token or identity exits non-zero; redacted body-read timeout waits then retries | PASS |
 | AC-007 | Malformed update does not block the following valid update | PASS |
 | AC-008 | Clean-snapshot file inventory and Compose render prove the deployment asset boundary | PASS |
 | AC-009 | Deployment README provides purpose, external configuration, and management commands | PASS |

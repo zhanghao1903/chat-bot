@@ -50,7 +50,7 @@ Environment
 
 | Variable | Required | Contract |
 | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | yes | Non-empty secret supplied only at runtime. It is never logged. |
+| `TELEGRAM_BOT_TOKEN` | yes | BotFather token in numeric-prefix/colon/URL-safe-secret form, supplied only at runtime. Unsafe whitespace and control characters are rejected without echoing the value. |
 | `TELEGRAM_CHAT_ID` | yes | Negative integer identifying the one allowed group/supergroup. |
 | `DATABASE_PATH` | no | Defaults to `data/telegram_bot.sqlite3`. |
 | `TELEGRAM_POLLING_TIMEOUT_SECONDS` | no | Integer `1..50`, default `25`. |
@@ -74,7 +74,9 @@ the invalid setting without echoing its secret value.
   matches; `" 1"`, `"1 "`, captions, and non-text media do not match.
 - Reply contract: `sendMessage` uses `reply_parameters.message_id` so the fixed
   response is visibly tied to the triggering message.
-- Token safety: transport exceptions never include the Bot API URL or token.
+- Token safety: request construction, connection, and response-body failures are
+  translated to stable `TelegramApiError` categories without exposing the Bot
+  API URL or token, including in rendered exception tracebacks.
 
 ## State And Idempotency
 
@@ -118,8 +120,9 @@ logs and deterministic tests.
 11. Send reply `1`, then mark `sent`.
 12. On send failure, mark `failed`, log a redacted error, and continue with the
     next update.
-13. On polling transport failure, log a redacted error, wait the configured
-    bounded delay, and retry until the process is stopped.
+13. On polling transport failure, including a response-body timeout, log a
+    redacted error, wait the configured bounded delay, and retry until the
+    process is stopped.
 
 The offset is advanced for malformed updates so a poison update cannot
 permanently stop later valid messages.

@@ -29,7 +29,7 @@ def run(
     try:
         settings = Settings.from_env(environ)
     except ConfigError as exc:
-        logging.basicConfig(level=logging.INFO, format=_log_format())
+        logging.basicConfig(level=logging.INFO, format=_log_format(), force=True)
         logger.error("configuration_error setting=%s detail=%s", exc.setting, exc)
         return 2
 

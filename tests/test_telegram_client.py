@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import http.client
 import json
+import traceback
 import unittest
 import urllib.error
 from typing import Self
@@ -23,9 +25,14 @@ class _Response:
         return json.dumps(self.payload).encode("utf-8")
 
 
+class _BodyReadTimeoutResponse(_Response):
+    def read(self) -> bytes:
+        raise TimeoutError("response body timed out")
+
+
 class TelegramBotApiClientTests(unittest.TestCase):
     def test_get_me_returns_valid_result(self) -> None:
-        client = TelegramBotApiClient("secret-token")
+        client = TelegramBotApiClient("123456:test-token")
         with patch(
             "urllib.request.urlopen",
             return_value=_Response(
@@ -37,7 +44,7 @@ class TelegramBotApiClientTests(unittest.TestCase):
         self.assertEqual(identity["id"], 7)
 
     def test_get_updates_requests_only_message_updates(self) -> None:
-        client = TelegramBotApiClient("secret-token")
+        client = TelegramBotApiClient("123456:test-token")
         with patch(
             "urllib.request.urlopen",
             return_value=_Response({"ok": True, "result": []}),
@@ -65,8 +72,46 @@ class TelegramBotApiClientTests(unittest.TestCase):
         self.assertEqual(caught.exception.category, "transport_error")
         self.assertNotIn(token, str(caught.exception))
 
+    def test_invalid_url_is_translated_without_exposing_token(self) -> None:
+        token = "123456:bad token"
+        client = TelegramBotApiClient(token)
+        caught_error: TelegramApiError | None = None
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=http.client.InvalidURL(
+                f"URL contains token https://api.telegram.org/bot{token}/getMe"
+            ),
+        ):
+            try:
+                client.get_me()
+            except TelegramApiError as exc:
+                caught_error = exc
+                rendered_traceback = traceback.format_exc()
+            else:
+                self.fail("TelegramApiError was not raised")
+
+        self.assertIsNotNone(caught_error)
+        self.assertEqual(caught_error.category, "invalid_url")
+        self.assertNotIn(token, str(caught_error))
+        self.assertNotIn(token, rendered_traceback)
+
+    def test_response_body_timeout_is_translated_without_exposing_token(self) -> None:
+        token = "123456:very-secret"
+        client = TelegramBotApiClient(token)
+        with (
+            patch(
+                "urllib.request.urlopen",
+                return_value=_BodyReadTimeoutResponse({"ok": True}),
+            ),
+            self.assertRaises(TelegramApiError) as caught,
+        ):
+            client.get_updates(offset=None, timeout_seconds=25)
+
+        self.assertEqual(caught.exception.category, "timeout")
+        self.assertNotIn(token, str(caught.exception))
+
     def test_api_error_does_not_include_response_description(self) -> None:
-        client = TelegramBotApiClient("secret-token")
+        client = TelegramBotApiClient("123456:test-token")
         with (
             patch(
                 "urllib.request.urlopen",
@@ -74,7 +119,7 @@ class TelegramBotApiClientTests(unittest.TestCase):
                     {
                         "ok": False,
                         "error_code": 401,
-                        "description": "Unauthorized secret-token",
+                        "description": "Unauthorized 123456:test-token",
                     }
                 ),
             ),
@@ -85,7 +130,7 @@ class TelegramBotApiClientTests(unittest.TestCase):
         self.assertEqual(
             str(caught.exception), "telegram_method=getMe category=api_error http_status=401"
         )
-        self.assertNotIn("secret-token", str(caught.exception))
+        self.assertNotIn("123456:test-token", str(caught.exception))
 
 
 if __name__ == "__main__":

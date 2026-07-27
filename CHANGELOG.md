@@ -11,6 +11,11 @@
 - Docker Compose deployment and service-management assets under `deploy/`.
 - Deterministic configuration, adapter, transport, runtime, storage, and startup tests.
 
+### Fixed
+
+- Reject unsafe Telegram token characters without echoing credentials in startup output.
+- Translate URL, connection, and response-body timeout failures into redacted polling errors that follow the configured retry path.
+
 ### Limitations
 
 - No LLM, moderation, media, private chat, multi-group UI, or message-content persistence.

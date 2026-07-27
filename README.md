@@ -66,7 +66,7 @@ PYTHONPATH=src python3 -m group_llm_agent
 
 | 变量 | 必需 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | 是 | 无 | 只在运行时提供，不得提交 |
+| `TELEGRAM_BOT_TOKEN` | 是 | 无 | BotFather token；仅运行时提供，不得提交；空白或控制字符会被安全拒绝 |
 | `TELEGRAM_CHAT_ID` | 是 | 无 | 唯一允许的群/超级群负数 ID |
 | `DATABASE_PATH` | 否 | `data/telegram_bot.sqlite3` | 最小投递去重账本 |
 | `TELEGRAM_POLLING_TIMEOUT_SECONDS` | 否 | `25` | `1..50` |
@@ -77,8 +77,8 @@ PYTHONPATH=src python3 -m group_llm_agent
 
 ## 失败与恢复
 
-- Token 无效或 Telegram 不可达：启动验证失败并输出经过脱敏的错误；修正配置或网络后重新启动。
-- 运行中拉取失败：记录脱敏错误，等待配置的秒数后继续拉取。
+- Token 格式无效、含危险字符或 Telegram 不可达：启动验证失败并输出经过脱敏的错误；修正配置或网络后重新启动。
+- 运行中请求创建、连接或响应体读取失败：记录脱敏错误，等待配置的秒数后继续拉取。
 - 单条更新无法解析：跳过该更新并继续后续更新。
 - 回复发送失败：在 SQLite 账本中标记 `failed`，继续处理后续消息，不自动无限重试。
 - 同一消息重复投递：唯一投递键阻止第二次回复。
@@ -92,7 +92,7 @@ python3 -m compileall -q src tests
 PYTHONPATH=src python3 -m unittest discover -s tests -v
 ```
 
-测试覆盖配置、Telegram 归一化、精确匹配、静默规则、自消息保护、跨重启去重、发送失败、错误脱敏和坏消息隔离。
+测试覆盖配置、危险 token 拒绝、Telegram 归一化、精确匹配、静默规则、自消息保护、跨重启去重、响应体超时重试、发送失败、错误脱敏和坏消息隔离。
 
 真实 Telegram smoke test 需要管理员提供运行时 token、目标群和权限，因此不会把凭据放进自动化测试。
 
