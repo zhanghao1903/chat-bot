@@ -39,9 +39,9 @@ Environment
 | Component | Responsibility | Must not do |
 | --- | --- | --- |
 | `config.py` | Parse and validate environment settings. | Contact Telegram or reveal the token. |
-| `models.py` | Define normalized group text and reply action values. | Contain transport or persistence logic. |
+| `events.py` | Define the normalized Telegram group-text value. | Contain transport or persistence logic. |
 | `platforms/telegram.py` | Call Bot API methods and normalize Telegram updates. | Decide whether text should receive a reply. |
-| `storage.py` | Persist a minimal delivery claim/status for at-most-once behavior. | Persist message text or bot credentials. |
+| `delivery.py` | Persist a minimal delivery claim/status for at-most-once behavior. | Persist message text or bot credentials. |
 | `runtime.py` | Enforce group, sender, exact-match, error-isolation, and delivery rules. | Invoke LLMs or respond to unmatched messages. |
 | `app.py` | Validate startup, build dependencies, and run bounded-retry long polling. | Report connected before `getMe` succeeds. |
 | `deploy/` | Package and operate the service with externalized configuration. | Contain production credentials or runtime data. |
@@ -51,7 +51,7 @@ Environment
 | Variable | Required | Contract |
 | --- | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | yes | Non-empty secret supplied only at runtime. It is never logged. |
-| `TELEGRAM_CHAT_ID` | yes | Non-zero signed integer identifying the one allowed group/supergroup. |
+| `TELEGRAM_CHAT_ID` | yes | Negative integer identifying the one allowed group/supergroup. |
 | `DATABASE_PATH` | no | Defaults to `data/telegram_bot.sqlite3`. |
 | `TELEGRAM_POLLING_TIMEOUT_SECONDS` | no | Integer `1..50`, default `25`. |
 | `TELEGRAM_RETRY_DELAY_SECONDS` | no | Integer `1..60`, default `2`. |
@@ -179,4 +179,3 @@ introduced.
 - D-004: use a minimal SQLite delivery ledger without message-content storage.
 - D-005: prefer at-most-once delivery over automatic retries that could duplicate replies.
 - D-006: package the service with Docker Compose and a small management script.
-

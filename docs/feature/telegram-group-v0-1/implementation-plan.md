@@ -10,7 +10,7 @@
 Files:
 
 - `src/group_llm_agent/config.py`
-- `src/group_llm_agent/models.py`
+- `src/group_llm_agent/events.py`
 - `src/group_llm_agent/platforms/telegram.py`
 - `tests/test_config.py`
 - `tests/test_telegram_adapter.py`
@@ -36,10 +36,10 @@ Proof:
 
 Files:
 
-- `src/group_llm_agent/storage.py`
+- `src/group_llm_agent/delivery.py`
 - `src/group_llm_agent/runtime.py`
 - `tests/test_runtime.py`
-- `tests/test_storage.py`
+- `tests/test_delivery.py`
 
 Changes:
 
@@ -158,4 +158,3 @@ A real Telegram group smoke requires an administrator-provided bot token,
 target group, and Telegram-side permissions. No credential is present in the
 repository. The implementation and deterministic transport tests can complete
 without it; the PR must state whether the real smoke remains an operator step.
-

@@ -1,0 +1,171 @@
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.request
+from datetime import UTC, datetime
+from typing import Any
+
+from group_llm_agent.events import TelegramTextMessage
+
+
+class TelegramApiError(RuntimeError):
+    """A redacted Bot API failure safe to include in logs."""
+
+    def __init__(self, method: str, category: str, status_code: int | None = None) -> None:
+        self.method = method
+        self.category = category
+        self.status_code = status_code
+        suffix = f" http_status={status_code}" if status_code is not None else ""
+        super().__init__(f"telegram_method={method} category={category}{suffix}")
+
+
+class TelegramBotApiClient:
+    def __init__(self, token: str, timeout_seconds: int = 30) -> None:
+        self.base_url = f"https://api.telegram.org/bot{token}"
+        self.timeout_seconds = timeout_seconds
+
+    def request(
+        self,
+        method: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        timeout_seconds: int | None = None,
+    ) -> Any:
+        data = None
+        headers = {}
+        url = f"{self.base_url}/{method}"
+        if payload is not None:
+            data = json.dumps(payload).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(url, data=data, headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(
+                request,
+                timeout=timeout_seconds or self.timeout_seconds,
+            ) as response:
+                body = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            raise TelegramApiError(method, "http_error", exc.code) from exc
+        except urllib.error.URLError as exc:
+            raise TelegramApiError(method, "transport_error") from exc
+        try:
+            parsed = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise TelegramApiError(method, "invalid_json") from exc
+        if not isinstance(parsed, dict):
+            raise TelegramApiError(method, "invalid_response")
+        if not parsed.get("ok"):
+            error_code = parsed.get("error_code")
+            status_code = error_code if isinstance(error_code, int) else None
+            raise TelegramApiError(method, "api_error", status_code)
+        return parsed.get("result")
+
+    def get_me(self) -> dict[str, Any]:
+        result = self.request("getMe")
+        if not isinstance(result, dict):
+            raise TelegramApiError("getMe", "invalid_result")
+        return result
+
+    def get_updates(self, *, offset: int | None, timeout_seconds: int) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "timeout": timeout_seconds,
+            "allowed_updates": ["message"],
+        }
+        if offset is not None:
+            params["offset"] = offset
+        result = self.request(
+            "getUpdates",
+            params,
+            timeout_seconds=timeout_seconds + 5,
+        )
+        if not isinstance(result, list):
+            raise TelegramApiError("getUpdates", "invalid_result")
+        return [item for item in result if isinstance(item, dict)]
+
+    def send_message(
+        self, *, chat_id: str, text: str, reply_to_message_id: str | None = None
+    ) -> None:
+        payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
+        if reply_to_message_id is not None:
+            payload["reply_parameters"] = {"message_id": int(reply_to_message_id)}
+        self.request("sendMessage", payload)
+
+
+class TelegramAdapter:
+    def __init__(
+        self,
+        *,
+        bot_username: str | None = None,
+    ) -> None:
+        self.bot_username = bot_username
+
+    def normalize_update(
+        self, update: dict[str, Any], raw_event_ref: str | None = None
+    ) -> list[TelegramTextMessage]:
+        message = update.get("message")
+        if not isinstance(message, dict):
+            return []
+        chat = message.get("chat") or {}
+        sender = message.get("from") or {}
+        if not isinstance(chat, dict) or not isinstance(sender, dict):
+            return []
+        if str(chat.get("type") or "") not in {"group", "supergroup"}:
+            return []
+        if sender.get("is_bot") is True:
+            return []
+        text = message.get("text")
+        if not isinstance(text, str) or not text.strip():
+            return []
+
+        group_id_value = chat.get("id")
+        message_id_value = message.get("message_id")
+        sender_id_value = sender.get("id")
+        if group_id_value is None or message_id_value is None or sender_id_value is None:
+            return []
+        try:
+            timestamp = datetime.fromtimestamp(int(message.get("date", 0)), tz=UTC)
+        except (TypeError, ValueError, OSError, OverflowError):
+            return []
+
+        group_id = str(group_id_value)
+        message_id = str(message_id_value)
+        sender_id = str(sender_id_value)
+        display_name = _display_name(sender)
+        mentioned_bot = self._mentioned_bot(text, message)
+
+        return [
+            TelegramTextMessage(
+                event_id=str(update.get("update_id", f"telegram:{group_id}:{message_id}")),
+                group_id=group_id,
+                message_id=message_id,
+                sender_id=sender_id,
+                sender_display_name=display_name,
+                text=text,
+                mentioned_bot=mentioned_bot,
+                timestamp=timestamp,
+                raw_event_ref=raw_event_ref,
+            )
+        ]
+
+    def _mentioned_bot(self, text: str, message: dict[str, Any]) -> bool:
+        if self.bot_username and f"@{self.bot_username.lower()}" in text.lower():
+            return True
+        entities = message.get("entities") or []
+        if not isinstance(entities, list):
+            return False
+        for entity in entities:
+            if not isinstance(entity, dict):
+                continue
+            if entity.get("type") == "bot_command":
+                return True
+        return False
+
+
+def _display_name(sender: dict[str, Any]) -> str:
+    parts = [
+        str(sender.get("first_name") or "").strip(),
+        str(sender.get("last_name") or "").strip(),
+    ]
+    name = " ".join(part for part in parts if part).strip()
+    return name or str(sender.get("username") or sender.get("id") or "unknown")

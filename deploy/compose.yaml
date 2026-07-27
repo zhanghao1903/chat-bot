@@ -1,0 +1,21 @@
+services:
+  telegram-bot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file:
+      - ${TELEGRAM_BOT_ENV_FILE:-.env}
+    environment:
+      DATABASE_PATH: /app/data/telegram_bot.sqlite3
+    init: true
+    read_only: true
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp
+    volumes:
+      - telegram-bot-data:/app/data
+
+volumes:
+  telegram-bot-data:
