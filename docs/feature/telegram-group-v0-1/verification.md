@@ -1,19 +1,30 @@
 # Verification: Telegram 群聊基础骨架 0.1
 
 - Lifecycle phase: F5 Verification, Examples, And Documentation
-- Status: Complete with FINDING-001 remediated and explicitly deferred external smoke
-- Implementation snapshot: `6e01fec288439cd672df12dcdcbb0ff7bd5efe65`
+- Status: Complete with FINDING-001 remediated, FINDING-002 evidence corrected, and explicitly deferred external smoke
+- Original implementation snapshot: `6e01fec288439cd672df12dcdcbb0ff7bd5efe65`
 - Initial reviewed snapshot: `c5662b54d72769cc18157579f456f0ca7e8a3640`
+- FINDING-001 remediation verification snapshot: `04f54adb338100e3775c9c527e04a742788f7c7c`
 - Requirements snapshot: `dc620c1023a3cbadc5138036553ea8284f56ba70`
 - Verified: 2026-07-27
 
 ## Verification Boundary
 
-The implementation snapshot was exported with `git archive` into a clean
-directory before checks. The clean snapshot contained only the confirmed
-requirements, design/plan, 0.1 runtime, deterministic tests, and deployment
-assets. Untracked legacy prototypes, research files, repository-local skills,
-local virtual environments, and generated build output were absent.
+The original implementation snapshot
+`6e01fec288439cd672df12dcdcbb0ff7bd5efe65` established the 0.1 runtime and its
+initial 23-test suite. After independent review found FINDING-001, remediation
+snapshot `04f54adb338100e3775c9c527e04a742788f7c7c` added the security fix and five
+regression tests.
+
+The remediation verification snapshot was exported with `git archive` into a
+clean directory before the checks recorded below. It contained only the
+confirmed requirements, design/plan, 0.1 runtime, 28 deterministic tests, and
+deployment assets. Untracked legacy prototypes, research files,
+repository-local skills, local virtual environments, and generated build
+output were absent. Thus, every clean-snapshot result below—including the
+28-test result and FINDING-001 closure—reproduces from
+`04f54adb338100e3775c9c527e04a742788f7c7c`, not the original implementation
+snapshot.
 
 No Telegram bot token or target group credential was available. A real group
 smoke therefore remains an operator-owned external proof. The deterministic
@@ -30,7 +41,7 @@ without a real secret.
 | Shared-checkout regression suite | PASS | Same command — 41 tests including pre-existing tests |
 | Ruff lint | PASS | `uv run --with ruff ruff check <scoped files>` |
 | Ruff formatting | PASS | `uv run --with ruff ruff format --check <scoped files>` |
-| Static typing | PASS | Mypy on the seven runtime modules |
+| Static typing | PASS | Mypy completed with no issues in nine source files |
 | Package build | PASS | `uv build` produced the 0.1.0 sdist and wheel |
 | Installed entry point | PASS | Installed console script returned expected exit `2` for missing token |
 | Deployment script syntax | PASS | `sh -n deploy/manage.sh` |
@@ -59,8 +70,12 @@ was reproduced and remediated:
 - a real `TelegramBotApiClient` body-read timeout enters
   `TelegramPollingService`'s configured wait-and-retry path.
 
-The remediation is locally verified and requires independent re-review of the
-new PR head before merge.
+Independent re-review of
+`04f54adb338100e3775c9c527e04a742788f7c7c` confirmed FINDING-001 is closed.
+That re-review reported `FINDING-002` because the prior version of this document
+did not identify the immutable remediation snapshot behind its 28-test
+evidence. This follow-up documentation change corrects that carrier mismatch;
+the resulting PR head still requires exact-head re-review before merge.
 
 ## Requirement Evidence
 
