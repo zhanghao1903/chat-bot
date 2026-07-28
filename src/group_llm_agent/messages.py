@@ -151,6 +151,30 @@ class GroupPolicyRepository:
                 ),
             )
 
+    def activate_persona(
+        self,
+        *,
+        chat_id: str,
+        persona: PersonaSnapshot,
+    ) -> None:
+        self.ensure(chat_id=chat_id)
+        with self.database.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE group_policies
+                SET persona_id = ?, persona_version = ?, persona_digest = ?,
+                    updated_at = ?
+                WHERE chat_id = ?
+                """,
+                (
+                    persona.persona_id,
+                    persona.persona_version,
+                    persona.persona_digest,
+                    _utc_now().isoformat(),
+                    chat_id,
+                ),
+            )
+
 
 class MessageRepository:
     def __init__(self, database: SQLiteDatabase) -> None:

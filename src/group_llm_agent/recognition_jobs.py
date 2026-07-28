@@ -65,8 +65,16 @@ class RecognitionStale(RuntimeError):
 
 
 class RecognitionJobRepository:
-    def __init__(self, database: SQLiteDatabase) -> None:
+    def __init__(
+        self,
+        database: SQLiteDatabase,
+        *,
+        maximum_attempts: int = 3,
+    ) -> None:
+        if not 1 <= maximum_attempts <= 3:
+            raise ValueError("maximum_attempts must be in [1, 3]")
         self.database = database
+        self.maximum_attempts = maximum_attempts
 
     def lease_one(
         self,
@@ -307,7 +315,7 @@ class RecognitionJobRepository:
             return applied
 
     def retry(self, job: RecognitionJob, *, error_code: str, now: datetime) -> None:
-        terminal = job.attempt_count >= 3
+        terminal = job.attempt_count >= self.maximum_attempts
         next_attempt_at = None
         if not terminal:
             delay_seconds = min(60, 2**job.attempt_count)

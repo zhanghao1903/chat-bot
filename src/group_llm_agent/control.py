@@ -68,6 +68,7 @@ class MemoryControlService:
         messages: MessageRepository,
         memory: MemoryRepository,
         runs: RunRepository,
+        capability_available: bool = True,
     ) -> None:
         self.allowed_chat_id = allowed_chat_id
         self.bot_user_id = bot_user_id
@@ -75,6 +76,7 @@ class MemoryControlService:
         self.messages = messages
         self.memory = memory
         self.runs = runs
+        self.capability_available = capability_available
 
     def handle(
         self,
@@ -176,6 +178,15 @@ class MemoryControlService:
         *,
         persona: PersonaSnapshot,
     ) -> ControlOutcome:
+        if not self.capability_available:
+            self._audit(
+                message,
+                command=_ENABLE_COMMAND,
+                target_user_id=None,
+                authorization=ControlAuthorizationStatus.UNAVAILABLE,
+                outcome="capability_unavailable",
+            )
+            return ControlOutcome(consumed=True, status="capability_unavailable")
         policy = self.messages.policies.ensure(chat_id=message.group_id)
         if policy.memory_enabled:
             self._audit_authorized(message, command=_ENABLE_COMMAND, outcome="already_enabled")

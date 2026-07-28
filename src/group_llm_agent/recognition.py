@@ -57,10 +57,10 @@ class RecognitionWorker:
         lease_duration: timedelta = timedelta(seconds=30),
         model_timeout: timedelta = timedelta(seconds=15),
     ) -> None:
-        if lease_duration.total_seconds() <= 15:
+        if lease_duration <= model_timeout:
             raise ValueError("Recognition lease must exceed the model deadline")
-        if not 0 < model_timeout.total_seconds() <= 15:
-            raise ValueError("Recognition model timeout must be in (0, 15]")
+        if not 5 <= model_timeout.total_seconds() <= 30:
+            raise ValueError("Recognition model timeout must be in [5, 30]")
         self.model = model
         self.messages = messages or MessageRepository(database)
         self.jobs = jobs or RecognitionJobRepository(database)
