@@ -80,6 +80,41 @@ class TelegramAdapterTests(unittest.TestCase):
 
         self.assertEqual(adapter.normalize_update(update), [])
 
+    def test_normalizes_reply_command_and_stable_text_mentions(self) -> None:
+        adapter = TelegramAdapter(bot_username="agent")
+        update = {
+            "update_id": 127,
+            "message": {
+                "message_id": 13,
+                "date": 1781769600,
+                "chat": {"id": -100123, "type": "supergroup"},
+                "from": {"id": 42, "first_name": "Alice"},
+                "text": "/ask@agent hello Bob",
+                "entities": [
+                    {"type": "bot_command", "offset": 0, "length": 10},
+                    {
+                        "type": "text_mention",
+                        "offset": 17,
+                        "length": 3,
+                        "user": {"id": 88, "first_name": "Bob"},
+                    },
+                ],
+                "reply_to_message": {
+                    "message_id": 12,
+                    "from": {"id": 7, "is_bot": True, "first_name": "Agent"},
+                    "text": "previous bot reply",
+                },
+            },
+        }
+
+        event = adapter.normalize_update(update)[0]
+
+        self.assertTrue(event.mentioned_bot)
+        self.assertTrue(event.is_bot_command)
+        self.assertEqual("12", event.replied_to_message_id)
+        self.assertEqual("7", event.replied_to_user_id)
+        self.assertEqual(("88",), event.mentioned_user_ids)
+
 
 if __name__ == "__main__":
     unittest.main()

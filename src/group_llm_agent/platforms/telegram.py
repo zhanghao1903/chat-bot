@@ -141,6 +141,8 @@ class TelegramAdapter:
         sender_id = str(sender_id_value)
         display_name = _display_name(sender)
         mentioned_bot = self._mentioned_bot(text, message)
+        replied_to_message_id, replied_to_user_id = _reply_metadata(message)
+        mentioned_user_ids = _mentioned_user_ids(message)
 
         return [
             TelegramTextMessage(
@@ -151,6 +153,10 @@ class TelegramAdapter:
                 sender_display_name=display_name,
                 text=text,
                 mentioned_bot=mentioned_bot,
+                replied_to_message_id=replied_to_message_id,
+                replied_to_user_id=replied_to_user_id,
+                mentioned_user_ids=mentioned_user_ids,
+                is_bot_command=_is_bot_command(message),
                 timestamp=timestamp,
                 raw_event_ref=raw_event_ref,
             )
@@ -177,3 +183,43 @@ def _display_name(sender: dict[str, Any]) -> str:
     ]
     name = " ".join(part for part in parts if part).strip()
     return name or str(sender.get("username") or sender.get("id") or "unknown")
+
+
+def _reply_metadata(message: dict[str, Any]) -> tuple[str | None, str | None]:
+    reply = message.get("reply_to_message")
+    if not isinstance(reply, dict):
+        return None, None
+    reply_message_id = reply.get("message_id")
+    reply_sender = reply.get("from")
+    reply_sender_id = reply_sender.get("id") if isinstance(reply_sender, dict) else None
+    return (
+        str(reply_message_id) if reply_message_id is not None else None,
+        str(reply_sender_id) if reply_sender_id is not None else None,
+    )
+
+
+def _mentioned_user_ids(message: dict[str, Any]) -> tuple[str, ...]:
+    entities = message.get("entities")
+    if not isinstance(entities, list):
+        return ()
+    result: list[str] = []
+    for entity in entities:
+        if not isinstance(entity, dict) or entity.get("type") != "text_mention":
+            continue
+        user = entity.get("user")
+        user_id = user.get("id") if isinstance(user, dict) else None
+        if user_id is not None and str(user_id) not in result:
+            result.append(str(user_id))
+    return tuple(result)
+
+
+def _is_bot_command(message: dict[str, Any]) -> bool:
+    entities = message.get("entities")
+    if not isinstance(entities, list):
+        return False
+    return any(
+        isinstance(entity, dict)
+        and entity.get("type") == "bot_command"
+        and entity.get("offset") == 0
+        for entity in entities
+    )
