@@ -23,7 +23,7 @@ from group_llm_agent.events import (
 
 _MAX_RESPONSE_BYTES = 256_000
 _MAX_MESSAGES = 32
-_MAX_MESSAGE_CHARS = 32_000
+_MAX_MESSAGE_CHARS = 80_000
 _MAX_TOOL_ARGUMENT_BYTES = 8_000
 _REASON_CODE = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
 _SAFE_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
@@ -255,7 +255,7 @@ def parse_writer_decision(
 
     if kind is WriterDecisionKind.REPLY:
         _require_fields(payload, {"kind", "reason_code", "text"})
-        text = _parse_text(payload["text"], maximum=1_500, category="invalid_reply_text")
+        text = _parse_text(payload["text"], maximum=4_096, category="invalid_reply_text")
         return WriterDecision(
             kind=kind,
             reason_code=_parse_reason_code(payload["reason_code"]),

@@ -281,6 +281,8 @@ def _validate_manifest(manifest: dict[str, Any]) -> None:
 
 def _validate_character(character: dict[str, Any]) -> None:
     _require_exact_fields(character, _CHARACTER_FIELDS, category="invalid_character")
+    if len(_canonical_json(character).encode("utf-8")) > 32_000:
+        raise CharacterBundleError("invalid_character")
     for field, value in character.items():
         if field in {"core_traits", "negative_and_safety_rules"}:
             if (
