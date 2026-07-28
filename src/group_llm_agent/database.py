@@ -40,6 +40,7 @@ _MIGRATIONS: tuple[tuple[int, str, str], ...] = (
             sender_display_name TEXT NOT NULL,
             direction TEXT NOT NULL CHECK (direction IN ('inbound', 'outbound')),
             text TEXT,
+            text_sha256 TEXT NOT NULL,
             sent_at TEXT NOT NULL,
             ingested_at TEXT NOT NULL,
             text_expires_at TEXT,

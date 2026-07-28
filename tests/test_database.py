@@ -127,10 +127,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                     """
                     INSERT INTO group_messages (
                         chat_id, telegram_message_id, event_id, sender_user_id,
-                        sender_display_name, direction, text, sent_at, ingested_at
+                        sender_display_name, direction, text, text_sha256,
+                        sent_at, ingested_at
                     )
                     VALUES ('group-a', '1', 'event-a', 'user-a', 'A', 'inbound',
-                            'one', ?, ?)
+                            'one', 'digest-one', ?, ?)
                     """,
                     (now, now),
                 ).lastrowid
@@ -138,10 +139,11 @@ class DatabaseMigrationTests(unittest.TestCase):
                     """
                     INSERT INTO group_messages (
                         chat_id, telegram_message_id, event_id, sender_user_id,
-                        sender_display_name, direction, text, sent_at, ingested_at
+                        sender_display_name, direction, text, text_sha256,
+                        sent_at, ingested_at
                     )
                     VALUES ('group-b', '1', 'event-b', 'user-b', 'B', 'inbound',
-                            'two', ?, ?)
+                            'two', 'digest-two', ?, ?)
                     """,
                     (now, now),
                 ).lastrowid

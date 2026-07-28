@@ -359,13 +359,13 @@ def _compile_views(
             snapshot=snapshot,
             role="trigger",
             policy_json=_canonical_json({field: character[field] for field in trigger_fields}),
-            examples_jsonl=examples_jsonl,
+            examples_jsonl=(),
         ),
         recognition=CompiledCharacterView(
             snapshot=snapshot,
             role="recognition",
             policy_json=_canonical_json({field: character[field] for field in recognition_fields}),
-            examples_jsonl=examples_jsonl,
+            examples_jsonl=(),
         ),
         effector=CompiledCharacterView(
             snapshot=snapshot,
