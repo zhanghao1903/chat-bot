@@ -4,7 +4,9 @@ import http.client
 import json
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from group_llm_agent.events import TelegramTextMessage
@@ -19,6 +21,33 @@ class TelegramApiError(RuntimeError):
         self.status_code = status_code
         suffix = f" http_status={status_code}" if status_code is not None else ""
         super().__init__(f"telegram_method={method} category={category}{suffix}")
+
+
+@dataclass(frozen=True)
+class SentMessage:
+    message_id: str
+
+
+class TelegramMemberStatus(StrEnum):
+    CREATOR = "creator"
+    ADMINISTRATOR = "administrator"
+    MEMBER = "member"
+    RESTRICTED = "restricted"
+    LEFT = "left"
+    KICKED = "kicked"
+
+
+@dataclass(frozen=True)
+class ChatMemberStatus:
+    user_id: str
+    status: TelegramMemberStatus
+
+    @property
+    def is_administrator(self) -> bool:
+        return self.status in {
+            TelegramMemberStatus.CREATOR,
+            TelegramMemberStatus.ADMINISTRATOR,
+        }
 
 
 class TelegramBotApiClient:
@@ -93,11 +122,41 @@ class TelegramBotApiClient:
 
     def send_message(
         self, *, chat_id: str, text: str, reply_to_message_id: str | None = None
-    ) -> None:
+    ) -> SentMessage:
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
         if reply_to_message_id is not None:
             payload["reply_parameters"] = {"message_id": int(reply_to_message_id)}
-        self.request("sendMessage", payload)
+        result = self.request("sendMessage", payload)
+        if not isinstance(result, dict):
+            raise TelegramApiError("sendMessage", "invalid_result")
+        message_id = result.get("message_id")
+        if isinstance(message_id, bool) or not isinstance(message_id, (int, str)):
+            raise TelegramApiError("sendMessage", "invalid_result")
+        return SentMessage(message_id=str(message_id))
+
+    def get_chat_member(self, *, chat_id: str, user_id: str) -> ChatMemberStatus:
+        result = self.request(
+            "getChatMember",
+            {"chat_id": chat_id, "user_id": int(user_id)},
+        )
+        if not isinstance(result, dict):
+            raise TelegramApiError("getChatMember", "invalid_result")
+        user = result.get("user")
+        returned_user_id = user.get("id") if isinstance(user, dict) else None
+        if (
+            isinstance(returned_user_id, bool)
+            or not isinstance(returned_user_id, (int, str))
+            or str(returned_user_id) != user_id
+        ):
+            raise TelegramApiError("getChatMember", "invalid_result")
+        status_value = result.get("status")
+        if not isinstance(status_value, str):
+            raise TelegramApiError("getChatMember", "invalid_result") from None
+        try:
+            status = TelegramMemberStatus(status_value)
+        except ValueError:
+            raise TelegramApiError("getChatMember", "invalid_result") from None
+        return ChatMemberStatus(user_id=user_id, status=status)
 
 
 class TelegramAdapter:

@@ -8,7 +8,11 @@ import urllib.error
 from typing import Self
 from unittest.mock import patch
 
-from group_llm_agent.platforms.telegram import TelegramApiError, TelegramBotApiClient
+from group_llm_agent.platforms.telegram import (
+    TelegramApiError,
+    TelegramBotApiClient,
+    TelegramMemberStatus,
+)
 
 
 class _Response:
@@ -56,6 +60,71 @@ class TelegramBotApiClientTests(unittest.TestCase):
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(payload["offset"], 10)
         self.assertEqual(payload["allowed_updates"], ["message"])
+
+    def test_send_message_returns_confirmed_message_id(self) -> None:
+        client = TelegramBotApiClient("123456:test-token")
+        with patch(
+            "urllib.request.urlopen",
+            return_value=_Response(
+                {"ok": True, "result": {"message_id": 77, "chat": {"id": -1001}}}
+            ),
+        ) as urlopen:
+            sent = client.send_message(
+                chat_id="-1001",
+                text="notice",
+                reply_to_message_id="12",
+            )
+
+        self.assertEqual("77", sent.message_id)
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(
+            {
+                "chat_id": "-1001",
+                "text": "notice",
+                "reply_parameters": {"message_id": 12},
+            },
+            payload,
+        )
+
+    def test_get_chat_member_returns_live_admin_status(self) -> None:
+        client = TelegramBotApiClient("123456:test-token")
+        with patch(
+            "urllib.request.urlopen",
+            return_value=_Response(
+                {
+                    "ok": True,
+                    "result": {
+                        "status": "administrator",
+                        "user": {"id": 42, "is_bot": False},
+                    },
+                }
+            ),
+        ) as urlopen:
+            member = client.get_chat_member(chat_id="-1001", user_id="42")
+
+        self.assertEqual(TelegramMemberStatus.ADMINISTRATOR, member.status)
+        self.assertTrue(member.is_administrator)
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual({"chat_id": "-1001", "user_id": 42}, payload)
+
+    def test_get_chat_member_rejects_mismatched_or_ambiguous_result(self) -> None:
+        client = TelegramBotApiClient("123456:test-token")
+        for result in (
+            {"status": "administrator", "user": {"id": 99}},
+            {"status": "unknown", "user": {"id": 42}},
+        ):
+            with (
+                self.subTest(result=result),
+                patch(
+                    "urllib.request.urlopen",
+                    return_value=_Response({"ok": True, "result": result}),
+                ),
+                self.assertRaises(TelegramApiError) as caught,
+            ):
+                client.get_chat_member(chat_id="-1001", user_id="42")
+            self.assertEqual("invalid_result", caught.exception.category)
 
     def test_transport_error_does_not_expose_token(self) -> None:
         token = "123456:very-secret"

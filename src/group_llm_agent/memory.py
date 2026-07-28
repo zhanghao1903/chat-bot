@@ -125,6 +125,21 @@ class MemoryRepository:
         current = at or _utc_now()
         connection = self.database.connect()
         try:
+            policy = connection.execute(
+                """
+                SELECT memory_status, persona_id, persona_version, persona_digest
+                FROM group_policies WHERE chat_id = ?
+                """,
+                (chat_id,),
+            ).fetchone()
+            if (
+                policy is None
+                or policy["memory_status"] != "enabled"
+                or policy["persona_id"] != persona.persona_id
+                or policy["persona_version"] != persona.persona_version
+                or policy["persona_digest"] != persona.persona_digest
+            ):
+                return ()
             rows = connection.execute(
                 """
                 SELECT memory_id, chat_id, member_user_id, category, statement,
@@ -437,6 +452,95 @@ class MemoryRepository:
                     reset_by_user_id,
                     value,
                 ),
+            )
+            return generation
+
+    def reset_group(
+        self,
+        *,
+        chat_id: str,
+        reset_by_user_id: str,
+        at: datetime | None = None,
+    ) -> int:
+        timestamp = at or _utc_now()
+        value = timestamp.isoformat()
+        with self.database.transaction() as connection:
+            members = [
+                str(row["sender_user_id"])
+                for row in connection.execute(
+                    """
+                    SELECT DISTINCT sender_user_id
+                    FROM group_messages
+                    WHERE chat_id = ? AND direction = 'inbound'
+                    """,
+                    (chat_id,),
+                ).fetchall()
+            ]
+            connection.execute(
+                """
+                UPDATE member_memory_items
+                SET status = 'revoked', updated_at = ?, revision = revision + 1
+                WHERE chat_id = ? AND status = 'active'
+                """,
+                (value, chat_id),
+            )
+            connection.execute(
+                """
+                UPDATE group_messages
+                SET text = NULL, text_purged_at = ?
+                WHERE chat_id = ? AND text IS NOT NULL
+                """,
+                (value, chat_id),
+            )
+            connection.execute(
+                """
+                UPDATE recognition_jobs
+                SET status = 'superseded', lease_token = NULL,
+                    leased_until = NULL, updated_at = ?
+                WHERE chat_id = ? AND status IN ('pending', 'leased', 'retry')
+                """,
+                (value, chat_id),
+            )
+            cursor = connection.execute(
+                """
+                UPDATE group_policies
+                SET reset_generation = reset_generation + 1, updated_at = ?
+                WHERE chat_id = ?
+                """,
+                (value, chat_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Unknown group policy")
+            generation = int(
+                connection.execute(
+                    "SELECT reset_generation FROM group_policies WHERE chat_id = ?",
+                    (chat_id,),
+                ).fetchone()["reset_generation"]
+            )
+            connection.executemany(
+                """
+                INSERT INTO memory_reset_barriers (
+                    chat_id, member_user_id, ignore_sources_before, generation,
+                    reset_by_user_id, reset_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(chat_id, member_user_id) DO UPDATE SET
+                    ignore_sources_before = excluded.ignore_sources_before,
+                    generation = excluded.generation,
+                    reset_by_user_id = excluded.reset_by_user_id,
+                    reset_at = excluded.reset_at
+                """,
+                [
+                    (
+                        chat_id,
+                        member_user_id,
+                        value,
+                        generation,
+                        reset_by_user_id,
+                        value,
+                    )
+                    for member_user_id in members
+                ],
             )
             return generation
 

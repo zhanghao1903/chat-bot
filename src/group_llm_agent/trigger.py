@@ -31,8 +31,9 @@ from group_llm_agent.runs import RunRepository
 _CONTROL_COMMANDS = {
     "/memory_enable",
     "/memory_disable",
-    "/memory_reset",
-    "/memory_reset_all",
+    "/memory_forget_me",
+    "/memory_forget_member",
+    "/memory_forget_group",
 }
 _TRIGGER_RESPONSE_SCHEMA = {
     "type": "object",
