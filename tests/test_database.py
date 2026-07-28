@@ -6,6 +6,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from helpers import temporary_database
+
 from group_llm_agent.database import SQLiteDatabase
 from group_llm_agent.delivery import SQLiteDeliveryLedger
 from group_llm_agent.events import (
@@ -19,8 +21,6 @@ from group_llm_agent.events import (
     TriggerPath,
 )
 from group_llm_agent.runs import RunRepository
-from helpers import temporary_database
-
 
 _EXPECTED_RUNTIME_TABLES = {
     "control_action_audit",

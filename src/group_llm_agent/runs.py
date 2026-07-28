@@ -320,9 +320,7 @@ class RunRepository:
                 str(row["persona_digest"]) if row["persona_digest"] is not None else None
             ),
             platform_message_id=(
-                str(row["platform_message_id"])
-                if row["platform_message_id"] is not None
-                else None
+                str(row["platform_message_id"]) if row["platform_message_id"] is not None else None
             ),
             error_code=str(row["error_code"]) if row["error_code"] is not None else None,
         )

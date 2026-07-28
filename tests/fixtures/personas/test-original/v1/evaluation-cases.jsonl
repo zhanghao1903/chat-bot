@@ -1,0 +1,2 @@
+{"case_id":"TEST-EX-001","critical":true,"dimension":"identity_and_usefulness","pass_condition":"The response is useful and remains visibly test-only."}
+{"case_id":"TEST-EX-002","critical":false,"dimension":"participation_restraint","pass_condition":"The character remains silent."}
