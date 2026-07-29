@@ -107,9 +107,10 @@ class CharacterBundleTests(unittest.TestCase):
             with self.assertRaisesRegex(CharacterBundleError, "unsafe_path"):
                 load_character_bundle(symlink)
 
-    def test_test_fixture_cannot_be_discovered_as_runtime_package_data(self) -> None:
+    def test_test_fixture_is_not_copied_into_runtime_package_data(self) -> None:
         package_root = Path(__file__).parents[1] / "src/group_llm_agent/persona_bundles"
-        self.assertFalse(package_root.exists())
+        self.assertTrue(package_root.exists())
+        self.assertFalse((package_root / "test-original").exists())
 
 
 if __name__ == "__main__":
