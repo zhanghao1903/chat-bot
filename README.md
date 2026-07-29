@@ -1,48 +1,115 @@
-# Telegram 群聊基础骨架 0.1
+# Telegram 群聊人格机器人
 
-这是一个只做一件事的 Telegram 群服务：连接一个指定群，读取普通文本消息，并在群成员发送精确文本 `1` 时，对原消息回复一次精确文本 `1`。
+这是一个面向单个 Telegram 公开群的长轮询机器人。它保留 0.1 的确定性
+`1 → 1` 模式，并新增原创人格“乐枝”、直接/选择性群聊触发、限次作家效应器、
+当前群上下文工具，以及需管理员公开启用的成员认识。
 
-0.1 不接入 LLM，不处理私聊或媒体消息，不做群管理，也不会对其他文本回复。
+`fixed` 仍是默认模式；人格能力不会因升级而静默开启。
 
-## 行为
+## 运行模式
 
-| 输入 | 结果 |
+| `BOT_MODE` | 行为 |
 | --- | --- |
-| 目标群中的精确文本 `1` | 对原消息回复一次 `1` |
-| ` 1`、`1 ` 或其他文本 | 读取后保持静默 |
-| 其他群、私聊、媒体消息 | 忽略 |
-| bot 自己或其他 bot 的消息 | 忽略 |
-| 重复投递同一条触发消息 | 不重复回复 |
+| `fixed` | 仅在目标群收到精确文本 `1` 时回复一次 `1`；不调用模型 |
+| `persona_direct` | 仅在成员 @bot、回复 bot 或发送 bot command 时调用“乐枝”效应器 |
+| `persona_full` | 包含直接触发；普通消息至少间隔 15 分钟且累计 5 条真人消息后，才允许人格 Trigger 判断回复或静默 |
 
-服务启动前会通过 Telegram `getMe` 验证 bot 身份。验证失败时进程以非零状态退出，不会把失败误报为已连接。
+所有模式只处理配置的一个群，忽略私聊、媒体、其他群、bot 消息和重复 update。每个
+Telegram 事件最多产生一个外部效果。
+
+## 人格与作家效应器
+
+生产人格包位于
+`src/group_llm_agent/persona_bundles/lezhi/lezhi-v1.0`，内容摘要为：
+
+```text
+25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a
+```
+
+Trigger、Recognition 和 Effector 都从同一不可变人格快照编译。作家效应器默认最多
+调用模型 3 次、只读工具 2 次，工具仅包括：
+
+- 查询当前场景内成员在当前群的有效认识；
+- 检索当前群保留期内的近期消息。
+
+模型不能指定群范围、凭据、外部写操作或任意工具。只有 Telegram 回复提交器可以发送
+消息；模型失败时直接触发会给出一次安全失败回复，选择性群聊触发则保持静默。
+
+人格包的静态一致性证据见
+[persona-evaluation.md](docs/feature/maomao-persona-chat/persona-evaluation.md)。选定生产模型后，
+仍必须完成 22 个固定案例的 `8/10` 行为评测，才可以进入真实群。
+
+## 成员认识与透明控制
+
+`MEMBER_MEMORY_CAPABILITY=available` 只表示运行时具备能力，不会自动启用持久认识。目标群
+管理员必须发送 `/memory_enable`；只有机器人成功向群里发送公开说明后，持久消息与认识任务
+才开始写入。
+
+| 命令 | 权限与效果 |
+| --- | --- |
+| `/memory_enable` | 管理员；公开说明后启用当前群认识 |
+| `/memory_disable` | 管理员；立即停止新持久化与认识任务 |
+| `/memory_forget_me` | 任意成员；清除自己在当前群的认识和留存原文 |
+| `/memory_forget_member` | 管理员回复目标成员消息使用；仅清除该成员在当前群的数据 |
+| `/memory_forget_group CONFIRM` | 管理员；清除当前群全部认识和留存原文 |
+
+即时上下文最多 20 条。启用持久认识时，原文保留期可配置为 1～7 天；派生认识带来源、
+置信度和版本，可被后续证据修订、降置信或撤销。私聊、其他群、外部档案和敏感属性推断
+不进入认识系统。
 
 ## 前置条件
 
-- Python 3.11 或更高版本。
-- 通过 [BotFather](https://t.me/BotFather) 创建的 bot token。
-- bot 已加入目标群。
-- Telegram 已配置为向 bot 投递普通群文本。通常需要使用 BotFather 的 `/setprivacy` 关闭该 bot 的 privacy mode，或者按 Telegram 当前规则授予足够的群权限。
-- 目标群的带符号数字 ID，例如 supergroup 常见的 `-100...`。
+- Python 3.11 或更高版本，或 Docker Engine + Compose v2；
+- 通过 [BotFather](https://t.me/BotFather) 创建的 bot token；
+- bot 已加入目标群并能接收普通群文本；
+- 目标群的负数 ID，例如 supergroup 常见的 `-100...`；
+- 人格模式所用的 OpenAI-compatible HTTPS endpoint、API key 和模型名；
+- 人格模式上线前完成固定人格评测和管理员授权的真实群 smoke。
 
-bot 创建、入群和 Telegram 权限配置由群管理员完成。
+普通群消息通常要求通过 BotFather `/setprivacy` 关闭 privacy mode，或按 Telegram 当前规则
+授予足够权限。真实 token、模型密钥、日志和数据库不得提交。
 
 ## 本地启动
 
-创建虚拟环境并安装：
+创建环境并安装：
 
 ```bash
 python3 -m venv .venv
 . .venv/bin/activate
 python3 -m pip install --no-deps .
-```
-
-准备外部配置：
-
-```bash
 cp .env.example .env
 ```
 
-填写 `.env` 中的 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID`，再启动：
+### 兼容模式
+
+填写 `TELEGRAM_BOT_TOKEN` 和 `TELEGRAM_CHAT_ID`，保留：
+
+```text
+BOT_MODE=fixed
+```
+
+### 乐枝直接回复模式
+
+除 Telegram 配置外，填写：
+
+```text
+BOT_MODE=persona_direct
+PERSONA_BUNDLE_PATH=src/group_llm_agent/persona_bundles/lezhi/lezhi-v1.0
+PERSONA_EXPECTED_SHA256=25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a
+MODEL_PROVIDER=openai_compatible
+MODEL_BASE_URL=https://api.openai.com/v1
+MODEL_API_KEY=<runtime secret>
+WRITER_MODEL=<model id>
+TRIGGER_MODEL=<model id>
+RECOGNITION_MODEL=<model id>
+MEMBER_MEMORY_CAPABILITY=disabled
+```
+
+`TRIGGER_MODEL` 和 `RECOGNITION_MODEL` 留空时会使用 `WRITER_MODEL`。要在完成评测和群内说明
+后启用认识能力，将 `MEMBER_MEMORY_CAPABILITY` 改为 `available`，重启，再由管理员发送
+`/memory_enable`。验证直接模式后才建议把 `BOT_MODE` 改为 `persona_full`。
+
+启动：
 
 ```bash
 set -a
@@ -51,7 +118,7 @@ set +a
 group-llm-agent
 ```
 
-也可以不安装，直接从源码运行：
+也可从源码运行：
 
 ```bash
 set -a
@@ -60,68 +127,72 @@ set +a
 PYTHONPATH=src python3 -m group_llm_agent
 ```
 
-成功启动时会依次出现不含 token 的 `telegram_identity_verified` 和 `telegram_polling_started` 日志。
+成功启动时日志依次出现不含凭据的 `telegram_identity_verified` 和
+`telegram_polling_started`。
 
 ## 配置
 
-| 变量 | 必需 | 默认值 | 说明 |
+| 变量 | 人格模式 | 默认值/范围 | 说明 |
 | --- | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | 是 | 无 | BotFather token；仅运行时提供，不得提交；空白或控制字符会被安全拒绝 |
-| `TELEGRAM_CHAT_ID` | 是 | 无 | 唯一允许的群/超级群负数 ID |
-| `DATABASE_PATH` | 否 | `data/telegram_bot.sqlite3` | 最小投递去重账本 |
-| `TELEGRAM_POLLING_TIMEOUT_SECONDS` | 否 | `25` | `1..50` |
-| `TELEGRAM_RETRY_DELAY_SECONDS` | 否 | `2` | 拉取失败后的固定等待，`1..60` |
-| `LOG_LEVEL` | 否 | `INFO` | Python 标准日志级别 |
+| `TELEGRAM_BOT_TOKEN` | 全部必需 | 无 | BotFather token；危险字符会被安全拒绝 |
+| `TELEGRAM_CHAT_ID` | 全部必需 | 无 | 唯一允许的负数群 ID |
+| `DATABASE_PATH` | 可选 | `data/telegram_bot.sqlite3` | 去重、运行审计、消息和认识数据库 |
+| `BOT_MODE` | 可选 | `fixed` | `fixed`、`persona_direct`、`persona_full` |
+| `PERSONA_BUNDLE_PATH` | 必需 | 无 | 明确选择的人格包目录 |
+| `PERSONA_EXPECTED_SHA256` | 必需 | 无 | 小写 64 位摘要；不匹配则联网前失败 |
+| `MODEL_PROVIDER` | 必需 | `openai_compatible` | 当前仅支持该协议 |
+| `MODEL_BASE_URL` | 必需 | 无 | HTTPS API 根地址 |
+| `MODEL_API_KEY` | 必需 | 无 | 运行时秘密；不会出现在安全错误或 repr 中 |
+| `WRITER_MODEL` | 必需 | 无 | 作家效应器模型 |
+| `TRIGGER_MODEL` | 可选 | `WRITER_MODEL` | 选择性参与模型 |
+| `RECOGNITION_MODEL` | 可选 | `WRITER_MODEL` | 后台认识模型 |
+| `MEMBER_MEMORY_CAPABILITY` | 可选 | `disabled` | `available` 仍需群管理员公开启用 |
+| `RAW_MESSAGE_RETENTION_DAYS` | 可选 | `7`，范围 `1..7` | 启用认识后的原文保留期 |
+| `EFFECT_MAX_MODEL_CALLS` | 可选 | `3`，范围 `1..3` | 每次效应器最大模型调用 |
+| `EFFECT_MAX_TOOL_CALLS` | 可选 | `2`，范围 `0..2` | 必须小于模型调用上限 |
+| `EFFECT_DEADLINE_SECONDS` | 可选 | `20`，范围 `5..30` | 整个效应器截止时间 |
+| `TRIGGER_DECISION_TIMEOUT_SECONDS` | 可选 | `5`，范围 `2..10` | Trigger 调用时限 |
+| `RECOGNITION_TIMEOUT_SECONDS` | 可选 | `15`，范围 `5..30` | Recognition 调用时限 |
+| `RECOGNITION_MAX_ATTEMPTS` | 可选 | `3`，范围 `1..3` | 后台认识最大尝试次数 |
+| `TELEGRAM_POLLING_TIMEOUT_SECONDS` | 可选 | `25`，范围 `1..50` | Telegram 长轮询 |
+| `TELEGRAM_RETRY_DELAY_SECONDS` | 可选 | `2`，范围 `1..60` | 拉取失败后的等待 |
+| `LOG_LEVEL` | 可选 | `INFO` | Python 标准日志级别 |
 
-配置错误返回退出码 `2`；Telegram 身份验证失败返回 `3`；本地数据库初始化失败返回 `4`。
+配置/人格启动错误返回退出码 `2`；Telegram 身份验证失败返回 `3`；本地数据库初始化失败
+返回 `4`。
 
-## 失败与恢复
+## 失败、回滚与安全
 
-- Token 格式无效、含危险字符或 Telegram 不可达：启动验证失败并输出经过脱敏的错误；修正配置或网络后重新启动。
-- 运行中请求创建、连接或响应体读取失败：记录脱敏错误，等待配置的秒数后继续拉取。
-- 单条更新无法解析：跳过该更新并继续后续更新。
-- 回复发送失败：在 SQLite 账本中标记 `failed`，继续处理后续消息，不自动无限重试。
-- 同一消息重复投递：唯一投递键阻止第二次回复。
+- 人格包、摘要、模型配置在 Telegram 轮询前校验；失败时不会误报已连接。
+- 模型/工具有截止时间和固定预算，不存在无限 loop。
+- 选择性 Trigger 失败即静默；Recognition 失败按上限退避重试，最终进入 dead 状态。
+- 发送结果不确定时记为 `uncertain`，不会盲目重发造成重复外部效果。
+- 日志不记录 token、模型密钥、完整 prompt、工具结果或原始 provider body。
+- 所有持久数据按单一公开群隔离；模型参数不能扩大范围。
+- 回滚只需把 `BOT_MODE` 改回 `fixed` 并重启；不要删除数据库，否则会丢失去重证据。
 
-SQLite 只保存群 ID、消息 ID、动作类型、状态、错误类别和时间戳；不保存群消息文本、原始 Telegram update 或 token。
-
-## 测试
+## 验证与部署
 
 ```bash
 python3 -m compileall -q src tests
 PYTHONPATH=src python3 -m unittest discover -s tests -v
+uvx ruff check .
+uvx ruff format --check .
+mypy src
+uv build
+sh -n deploy/manage.sh
+docker compose -f deploy/compose.yaml config
 ```
 
-测试覆盖配置、危险 token 拒绝、Telegram 归一化、精确匹配、静默规则、自消息保护、跨重启去重、响应体超时重试、发送失败、错误脱敏和坏消息隔离。
-
-真实 Telegram smoke test 需要管理员提供运行时 token、目标群和权限，因此不会把凭据放进自动化测试。
-
-## 部署
-
-所有部署和线上服务资产统一放在 [`deploy/`](deploy/README.md)。Docker Compose 入口：
-
-```bash
-cp deploy/.env.example deploy/.env
-# 填写 deploy/.env
-deploy/manage.sh start
-deploy/manage.sh logs
-```
-
-停止服务但保留投递账本：
-
-```bash
-deploy/manage.sh stop
-```
-
-## 安全边界
-
-- 不提交真实 token、生产密钥、日志或数据库。
-- 日志不输出 token 和完整消息正文。
-- 0.1 唯一外部写操作是对精确触发消息调用 `sendMessage`。
-- 不执行删消息、禁言、踢人、封禁、工具调用或 LLM 请求。
+完整证据、验收矩阵和未执行的外部证明见
+[verification.md](docs/feature/maomao-persona-chat/verification.md)。部署步骤见
+[deploy/README.md](deploy/README.md)。
 
 ## 生命周期文档
 
-- [Confirmed requirements](docs/feature/telegram-group-v0-1/requirements.md)
-- [Technical design](docs/feature/telegram-group-v0-1/design.md)
-- [Implementation plan](docs/feature/telegram-group-v0-1/implementation-plan.md)
+- [Confirmed requirements](docs/feature/maomao-persona-chat/requirements.md)
+- [Confirmed Character Bible](docs/feature/maomao-persona-chat/character-bible.md)
+- [Technical design](docs/feature/maomao-persona-chat/design.md)
+- [Implementation plan](docs/feature/maomao-persona-chat/implementation-plan.md)
+- [Persona evaluation](docs/feature/maomao-persona-chat/persona-evaluation.md)
+- [Verification](docs/feature/maomao-persona-chat/verification.md)
