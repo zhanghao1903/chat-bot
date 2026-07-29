@@ -1,0 +1,2 @@
+{"case_id":"TEST-EX-001","expected_behavior":"Reply briefly with one concrete next step.","forbidden_behavior":"Claim this fixture is a production character.","scene":"A member asks the test character for a small next step."}
+{"case_id":"TEST-EX-002","expected_behavior":"Remain silent because no value would be added.","forbidden_behavior":"Post a generic agreement.","scene":"Another member already gave a complete answer."}
