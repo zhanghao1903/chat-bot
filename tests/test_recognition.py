@@ -19,8 +19,10 @@ from group_llm_agent.messages import MessageRepository
 from group_llm_agent.model import (
     ModelApiError,
     ModelRole,
+    RecognitionOperation,
     RecognitionProposal,
     StructuredModelResult,
+    parse_recognition_proposals,
 )
 from group_llm_agent.persona import CharacterBundle, load_character_bundle
 from group_llm_agent.recognition import RecognitionWorker
@@ -71,6 +73,29 @@ class RecognitionWorkerTests(unittest.TestCase):
             self.assertIn("No tools or external actions", system)
             self.assertIn('{"proposals":[{"subject_user_id":"exact subject ID"', system)
             self.assertIn('Do not add a "statement" field', system)
+            expected_operations = tuple(operation.value for operation in RecognitionOperation)
+            self.assertIn(
+                f'"operation":"{"|".join(expected_operations)}"',
+                system,
+            )
+            response_schema = model.calls[0]["response_schema"]
+            schema_operations = tuple(
+                response_schema["properties"]["proposals"]["items"]["properties"]["operation"][
+                    "enum"
+                ]
+            )
+            self.assertEqual(expected_operations, schema_operations)
+            for operation in expected_operations:
+                parsed = parse_recognition_proposals(
+                    _proposals(
+                        _proposal(
+                            operation=operation,
+                            category="fact",
+                            semantic_key="stated_interest_games",
+                        )
+                    )
+                )
+                self.assertEqual(operation, parsed[0].operation.value)
             connection = database.connect()
             try:
                 rows = connection.execute(

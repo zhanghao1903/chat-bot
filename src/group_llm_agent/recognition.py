@@ -25,6 +25,7 @@ from group_llm_agent.recognition_jobs import (
     RecognitionStale,
 )
 
+_RECOGNITION_OPERATION_VALUES = tuple(operation.value for operation in RecognitionOperation)
 _RECOGNITION_RESPONSE_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -52,7 +53,7 @@ _RECOGNITION_RESPONSE_SCHEMA = {
                         "maxLength": 64,
                     },
                     "operation": {
-                        "enum": [operation.value for operation in RecognitionOperation],
+                        "enum": list(_RECOGNITION_OPERATION_VALUES),
                     },
                     "category": {
                         "enum": [
@@ -178,7 +179,9 @@ def _recognition_messages(
 ) -> tuple[ModelMessage, ...]:
     system = (
         "Return exactly one JSON object with this shape:\n"
-        '{"proposals":[{"subject_user_id":"exact subject ID","operation":"add|update|delete",'
+        '{"proposals":[{"subject_user_id":"exact subject ID","operation":"'
+        + "|".join(_RECOGNITION_OPERATION_VALUES)
+        + '",'
         '"category":"fact|observation|impression|shared_experience|preference",'
         '"semantic_key":"exact key from SAFE_MEMORY_SEMANTICS","confidence":0.0,'
         '"source_message_ids":["allowed source ID"],"supersedes_memory_id":null}]}\n'
