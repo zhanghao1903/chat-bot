@@ -33,8 +33,20 @@ implementation snapshot:
 The automated evidence below was rerun from a clean `git archive` of that final remediation
 snapshot.
 It contained no untracked `uv.lock`, local `.env`, database, log, credential or build output.
-The current verification carrier is a documentation-only follow-up and is not presented as the
-implementation snapshot.
+
+Review dispatch `4656ae8bc70f2e93e15f09c6bf8c7196d822b8e092660f23b526caed4839fda1`
+approved documentation carrier `8e5e58fc2a137dd841c5551724f585e0ffd4c5e1`. During the
+explicitly authorized provider/deployment UAT that followed, the exact approved adapter was
+found to ignore its `response_schema`: OpenAI-compatible `json_object` mode returned a valid
+JSON alias such as `{"reply": ...}` that the application correctly rejected but could not use.
+The compatibility remediation, explicit role contracts and regressions were completed in:
+
+```text
+754e0efa10a4c2bcb1df18c9c4799d853acfaee8
+```
+
+The current verification carrier is a documentation-only follow-up and is not presented as
+the implementation snapshot.
 
 Accepted upstream contracts:
 
@@ -48,13 +60,13 @@ Accepted upstream contracts:
 
 ## 2. Automated Evidence
 
-Checks were run on 2026-07-29 against clean remediation snapshot
-`1ab2ea3ce23c59bafbbb6a32a32de132fa6774c1`:
+Checks were run on 2026-07-29 against a clean `git archive` of provider-compatibility
+remediation snapshot `754e0efa10a4c2bcb1df18c9c4799d853acfaee8`:
 
 | Command/proof | Result |
 | --- | --- |
 | `python3 -m compileall -q src tests` | PASS |
-| `PYTHONPATH=src python3 -m unittest discover -s tests` | PASS, 112 tests |
+| `PYTHONPATH=src python3 -m unittest discover -s tests` | PASS, 114 tests |
 | `uvx ruff check src tests` | PASS |
 | `uvx ruff format --check src tests` | PASS, 43 files formatted |
 | `uvx mypy src/group_llm_agent` | PASS, 23 source files |
@@ -69,11 +81,12 @@ Checks were run on 2026-07-29 against clean remediation snapshot
 | `docker compose ... build` | PASS |
 | Built image metadata | PASS, `app` user and `group-llm-agent` command |
 | One-shot container load of exact bundle digest/version | PASS, `lezhi lezhi-v1.0 22` |
+| Real configured DeepSeek endpoint through exact application client | PASS, full Writer context produced strict `kind=reply` |
 
 The built local image identity was:
 
 ```text
-sha256:bc6669a6ab0a537e7f20c8fa58d6bed0c44c84234210d838838cf1181e4faa3c
+sha256:21047c40798138f05868c9ea58af98f20bb10bcabc8884beaf7c24b2edbc2b9f
 ```
 
 This is local build evidence, not a published release image or stable registry digest.
@@ -86,6 +99,7 @@ This is local build evidence, not a published release image or stable registry d
 | FINDING-002 | The recognition model no longer authors persistent statements. It may return only an exact application-owned `(semantic_key, category)` pair; `memory_safety.py` resolves that pair from an immutable safe registry and the application renders the canonical stored statement. Unknown/mismatched keys and extra free-form statement fields fail closed before persistence. End-to-end worker tests reject registered-Democrat, DNC-donation, Sunni-practice, lithium-treatment and hiring-score proposals while persisting explicit benign member-support, group-plan and group-activity semantics. | FIXED |
 | FINDING-003 | Telegram command entities retain their target; the adapter drops foreign-target commands before classification, and `MemoryControlService` independently validates the target against the authenticated username. Destructive and ordinary foreign-bot command tests prove no authorization, mutation, audit or send occurs. | FIXED |
 | FINDING-004 | Durable ingestion deduplication is now distinct from terminal effect processing. A replay without an external-effect claim restarts the same unique effect/trigger run; an existing claim or intentional silence remains terminal. Restart tests cover ingestion-only, processing, completed-reply-before-claim, claimed, silence and already-sent boundaries. | FIXED |
+| UAT-FINDING-001 | The adapter now canonically injects the bounded application schema into the leading system instruction; Trigger, Writer and Recognition also state exact accepted JSON shapes and reject observed aliases. Unit tests prove schema transmission and role prompts. A real configured DeepSeek call with the full production Writer context returned strict `kind=reply`. | FIXED; NEW EXACT-HEAD REVIEW REQUIRED |
 
 ## 4. Acceptance Matrix
 
@@ -134,7 +148,23 @@ Static bundle conformance passed:
 The provider behavioral gate is recorded separately in
 `docs/feature/maomao-persona-chat/persona-evaluation.md`.
 
-## 6. External Proof Not Executed
+## 6. Provider Compatibility Evidence
+
+The operator-owned Code Agent `.env` was read only at runtime and was not copied into this
+repository or image. Secret values and configured Base URLs were not printed. Compatibility
+smokes established:
+
+- the configured DeepSeek OpenAI-compatible endpoint supports the selected model and strict
+  application Writer contract after `UAT-FINDING-001`;
+- the configured OpenAI-compatible endpoint was reachable but its selected model did not pass
+  the strict response probe;
+- the configured Claude endpoint did not pass either the native or OpenAI-compatible probe.
+
+DeepSeek is therefore the only provider selected for this `persona_direct` UAT. These smokes
+prove transport/protocol compatibility only; they do not constitute the independent 22-case
+persona score.
+
+## 7. External Proof Not Executed
 
 The following checks require operator-owned credentials, external service consumption and/or
 real-group authorization and were not run:
@@ -149,7 +179,7 @@ real-group authorization and were not run:
 The earlier Telegram `1 → 1` user-side smoke belongs to the prior 0.1 feature and is not
 misrepresented as persona-mode proof for this snapshot.
 
-## 7. Rollout And Release Decision
+## 8. Rollout And Release Decision
 
 - Default and rollback mode: `fixed`.
 - Production persona activation: explicit path, exact digest and model configuration only.
@@ -157,5 +187,5 @@ misrepresented as persona-mode proof for this snapshot.
   disabled → authorized memory disclosure → `persona_full`.
 - Release publication: not requested; no package version, tag, registry image or GitHub release
   was created.
-- Current decision: repository implementation is reviewable; real-group persona rollout remains
-  blocked by the external proof in section 6.
+- Current decision: provider compatibility is proven; real-group persona rollout waits for the
+  exact-head review of `UAT-FINDING-001`, then proceeds in `persona_direct` with memory disabled.
