@@ -45,6 +45,16 @@ The compatibility remediation, explicit role contracts and regressions were comp
 754e0efa10a4c2bcb1df18c9c4799d853acfaee8
 ```
 
+Review dispatch `2921364512e99ccf35521d2fe8a90e762ffc7330ddb94160bcd1c67bc12a649f`
+reviewed carrier `5b2a38ac1c0b6d6e27fa3b8f2bb4a422b6b4dce3` and found that the
+Recognition prompt's manually written `add|update|delete` choices contradicted the application
+enum/schema `add|strengthen|revise|weaken|revoke`. The operation list now has one source of truth
+and its prompt/schema/parser regression was completed in:
+
+```text
+163623b9f19577b478d9519660894cf90304cbdc
+```
+
 The current verification carrier is a documentation-only follow-up and is not presented as
 the implementation snapshot.
 
@@ -61,7 +71,7 @@ Accepted upstream contracts:
 ## 2. Automated Evidence
 
 Checks were run on 2026-07-29 against a clean `git archive` of provider-compatibility
-remediation snapshot `754e0efa10a4c2bcb1df18c9c4799d853acfaee8`:
+remediation snapshot `163623b9f19577b478d9519660894cf90304cbdc`:
 
 | Command/proof | Result |
 | --- | --- |
@@ -81,12 +91,12 @@ remediation snapshot `754e0efa10a4c2bcb1df18c9c4799d853acfaee8`:
 | `docker compose ... build` | PASS |
 | Built image metadata | PASS, `app` user and `group-llm-agent` command |
 | One-shot container load of exact bundle digest/version | PASS, `lezhi lezhi-v1.0 22` |
-| Real configured DeepSeek endpoint through exact application client | PASS, full Writer context produced strict `kind=reply` |
+| Real configured DeepSeek endpoint through exact application client | PASS, Writer produced strict `kind=reply`; Recognition produced legal `add/stated_interest_games` |
 
 The built local image identity was:
 
 ```text
-sha256:21047c40798138f05868c9ea58af98f20bb10bcabc8884beaf7c24b2edbc2b9f
+sha256:6a921906f63feb6427909d711debbb926789be1acd789e5c3c1eba3133379eca
 ```
 
 This is local build evidence, not a published release image or stable registry digest.
@@ -99,7 +109,7 @@ This is local build evidence, not a published release image or stable registry d
 | FINDING-002 | The recognition model no longer authors persistent statements. It may return only an exact application-owned `(semantic_key, category)` pair; `memory_safety.py` resolves that pair from an immutable safe registry and the application renders the canonical stored statement. Unknown/mismatched keys and extra free-form statement fields fail closed before persistence. End-to-end worker tests reject registered-Democrat, DNC-donation, Sunni-practice, lithium-treatment and hiring-score proposals while persisting explicit benign member-support, group-plan and group-activity semantics. | FIXED |
 | FINDING-003 | Telegram command entities retain their target; the adapter drops foreign-target commands before classification, and `MemoryControlService` independently validates the target against the authenticated username. Destructive and ordinary foreign-bot command tests prove no authorization, mutation, audit or send occurs. | FIXED |
 | FINDING-004 | Durable ingestion deduplication is now distinct from terminal effect processing. A replay without an external-effect claim restarts the same unique effect/trigger run; an existing claim or intentional silence remains terminal. Restart tests cover ingestion-only, processing, completed-reply-before-claim, claimed, silence and already-sent boundaries. | FIXED |
-| UAT-FINDING-001 | The adapter now canonically injects the bounded application schema into the leading system instruction; Trigger, Writer and Recognition also state exact accepted JSON shapes and reject observed aliases. Unit tests prove schema transmission and role prompts. A real configured DeepSeek call with the full production Writer context returned strict `kind=reply`. | FIXED; NEW EXACT-HEAD REVIEW REQUIRED |
+| UAT-FINDING-001 | The adapter canonically injects the bounded application schema into the leading system instruction. Recognition now derives prompt and schema operation choices from the same `RecognitionOperation` values; its regression compares prompt, schema and parser acceptance for all five operations. Real configured DeepSeek calls returned strict Writer `reply` and Recognition `add/stated_interest_games` contracts. | FIXED; NEW EXACT-HEAD REVIEW REQUIRED |
 
 ## 4. Acceptance Matrix
 
@@ -155,7 +165,7 @@ repository or image. Secret values and configured Base URLs were not printed. Co
 smokes established:
 
 - the configured DeepSeek OpenAI-compatible endpoint supports the selected model and strict
-  application Writer contract after `UAT-FINDING-001`;
+  application Writer and Recognition contracts after `UAT-FINDING-001`;
 - the configured OpenAI-compatible endpoint was reachable but its selected model did not pass
   the strict response probe;
 - the configured Claude endpoint did not pass either the native or OpenAI-compatible probe.
@@ -187,5 +197,5 @@ misrepresented as persona-mode proof for this snapshot.
   disabled → authorized memory disclosure → `persona_full`.
 - Release publication: not requested; no package version, tag, registry image or GitHub release
   was created.
-- Current decision: provider compatibility is proven; real-group persona rollout waits for the
-  exact-head review of `UAT-FINDING-001`, then proceeds in `persona_direct` with memory disabled.
+- Current decision: Writer and Recognition provider compatibility are proven; real-group persona
+  rollout waits for exact-head re-review, then proceeds in `persona_direct` with memory disabled.
