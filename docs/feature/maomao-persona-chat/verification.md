@@ -12,14 +12,26 @@ The original implementation, packaging assets and production Character Bundle we
 
 Review dispatch `bcfa31579c0af7da4e76d715fa0dee0498c1a9518b220952d1d8c1c8f00ecb4d`
 reviewed head `9b5cc44f53dcb962f9192546daada7b645339b68` and requested four changes.
-All four remediations and their regression tests were completed in this immutable implementation
-snapshot:
+The first remediation implementation snapshot closed FINDING-001, FINDING-003 and FINDING-004
+and attempted FINDING-002:
 
 ```text
 7a03536766bfb5c8e5c699a0e4f2fd633c328114
 ```
 
-The automated evidence below was rerun from a clean `git archive` of the remediation snapshot.
+Review dispatch `25f30db8aeabac6c7fb247e41765ab4d003794fc31d606be942219241e62a8e7`
+reviewed documentation carrier `d637eafc4383275ce47023f109817fb9b3b6efbe`, confirmed
+FINDING-001/003/004 fixed, and kept FINDING-002 open because the regex-based gate remained
+bypassable and over-rejected benign relationship language. The final closed-semantic
+remediation and its persistence-boundary regressions were completed in this immutable
+implementation snapshot:
+
+```text
+1ab2ea3ce23c59bafbbb6a32a32de132fa6774c1
+```
+
+The automated evidence below was rerun from a clean `git archive` of that final remediation
+snapshot.
 It contained no untracked `uv.lock`, local `.env`, database, log, credential or build output.
 The current verification carrier is a documentation-only follow-up and is not presented as the
 implementation snapshot.
@@ -37,14 +49,14 @@ Accepted upstream contracts:
 ## 2. Automated Evidence
 
 Checks were run on 2026-07-29 against clean remediation snapshot
-`7a03536766bfb5c8e5c699a0e4f2fd633c328114`:
+`1ab2ea3ce23c59bafbbb6a32a32de132fa6774c1`:
 
 | Command/proof | Result |
 | --- | --- |
 | `python3 -m compileall -q src tests` | PASS |
-| `PYTHONPATH=src python3 -m unittest discover -s tests` | PASS, 111 tests |
-| `uvx ruff check .` | PASS |
-| `uvx ruff format --check .` | PASS, 56 files formatted |
+| `PYTHONPATH=src python3 -m unittest discover -s tests` | PASS, 112 tests |
+| `uvx ruff check src tests` | PASS |
+| `uvx ruff format --check src tests` | PASS, 43 files formatted |
 | `uvx mypy src/group_llm_agent` | PASS, 23 source files |
 | `uv build --out-dir <clean temp>` | PASS, sdist and wheel produced |
 | Inspect wheel package data | PASS, all four `lezhi-v1.0` bundle files present |
@@ -61,7 +73,7 @@ Checks were run on 2026-07-29 against clean remediation snapshot
 The built local image identity was:
 
 ```text
-sha256:e88b30d5e05fa3821f3249d56190dc17303955ca7f59580789a8774c5ef0b9a6
+sha256:bc6669a6ab0a537e7f20c8fa58d6bed0c44c84234210d838838cf1181e4faa3c
 ```
 
 This is local build evidence, not a published release image or stable registry digest.
@@ -71,7 +83,7 @@ This is local build evidence, not a published release image or stable registry d
 | Finding | Remediation evidence | Status |
 | --- | --- | --- |
 | FINDING-001 | Application-owned final-effect validation now rechecks the persona snapshot and deadline, rejects protocol JSON and internal/tool/memory markers, and degrades to direct failure reply or contextual silence. Unit tests cover marker, JSON, late-result and post-model snapshot failures; the runtime test proves leaked content is never sent. | FIXED |
-| FINDING-002 | `memory_safety.py` normalizes untrusted proposals and rejects prohibited categories, named parties/religions/conditions, multilingual variants, uncertain sensitive relations and high-impact decisions. Semantic bypass tests include Democratic Party support, Sunday mass, Jainism, Crohn's treatment, financial default, Chinese religious phrasing and hiring suitability while retaining a safe observation. | FIXED |
+| FINDING-002 | The recognition model no longer authors persistent statements. It may return only an exact application-owned `(semantic_key, category)` pair; `memory_safety.py` resolves that pair from an immutable safe registry and the application renders the canonical stored statement. Unknown/mismatched keys and extra free-form statement fields fail closed before persistence. End-to-end worker tests reject registered-Democrat, DNC-donation, Sunni-practice, lithium-treatment and hiring-score proposals while persisting explicit benign member-support, group-plan and group-activity semantics. | FIXED |
 | FINDING-003 | Telegram command entities retain their target; the adapter drops foreign-target commands before classification, and `MemoryControlService` independently validates the target against the authenticated username. Destructive and ordinary foreign-bot command tests prove no authorization, mutation, audit or send occurs. | FIXED |
 | FINDING-004 | Durable ingestion deduplication is now distinct from terminal effect processing. A replay without an external-effect claim restarts the same unique effect/trigger run; an existing claim or intentional silence remains terminal. Restart tests cover ingestion-only, processing, completed-reply-before-claim, claimed, silence and already-sent boundaries. | FIXED |
 
@@ -94,7 +106,7 @@ This is local build evidence, not a published release image or stable registry d
 | AC-013 | Relationship states, fixed cases 006/007/019–021 and shared snapshot | PASS (static contract); provider comparison pending |
 | AC-014 | Third-person disclosure prohibition, scoped tool inputs, final leakage rejection and never-send runtime test | PASS (contract and enforcement) |
 | AC-015 | Cross-group foreign-key, search, reset and memory-scope tests | PASS |
-| AC-016 | Normalized semantic sensitive-inference, named-entity, multilingual and high-impact decision rejection tests | PASS |
+| AC-016 | Closed application-owned semantic registry, no model-authored persistent statement, and adversarial/benign persistence-boundary tests | PASS |
 | AC-017 | Capability/notice/administrator checks; persistence begins only after successful notice | PASS |
 | AC-018 | Self/member/group reset, reset generation and stale-job race tests | PASS |
 | AC-019 | Twenty-message bound, raw-text expiry and restart-compatible derived memory tests | PASS |
