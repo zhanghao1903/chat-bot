@@ -92,6 +92,7 @@ class TelegramTextMessage:
     replied_to_user_id: str | None = None
     mentioned_user_ids: tuple[str, ...] = ()
     is_bot_command: bool = False
+    bot_command_target: str | None = None
     raw_event_ref: str | None = None
 
 

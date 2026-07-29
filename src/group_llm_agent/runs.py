@@ -63,7 +63,7 @@ class RunRepository:
         deadline_at: datetime,
     ) -> int:
         with self.database.transaction() as connection:
-            cursor = connection.execute(
+            connection.execute(
                 """
                 INSERT INTO trigger_runs (
                     request_id, chat_id, trigger_event_id, trigger_message_id,
@@ -71,6 +71,19 @@ class RunRepository:
                     result_kind, reason_code, model_status, deadline_at, created_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(request_id) DO UPDATE SET
+                    chat_id = excluded.chat_id,
+                    trigger_event_id = excluded.trigger_event_id,
+                    trigger_message_id = excluded.trigger_message_id,
+                    candidate_kind = excluded.candidate_kind,
+                    persona_id = excluded.persona_id,
+                    persona_version = excluded.persona_version,
+                    persona_digest = excluded.persona_digest,
+                    result_kind = excluded.result_kind,
+                    reason_code = excluded.reason_code,
+                    model_status = excluded.model_status,
+                    deadline_at = excluded.deadline_at,
+                    created_at = excluded.created_at
                 """,
                 (
                     request_id,
@@ -88,12 +101,26 @@ class RunRepository:
                     _utc_now(),
                 ),
             )
-            return _lastrowid(cursor)
+            row = connection.execute(
+                "SELECT id FROM trigger_runs WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+            assert row is not None
+            return int(row["id"])
 
     def start_effect_run(self, request: EffectRequest) -> int:
         now = _utc_now()
         with self.database.transaction() as connection:
-            cursor = connection.execute(
+            claimed = connection.execute(
+                """
+                SELECT 1 FROM external_effects
+                WHERE chat_id = ? AND trigger_event_id = ?
+                """,
+                (request.message.group_id, request.message.event_id),
+            ).fetchone()
+            if claimed is not None:
+                raise ValueError("External effect already claimed")
+            connection.execute(
                 """
                 INSERT INTO effect_runs (
                     request_id, chat_id, trigger_event_id, trigger_message_id,
@@ -101,6 +128,21 @@ class RunRepository:
                     status, deadline_at, created_at, updated_at
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)
+                ON CONFLICT(request_id) DO UPDATE SET
+                    chat_id = excluded.chat_id,
+                    trigger_event_id = excluded.trigger_event_id,
+                    trigger_message_id = excluded.trigger_message_id,
+                    trigger_path = excluded.trigger_path,
+                    persona_id = excluded.persona_id,
+                    persona_version = excluded.persona_version,
+                    persona_digest = excluded.persona_digest,
+                    status = 'processing',
+                    model_call_count = 0,
+                    tool_call_count = 0,
+                    reason_code = NULL,
+                    error_code = NULL,
+                    deadline_at = excluded.deadline_at,
+                    updated_at = excluded.updated_at
                 """,
                 (
                     request.request_id,
@@ -116,7 +158,42 @@ class RunRepository:
                     now,
                 ),
             )
-            return _lastrowid(cursor)
+            row = connection.execute(
+                "SELECT id FROM effect_runs WHERE request_id = ?",
+                (request.request_id,),
+            ).fetchone()
+            assert row is not None
+            return int(row["id"])
+
+    def has_terminal_silence(
+        self,
+        *,
+        chat_id: str,
+        trigger_event_id: str,
+    ) -> bool:
+        """Return whether processing reached an intentional no-effect terminal state."""
+
+        connection = self.database.connect()
+        try:
+            effect = connection.execute(
+                """
+                SELECT status FROM effect_runs
+                WHERE chat_id = ? AND trigger_event_id = ?
+                """,
+                (chat_id, trigger_event_id),
+            ).fetchone()
+            if effect is not None:
+                return str(effect["status"]) == EffectRunStatus.SILENCE.value
+            trigger = connection.execute(
+                """
+                SELECT result_kind FROM trigger_runs
+                WHERE chat_id = ? AND trigger_event_id = ?
+                """,
+                (chat_id, trigger_event_id),
+            ).fetchone()
+            return trigger is not None and str(trigger["result_kind"]) == "silence"
+        finally:
+            connection.close()
 
     def complete_effect_run(
         self,

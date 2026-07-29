@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 from group_llm_agent.database import SQLiteDatabase
 from group_llm_agent.events import MemoryCategory
+from group_llm_agent.memory_safety import memory_safety_rejection
 from group_llm_agent.messages import MessageRepository
 from group_llm_agent.model import (
     ModelApiError,
@@ -30,12 +31,6 @@ _RECOGNITION_RESPONSE_SCHEMA = {
     "type": "object",
     "description": "A bounded list of group-local member-memory proposals.",
 }
-_SENSITIVE_PATTERN = re.compile(
-    r"(政治|党派|宗教|性取向|疾病|病史|精确地址|住址|财务状况|信用评分|"
-    r"politic|religio|sexual orientation|disease|medical condition|exact address|"
-    r"financial condition|credit score)",
-    re.IGNORECASE,
-)
 _SUBJECTIVE_FACT_PATTERN = re.compile(
     r"(我觉得|感觉|好像|看起来|可能|也许|seems?|probably|maybe|i think)",
     re.IGNORECASE,
@@ -180,7 +175,7 @@ def _accepted_proposals(
             continue
         if not set(proposal.source_message_ids).issubset(source_ids):
             continue
-        if _SENSITIVE_PATTERN.search(proposal.statement):
+        if memory_safety_rejection(proposal.statement) is not None:
             continue
         if proposal.category is MemoryCategory.FACT and _SUBJECTIVE_FACT_PATTERN.search(
             proposal.statement

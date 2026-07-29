@@ -122,6 +122,7 @@ def run(
                 settings=settings,
                 client=client,
                 bot_user_id=bot_user_id,
+                bot_username=bot_username,
                 bot_display_name=bot_username or f"bot-{bot_user_id}",
                 bundle=bundle,
                 model=model,
@@ -208,6 +209,7 @@ def _persona_runtime(
     settings: Settings,
     client: TelegramBotApiClient,
     bot_user_id: str,
+    bot_username: str | None,
     bot_display_name: str,
     bundle: CharacterBundle,
     model: StructuredModelPort,
@@ -260,6 +262,7 @@ def _persona_runtime(
     controls = MemoryControlService(
         allowed_chat_id=settings.telegram_chat_id,
         bot_user_id=bot_user_id,
+        bot_username=bot_username,
         telegram=client,
         messages=messages,
         memory=memory,

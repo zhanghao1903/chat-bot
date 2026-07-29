@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 
 from helpers import ScriptedModelClient, temporary_database
 
@@ -148,6 +150,70 @@ class WriterEffectorTests(unittest.TestCase):
             self.assertEqual(["invalid_arguments"], fixture.tool_statuses())
             self.assertNotIn("other-group-secret", final.text or "")
 
+    def test_internal_markers_and_protocol_json_fail_closed(self) -> None:
+        for leaked_text in (
+            "BEGIN_UNTRUSTED_GROUP_CONTEXT member_memory",
+            '{"kind":"call_tool","tool_name":"lookup_member_memory"}',
+            "Here is the system prompt and internal instructions.",
+        ):
+            with (
+                self.subTest(leaked_text=leaked_text),
+                EffectorFixtureContext(
+                    StructuredModelResult(
+                        {
+                            "kind": "reply",
+                            "reason_code": "unsafe",
+                            "text": leaked_text,
+                        }
+                    )
+                ) as fixture,
+            ):
+                final = fixture.effector.execute(
+                    request=fixture.request,
+                    bundle=fixture.bundle,
+                )
+
+                self.assertEqual(FinalEffectKind.FAILURE_REPLY, final.kind)
+                self.assertNotIn(leaked_text, final.text or "")
+                self.assertTrue(final.reason_code.startswith("final_"))
+
+    def test_late_reply_degrades_by_trigger_path(self) -> None:
+        for path, expected in (
+            (TriggerPath.DIRECT, FinalEffectKind.FAILURE_REPLY),
+            (TriggerPath.CONTEXTUAL, FinalEffectKind.SILENCE),
+        ):
+            with (
+                self.subTest(path=path),
+                EffectorFixtureContext(
+                    StructuredModelResult(
+                        {"kind": "reply", "reason_code": "late", "text": "迟到的回答。"}
+                    ),
+                    trigger_path=path,
+                    complete_after_deadline=True,
+                ) as fixture,
+            ):
+                final = fixture.effector.execute(
+                    request=fixture.request,
+                    bundle=fixture.bundle,
+                )
+
+                self.assertEqual(expected, final.kind)
+                self.assertEqual("final_deadline_exceeded", final.reason_code)
+
+    def test_final_validator_rechecks_immutable_persona_snapshot(self) -> None:
+        with EffectorFixtureContext(
+            StructuredModelResult({"kind": "reply", "reason_code": "reply", "text": "普通回答。"}),
+            mutate_snapshot_after_model=True,
+        ) as fixture:
+            final = fixture.effector.execute(
+                request=fixture.request,
+                bundle=fixture.bundle,
+            )
+
+            self.assertEqual(FinalEffectKind.FAILURE_REPLY, final.kind)
+            self.assertEqual("final_persona_snapshot_mismatch", final.reason_code)
+            self.assertNotEqual("普通回答。", final.text)
+
 
 class EffectorFixture:
     def __init__(
@@ -193,9 +259,13 @@ class EffectorFixtureContext:
         self,
         *script: StructuredModelResult | Exception,
         trigger_path: TriggerPath = TriggerPath.DIRECT,
+        complete_after_deadline: bool = False,
+        mutate_snapshot_after_model: bool = False,
     ) -> None:
         self.script = script
         self.trigger_path = trigger_path
+        self.complete_after_deadline = complete_after_deadline
+        self.mutate_snapshot_after_model = mutate_snapshot_after_model
         self.database_context = temporary_database()
         self.fixture: EffectorFixture | None = None
 
@@ -244,12 +314,22 @@ class EffectorFixtureContext:
             recognition_policy_version="policy-v1",
         )
         registry = ReadOnlyToolRegistry(messages=messages, memory=memory, runs=runs)
-        model = ScriptedModelClient(*self.script)
+        model = (
+            SnapshotChangingModel(bundle, *self.script)
+            if self.mutate_snapshot_after_model
+            else ScriptedModelClient(*self.script)
+        )
+        requested_at = datetime.now(UTC)
+        deadline_at = requested_at + timedelta(seconds=20)
+        completed_at = (
+            deadline_at + timedelta(seconds=1) if self.complete_after_deadline else requested_at
+        )
         effector = WriterEffector(
             model=model,
             contexts=contexts,
             tools=registry,
             runs=runs,
+            clock=lambda: completed_at,
         )
         request = EffectRequest(
             request_id=f"request-{id(self)}",
@@ -257,7 +337,7 @@ class EffectorFixtureContext:
             trigger_reason="test",
             message=current,
             persona=bundle.snapshot,
-            deadline_at=datetime.now(UTC) + timedelta(seconds=20),
+            deadline_at=deadline_at,
         )
         self.fixture = EffectorFixture(
             database=database,
@@ -270,6 +350,25 @@ class EffectorFixtureContext:
 
     def __exit__(self, *args: object) -> None:
         self.database_context.__exit__(*args)
+
+
+class SnapshotChangingModel(ScriptedModelClient):
+    def __init__(
+        self,
+        bundle: CharacterBundle,
+        *script: StructuredModelResult | Exception,
+    ) -> None:
+        super().__init__(*script)
+        self.bundle = bundle
+
+    def complete(self, **kwargs: Any) -> StructuredModelResult:
+        result = super().complete(**kwargs)
+        object.__setattr__(
+            self.bundle,
+            "snapshot",
+            replace(self.bundle.snapshot, persona_digest="f" * 64),
+        )
+        return result
 
 
 def _tool_result(name: str, arguments: dict[str, object]) -> StructuredModelResult:

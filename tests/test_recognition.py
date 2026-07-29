@@ -160,6 +160,60 @@ class RecognitionWorkerTests(unittest.TestCase):
             )
             self.assertEqual("completed", job_status)
 
+    def test_semantic_sensitive_bypasses_and_high_impact_scores_are_rejected(self) -> None:
+        bundle = _bundle()
+        unsafe_statements = (
+            "The member supports the Democratic Party.",
+            "The member attends Sunday mass.",
+            "The member needs a co-signer after two defaults.",
+            "The member observes Jainism.",
+            "The member takes Humira for Crohn's.",
+            "这位成员每周去教堂做礼拜。",
+            "The member is a strong hiring candidate.",
+        )
+        with temporary_database() as database:
+            messages = MessageRepository(database)
+            _enable(messages, bundle, chat_id="group-a")
+            _ingest(messages, bundle, chat_id="group-a", message_id="1")
+            model = ScriptedModelClient(
+                _proposals(
+                    *(
+                        _proposal(
+                            operation="add",
+                            category="observation",
+                            statement=statement,
+                        )
+                        for statement in unsafe_statements
+                    ),
+                    _proposal(
+                        operation="add",
+                        category="observation",
+                        statement="The member asked a public follow-up question.",
+                    ),
+                )
+            )
+
+            RecognitionWorker(
+                database=database,
+                model=model,
+                messages=messages,
+            ).run_once(bundle=bundle, now=_BASE_TIME)
+
+            connection = database.connect()
+            try:
+                statements = [
+                    str(row["statement"])
+                    for row in connection.execute(
+                        "SELECT statement FROM member_memory_items"
+                    ).fetchall()
+                ]
+            finally:
+                connection.close()
+            self.assertEqual(
+                ["The member asked a public follow-up question."],
+                statements,
+            )
+
     def test_provider_failure_retries_with_backoff_then_becomes_dead(self) -> None:
         bundle = _bundle()
         with temporary_database() as database:

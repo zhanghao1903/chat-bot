@@ -58,6 +58,36 @@ class FakeControlTelegram:
 
 
 class MemoryControlServiceTests(unittest.TestCase):
+    def test_foreign_target_destructive_command_is_not_executed(self) -> None:
+        bundle = _bundle()
+        telegram = FakeControlTelegram()
+        with temporary_database() as database:
+            service, messages, memory = _service(database, telegram)
+            _seed_member(messages, memory, bundle, "group-a", "member-a", "1")
+
+            outcome = service.handle(
+                _command(0, "/memory_forget_group@some_other_bot CONFIRM"),
+                persona=bundle.snapshot,
+                now=_NOW,
+            )
+
+            connection = database.connect()
+            try:
+                status = connection.execute("SELECT status FROM member_memory_items").fetchone()[
+                    "status"
+                ]
+                audit_count = connection.execute(
+                    "SELECT count(*) FROM control_action_audit"
+                ).fetchone()[0]
+            finally:
+                connection.close()
+            self.assertEqual("not_control", outcome.status)
+            self.assertFalse(outcome.consumed)
+            self.assertEqual("active", status)
+            self.assertEqual(0, audit_count)
+            self.assertEqual([], telegram.authorization_calls)
+            self.assertEqual([], telegram.sent)
+
     def test_enable_requires_confirmed_public_notice(self) -> None:
         bundle = _bundle()
         cases = (
@@ -282,6 +312,7 @@ def _service(
     service = MemoryControlService(
         allowed_chat_id="group-a",
         bot_user_id="bot-1",
+        bot_username="agent",
         telegram=telegram,
         messages=messages,
         memory=memory,

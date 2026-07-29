@@ -114,6 +114,38 @@ class TelegramAdapterTests(unittest.TestCase):
         self.assertEqual("12", event.replied_to_message_id)
         self.assertEqual("7", event.replied_to_user_id)
         self.assertEqual(("88",), event.mentioned_user_ids)
+        self.assertEqual("agent", event.bot_command_target)
+
+    def test_ignores_commands_addressed_to_another_bot(self) -> None:
+        adapter = TelegramAdapter(bot_username="agent")
+        for index, text in enumerate(
+            (
+                "/memory_forget_group@some_other_bot CONFIRM",
+                "/weather@some_other_bot Shanghai",
+            ),
+            start=200,
+        ):
+            with self.subTest(text=text):
+                command = text.split(maxsplit=1)[0]
+                update = {
+                    "update_id": index,
+                    "message": {
+                        "message_id": index,
+                        "date": 1781769600,
+                        "chat": {"id": -100123, "type": "supergroup"},
+                        "from": {"id": 42, "first_name": "Alice"},
+                        "text": text,
+                        "entities": [
+                            {
+                                "type": "bot_command",
+                                "offset": 0,
+                                "length": len(command),
+                            }
+                        ],
+                    },
+                }
+
+                self.assertEqual([], adapter.normalize_update(update))
 
 
 if __name__ == "__main__":

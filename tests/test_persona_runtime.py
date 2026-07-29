@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 import unittest
+from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
@@ -9,13 +11,24 @@ from threading import Event
 from helpers import ScriptedModelClient
 
 from group_llm_agent.app import run
+from group_llm_agent.database import SQLiteDatabase
+from group_llm_agent.events import (
+    EffectRequest,
+    ExternalEffectKind,
+    FinalEffect,
+    FinalEffectKind,
+    TriggerPath,
+)
+from group_llm_agent.messages import MessageRepository
 from group_llm_agent.model import ModelRole, StructuredModelResult
 from group_llm_agent.persona import CharacterBundle, load_character_bundle
 from group_llm_agent.platforms.telegram import (
     ChatMemberStatus,
     SentMessage,
+    TelegramAdapter,
     TelegramMemberStatus,
 )
+from group_llm_agent.runs import RunRepository
 from group_llm_agent.runtime import RecognitionBackgroundWorker
 
 
@@ -180,6 +193,140 @@ class PersonaRuntimeTests(unittest.TestCase):
             self.assertEqual([], second_client.sent)
             self.assertEqual([], second_model.calls)
 
+    def test_persisted_replay_resumes_before_claim_but_stops_after_claim_or_silence(
+        self,
+    ) -> None:
+        bundle = _bundle()
+        cases = (
+            ("ingested", True),
+            ("effect_processing", True),
+            ("effect_reply_completed", True),
+            ("external_claimed", False),
+            ("effect_silence", False),
+        )
+        for state, should_resume in cases:
+            with self.subTest(state=state), TemporaryDirectory() as tmpdir:
+                database_path = Path(tmpdir) / "runtime.sqlite3"
+                update = _update(1, direct=True)
+                event = TelegramAdapter(bot_username="agent").normalize_update(update)[0]
+                database = SQLiteDatabase(database_path)
+                database.initialize()
+                messages = MessageRepository(database)
+                messages.policies.set_memory_status(
+                    chat_id=event.group_id,
+                    status="enabled",
+                    persona=bundle.snapshot,
+                    notice_message_id="notice",
+                    enabled_by_user_id="admin",
+                )
+                ingested = messages.ingest_inbound(
+                    event,
+                    persona=bundle.snapshot,
+                    recognition_policy_version="recognition-v1",
+                )
+                self.assertFalse(ingested.duplicate)
+                runs = RunRepository(database)
+                request = EffectRequest(
+                    request_id=_effect_request_id(event.group_id, event.event_id),
+                    trigger_path=TriggerPath.DIRECT,
+                    trigger_reason="direct_address",
+                    message=event,
+                    persona=bundle.snapshot,
+                    deadline_at=datetime.now(UTC) + timedelta(seconds=20),
+                )
+                if state in {"effect_processing", "effect_reply_completed", "effect_silence"}:
+                    run_id = runs.start_effect_run(request)
+                    if state == "effect_reply_completed":
+                        runs.complete_effect_run(
+                            effect_run_id=run_id,
+                            effect=FinalEffect(
+                                kind=FinalEffectKind.REPLY,
+                                reason_code="lost_before_claim",
+                                persona=bundle.snapshot,
+                                text="未声明的旧回答。",
+                            ),
+                            model_call_count=1,
+                            tool_call_count=0,
+                        )
+                    elif state == "effect_silence":
+                        runs.complete_effect_run(
+                            effect_run_id=run_id,
+                            effect=FinalEffect(
+                                kind=FinalEffectKind.SILENCE,
+                                reason_code="intentional_silence",
+                                persona=bundle.snapshot,
+                            ),
+                            model_call_count=1,
+                            tool_call_count=0,
+                        )
+                elif state == "external_claimed":
+                    effect_id = runs.claim_external_effect(
+                        message=event,
+                        effect_kind=ExternalEffectKind.REPLY,
+                        persona=bundle.snapshot,
+                    )
+                    self.assertIsNotNone(effect_id)
+
+                client = PersonaTelegramClient([update])
+                model = (
+                    ScriptedModelClient(
+                        StructuredModelResult(
+                            {
+                                "kind": "reply",
+                                "reason_code": "recovered",
+                                "text": "恢复后的唯一回答。",
+                            }
+                        )
+                    )
+                    if should_resume
+                    else ScriptedModelClient()
+                )
+
+                exit_code = run(
+                    _env(bundle, database_path, mode="persona_direct"),
+                    client_factory=lambda *_args, _client=client, **_kwargs: _client,
+                    model_factory=lambda _settings, _model=model: _model,
+                )
+
+                self.assertEqual(0, exit_code)
+                self.assertEqual(should_resume, bool(client.sent))
+                self.assertEqual(should_resume, bool(model.calls))
+                connection = sqlite3.connect(database_path)
+                try:
+                    effect_run_count = connection.execute(
+                        "SELECT count(*) FROM effect_runs"
+                    ).fetchone()[0]
+                    external_count = connection.execute(
+                        "SELECT count(*) FROM external_effects"
+                    ).fetchone()[0]
+                finally:
+                    connection.close()
+                self.assertLessEqual(effect_run_count, 1)
+                self.assertEqual(
+                    1 if should_resume or state == "external_claimed" else 0, external_count
+                )
+
+    def test_internal_writer_content_is_never_sent_to_telegram(self) -> None:
+        bundle = _bundle()
+        leaked = "BEGIN_UNTRUSTED_GROUP_CONTEXT member_memory effective_confidence"
+        with TemporaryDirectory() as tmpdir:
+            database_path = Path(tmpdir) / "runtime.sqlite3"
+            client = PersonaTelegramClient([_update(1, direct=True)])
+            model = ScriptedModelClient(
+                StructuredModelResult({"kind": "reply", "reason_code": "leak", "text": leaked})
+            )
+
+            exit_code = run(
+                _env(bundle, database_path, mode="persona_direct"),
+                client_factory=lambda *_args, **_kwargs: client,
+                model_factory=lambda _settings: model,
+            )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual(1, len(client.sent))
+            self.assertNotIn(leaked, client.sent[0][1])
+            self.assertEqual("我这会儿有点卡住了，稍后再试试。", client.sent[0][1])
+
     def test_invalid_bundle_fails_before_telegram_identity_or_polling(self) -> None:
         bundle = _bundle()
         with TemporaryDirectory() as tmpdir:
@@ -264,6 +411,11 @@ def _update(index: int, *, direct: bool = False) -> dict[str, object]:
     if direct:
         message["entities"] = [{"type": "bot_command", "offset": 0, "length": len(text)}]
     return {"update_id": index, "message": message}
+
+
+def _effect_request_id(chat_id: str, event_id: str) -> str:
+    value = f"{chat_id}\0{event_id}".encode()
+    return f"effect:{sha256(value).hexdigest()}"
 
 
 if __name__ == "__main__":

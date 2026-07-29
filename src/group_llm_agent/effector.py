@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from group_llm_agent.context import ContextAssembler, EffectContext
 from group_llm_agent.events import (
@@ -28,6 +31,21 @@ _WRITER_RESPONSE_SCHEMA = {
     "description": "reply, silence, or one application-owned read-only tool call",
 }
 _DEFAULT_FAILURE_REPLY = "我这会儿有点卡住了，稍后再试试。"
+_LEAKAGE_MARKER_PATTERN = re.compile(
+    r"(?:BEGIN|END)_UNTRUSTED|"
+    r"AVAILABLE_TOOLS|CHARACTER_(?:EFFECTOR|TRIGGER|RECOGNITION)_POLICY|"
+    r"CHARACTER_EXAMPLES|UNTRUSTED_(?:GROUP_CONTEXT|GROUP_EVIDENCE|TOOL_RESULT)|"
+    r"\b(?:member_memory|memory_id|source_message_ids?|effective_confidence|"
+    r"persona_digest|persona_version|recognition_policy_version|tool_name|"
+    r"tool_arguments|tool_purpose_code|used_memory_ids|used_tool_call_ids|"
+    r"protocol_history|model_calls_remaining|tool_calls_remaining)\b|"
+    r"\b(?:system prompt|internal instructions?)\b|系统提示词|内部指令",
+    re.IGNORECASE,
+)
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
 
 
 @dataclass(frozen=True)
@@ -54,6 +72,7 @@ class WriterEffector:
         runs: RunRepository,
         budgets: EffectorBudgets | None = None,
         failure_reply_text: str = _DEFAULT_FAILURE_REPLY,
+        clock: Callable[[], datetime] = _utc_now,
     ) -> None:
         if not failure_reply_text.strip() or len(failure_reply_text) > 4_096:
             raise ValueError("failure_reply_text must be non-empty and at most 4096 characters")
@@ -63,6 +82,7 @@ class WriterEffector:
         self.runs = runs
         self.budgets = budgets or EffectorBudgets()
         self.failure_reply_text = failure_reply_text
+        self.clock = clock
 
     def execute(
         self,
@@ -159,6 +179,21 @@ class WriterEffector:
 
             if decision.kind is WriterDecisionKind.REPLY:
                 assert decision.text is not None
+                validation_error = _final_effect_validation_error(
+                    request=request,
+                    bundle=bundle,
+                    text=decision.text,
+                    completed_at=self.clock(),
+                )
+                if validation_error is not None:
+                    return self._degrade(
+                        request=request,
+                        effect_run_id=effect_run_id,
+                        model_call_count=model_call_number,
+                        tool_call_count=tool_call_count,
+                        used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                        reason_code=validation_error,
+                    )
                 final = FinalEffect(
                     kind=FinalEffectKind.REPLY,
                     reason_code=decision.reason_code,
@@ -174,6 +209,21 @@ class WriterEffector:
                 )
                 return final
             if decision.kind is WriterDecisionKind.SILENCE:
+                validation_error = _final_effect_validation_error(
+                    request=request,
+                    bundle=bundle,
+                    text=None,
+                    completed_at=self.clock(),
+                )
+                if validation_error is not None:
+                    return self._degrade(
+                        request=request,
+                        effect_run_id=effect_run_id,
+                        model_call_count=model_call_number,
+                        tool_call_count=tool_call_count,
+                        used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                        reason_code=validation_error,
+                    )
                 final = FinalEffect(
                     kind=FinalEffectKind.SILENCE,
                     reason_code=decision.reason_code,
@@ -258,6 +308,39 @@ class WriterEffector:
             tool_call_count=tool_call_count,
         )
         return final
+
+
+def _final_effect_validation_error(
+    *,
+    request: EffectRequest,
+    bundle: CharacterBundle,
+    text: str | None,
+    completed_at: datetime,
+) -> str | None:
+    """Fail closed at the application-owned boundary before an effect can be sent."""
+
+    if request.persona != bundle.snapshot:
+        return "final_persona_snapshot_mismatch"
+    if completed_at.tzinfo is None or request.deadline_at.tzinfo is None:
+        return "final_invalid_deadline"
+    if completed_at >= request.deadline_at:
+        return "final_deadline_exceeded"
+    if text is None:
+        return None
+    if not text.strip() or len(text) > 4_096:
+        return "final_invalid_text"
+    if _LEAKAGE_MARKER_PATTERN.search(text):
+        return "final_internal_content"
+    stripped = text.strip()
+    if stripped[:1] in {"{", "["} and stripped[-1:] in {"}", "]"}:
+        try:
+            parsed = json.loads(stripped)
+        except (TypeError, ValueError):
+            pass
+        else:
+            if isinstance(parsed, (dict, list)):
+                return "final_protocol_text"
+    return None
 
 
 def _writer_model_messages(

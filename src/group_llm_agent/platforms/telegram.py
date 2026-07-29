@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -199,7 +200,10 @@ class TelegramAdapter:
         message_id = str(message_id_value)
         sender_id = str(sender_id_value)
         display_name = _display_name(sender)
-        mentioned_bot = self._mentioned_bot(text, message)
+        is_bot_command, bot_command_target = _bot_command(text, message)
+        if bot_command_target is not None and not self._is_local_command_target(bot_command_target):
+            return []
+        mentioned_bot = self._mentioned_bot(text, is_bot_command=is_bot_command)
         replied_to_message_id, replied_to_user_id = _reply_metadata(message)
         mentioned_user_ids = _mentioned_user_ids(message)
 
@@ -215,24 +219,24 @@ class TelegramAdapter:
                 replied_to_message_id=replied_to_message_id,
                 replied_to_user_id=replied_to_user_id,
                 mentioned_user_ids=mentioned_user_ids,
-                is_bot_command=_is_bot_command(message),
+                is_bot_command=is_bot_command,
+                bot_command_target=bot_command_target,
                 timestamp=timestamp,
                 raw_event_ref=raw_event_ref,
             )
         ]
 
-    def _mentioned_bot(self, text: str, message: dict[str, Any]) -> bool:
-        if self.bot_username and f"@{self.bot_username.lower()}" in text.lower():
+    def _mentioned_bot(self, text: str, *, is_bot_command: bool) -> bool:
+        if self.bot_username and re.search(
+            rf"@{re.escape(self.bot_username)}(?![A-Za-z0-9_])",
+            text,
+            re.IGNORECASE,
+        ):
             return True
-        entities = message.get("entities") or []
-        if not isinstance(entities, list):
-            return False
-        for entity in entities:
-            if not isinstance(entity, dict):
-                continue
-            if entity.get("type") == "bot_command":
-                return True
-        return False
+        return is_bot_command
+
+    def _is_local_command_target(self, target: str) -> bool:
+        return self.bot_username is not None and target.casefold() == self.bot_username.casefold()
 
 
 def _display_name(sender: dict[str, Any]) -> str:
@@ -272,13 +276,23 @@ def _mentioned_user_ids(message: dict[str, Any]) -> tuple[str, ...]:
     return tuple(result)
 
 
-def _is_bot_command(message: dict[str, Any]) -> bool:
+def _bot_command(text: str, message: dict[str, Any]) -> tuple[bool, str | None]:
     entities = message.get("entities")
     if not isinstance(entities, list):
-        return False
-    return any(
-        isinstance(entity, dict)
-        and entity.get("type") == "bot_command"
-        and entity.get("offset") == 0
-        for entity in entities
-    )
+        return False, None
+    for entity in entities:
+        if (
+            not isinstance(entity, dict)
+            or entity.get("type") != "bot_command"
+            or entity.get("offset") != 0
+        ):
+            continue
+        length = entity.get("length")
+        if isinstance(length, bool) or not isinstance(length, int) or not 1 <= length <= len(text):
+            return False, None
+        token = text[:length]
+        if not token.startswith("/"):
+            return False, None
+        _, separator, target = token.partition("@")
+        return True, target if separator else None
+    return False, None

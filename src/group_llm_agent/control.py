@@ -64,6 +64,7 @@ class MemoryControlService:
         *,
         allowed_chat_id: str,
         bot_user_id: str,
+        bot_username: str | None,
         telegram: TelegramControlPort,
         messages: MessageRepository,
         memory: MemoryRepository,
@@ -72,6 +73,7 @@ class MemoryControlService:
     ) -> None:
         self.allowed_chat_id = allowed_chat_id
         self.bot_user_id = bot_user_id
+        self.bot_username = bot_username
         self.telegram = telegram
         self.messages = messages
         self.memory = memory
@@ -85,7 +87,7 @@ class MemoryControlService:
         persona: PersonaSnapshot,
         now: datetime | None = None,
     ) -> ControlOutcome:
-        command, argument = _parse_command(message.text)
+        command, argument = _parse_command(message.text, bot_username=self.bot_username)
         if command not in {
             _ENABLE_COMMAND,
             _DISABLE_COMMAND,
@@ -410,10 +412,21 @@ class MemoryControlService:
         )
 
 
-def _parse_command(text: str) -> tuple[str, str | None]:
+def _parse_command(
+    text: str,
+    *,
+    bot_username: str | None,
+) -> tuple[str, str | None]:
     parts = text.strip().split(maxsplit=1)
     if not parts:
         return "", None
-    command = parts[0].split("@", 1)[0].lower()
+    command_token, separator, target = parts[0].partition("@")
+    if separator and (
+        bot_username is None
+        or not target
+        or target.casefold() != bot_username.lstrip("@").casefold()
+    ):
+        return "", None
+    command = command_token.lower()
     argument = parts[1].strip() if len(parts) == 2 else None
     return command, argument

@@ -248,14 +248,17 @@ class PersonaMessageProcessor:
             persona=self.bundle.snapshot,
             recognition_policy_version=self.recognition_policy_version,
         )
-        if ingested.duplicate:
-            return ProcessingOutcome("duplicate", event.group_id, event.message_id)
         if (
             self.runs.get_external_effect(
                 chat_id=event.group_id,
                 trigger_event_id=event.event_id,
             )
             is not None
+        ):
+            return ProcessingOutcome("duplicate", event.group_id, event.message_id)
+        if ingested.duplicate and self.runs.has_terminal_silence(
+            chat_id=event.group_id,
+            trigger_event_id=event.event_id,
         ):
             return ProcessingOutcome("duplicate", event.group_id, event.message_id)
         post_ingest_platform = self.triggers.platform_gate.decide(event)
