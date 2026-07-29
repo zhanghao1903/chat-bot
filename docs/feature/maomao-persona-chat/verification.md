@@ -4,17 +4,25 @@ Status: IMPLEMENTATION VERIFIED; EXTERNAL PERSONA ACCEPTANCE PENDING
 
 ## 1. Verification Boundary
 
-All code, tests, packaging metadata, deployment assets and the production Character Bundle were
-exported from this immutable implementation snapshot before verification:
+The original implementation, packaging assets and production Character Bundle were completed at:
 
 ```text
 2576118f376c494e88772863762f7cc0bb9f356d
 ```
 
-The clean tree was created with `git archive`; it contained no untracked `uv.lock`, local `.env`,
-database, log, credential or build output. The later F5 documentation commit changes only
-documentation carriers and `CHANGELOG.md`; it is not presented as the implementation snapshot
-above.
+Review dispatch `bcfa31579c0af7da4e76d715fa0dee0498c1a9518b220952d1d8c1c8f00ecb4d`
+reviewed head `9b5cc44f53dcb962f9192546daada7b645339b68` and requested four changes.
+All four remediations and their regression tests were completed in this immutable implementation
+snapshot:
+
+```text
+7a03536766bfb5c8e5c699a0e4f2fd633c328114
+```
+
+The automated evidence below was rerun from a clean `git archive` of the remediation snapshot.
+It contained no untracked `uv.lock`, local `.env`, database, log, credential or build output.
+The current verification carrier is a documentation-only follow-up and is not presented as the
+implementation snapshot.
 
 Accepted upstream contracts:
 
@@ -28,15 +36,16 @@ Accepted upstream contracts:
 
 ## 2. Automated Evidence
 
-Checks were run on 2026-07-29 against the clean snapshot above:
+Checks were run on 2026-07-29 against clean remediation snapshot
+`7a03536766bfb5c8e5c699a0e4f2fd633c328114`:
 
 | Command/proof | Result |
 | --- | --- |
 | `python3 -m compileall -q src tests` | PASS |
-| `PYTHONPATH=src python3 -m unittest discover -s tests -v` | PASS, 103 tests |
+| `PYTHONPATH=src python3 -m unittest discover -s tests` | PASS, 111 tests |
 | `uvx ruff check .` | PASS |
-| `uvx ruff format --check .` | PASS, 54 files formatted |
-| `/opt/anaconda3/bin/mypy src` | PASS, 22 source files |
+| `uvx ruff format --check .` | PASS, 56 files formatted |
+| `uvx mypy src/group_llm_agent` | PASS, 23 source files |
 | `uv build --out-dir <clean temp>` | PASS, sdist and wheel produced |
 | Inspect wheel package data | PASS, all four `lezhi-v1.0` bundle files present |
 | Install wheel into a clean venv | PASS |
@@ -52,31 +61,40 @@ Checks were run on 2026-07-29 against the clean snapshot above:
 The built local image identity was:
 
 ```text
-sha256:71b3322c5d8bb82b951635a0d6afc1d0b65f186dad2593bfd207c48ae565b90e
+sha256:e88b30d5e05fa3821f3249d56190dc17303955ca7f59580789a8774c5ef0b9a6
 ```
 
 This is local build evidence, not a published release image or stable registry digest.
 
-## 3. Acceptance Matrix
+## 3. Review Finding Closure
+
+| Finding | Remediation evidence | Status |
+| --- | --- | --- |
+| FINDING-001 | Application-owned final-effect validation now rechecks the persona snapshot and deadline, rejects protocol JSON and internal/tool/memory markers, and degrades to direct failure reply or contextual silence. Unit tests cover marker, JSON, late-result and post-model snapshot failures; the runtime test proves leaked content is never sent. | FIXED |
+| FINDING-002 | `memory_safety.py` normalizes untrusted proposals and rejects prohibited categories, named parties/religions/conditions, multilingual variants, uncertain sensitive relations and high-impact decisions. Semantic bypass tests include Democratic Party support, Sunday mass, Jainism, Crohn's treatment, financial default, Chinese religious phrasing and hiring suitability while retaining a safe observation. | FIXED |
+| FINDING-003 | Telegram command entities retain their target; the adapter drops foreign-target commands before classification, and `MemoryControlService` independently validates the target against the authenticated username. Destructive and ordinary foreign-bot command tests prove no authorization, mutation, audit or send occurs. | FIXED |
+| FINDING-004 | Durable ingestion deduplication is now distinct from terminal effect processing. A replay without an external-effect claim restarts the same unique effect/trigger run; an existing claim or intentional silence remains terminal. Restart tests cover ingestion-only, processing, completed-reply-before-claim, claimed, silence and already-sent boundaries. | FIXED |
+
+## 4. Acceptance Matrix
 
 | Acceptance criterion | Deterministic evidence | Status |
 | --- | --- | --- |
 | AC-001 | Accepted Character Bible bytes/digest, bundle confirmation references, `test_production_persona` | PASS |
 | AC-002 | Original character fields, 15 examples, prohibited-identity scan, fixed cases 001/002/022 | PASS (static contract) |
-| AC-003 | `test_trigger`, `test_effector`, `test_persona_runtime`; one immutable persona snapshot and one external effect | PASS |
+| AC-003 | `test_trigger`, `test_effector`, `test_persona_runtime`; one immutable persona snapshot, resumable pre-claim run and one external effect | PASS |
 | AC-004 | Direct/contextual model-failure degradation, unknown-member and timeout tests | PASS |
 | AC-005 | `ContextAssembler`, `lookup_member_memory`, `search_recent_group_messages`, memory/recognition tests | PASS |
 | AC-006 | Zero-tool writer path, empty/unavailable tool handling, contextual silence | PASS |
 | AC-007 | Invalid/injected tool rejection, untrusted-result delimiters, factual/safety Character Bundle rules | PASS |
-| AC-008 | Three-model/two-tool/deadline limits and audited tool-result tests | PASS |
+| AC-008 | Three-model/two-tool limits, audited tool results and post-model deadline rejection | PASS |
 | AC-009 | Effector cannot write memory; independent Recognition job/worker tests | PASS |
 | AC-010 | Additive schema, group/member/category/source/time/confidence repository tests | PASS |
 | AC-011 | Later-evidence revision/revoke, confidence decay and database-conflict tests | PASS |
 | AC-012 | Unknown-member context is empty and Character Bundle forbids invented familiarity | PASS |
 | AC-013 | Relationship states, fixed cases 006/007/019–021 and shared snapshot | PASS (static contract); provider comparison pending |
-| AC-014 | Third-person disclosure prohibition, scoped tool inputs and reset/control tests | PASS (contract and enforcement) |
+| AC-014 | Third-person disclosure prohibition, scoped tool inputs, final leakage rejection and never-send runtime test | PASS (contract and enforcement) |
 | AC-015 | Cross-group foreign-key, search, reset and memory-scope tests | PASS |
-| AC-016 | Sensitive inference and risk-score rejection tests | PASS |
+| AC-016 | Normalized semantic sensitive-inference, named-entity, multilingual and high-impact decision rejection tests | PASS |
 | AC-017 | Capability/notice/administrator checks; persistence begins only after successful notice | PASS |
 | AC-018 | Self/member/group reset, reset generation and stale-job race tests | PASS |
 | AC-019 | Twenty-message bound, raw-text expiry and restart-compatible derived memory tests | PASS |
@@ -88,7 +106,7 @@ The matrix distinguishes system correctness from model quality. Scripted model t
 determinism, scope, idempotency and failure behavior; they do not claim that an operator-selected
 model has passed the five-dimension persona rubric.
 
-## 4. Production Persona Evidence
+## 5. Production Persona Evidence
 
 Static bundle conformance passed:
 
@@ -104,7 +122,7 @@ Static bundle conformance passed:
 The provider behavioral gate is recorded separately in
 `docs/feature/maomao-persona-chat/persona-evaluation.md`.
 
-## 5. External Proof Not Executed
+## 6. External Proof Not Executed
 
 The following checks require operator-owned credentials, external service consumption and/or
 real-group authorization and were not run:
@@ -119,7 +137,7 @@ real-group authorization and were not run:
 The earlier Telegram `1 → 1` user-side smoke belongs to the prior 0.1 feature and is not
 misrepresented as persona-mode proof for this snapshot.
 
-## 6. Rollout And Release Decision
+## 7. Rollout And Release Decision
 
 - Default and rollback mode: `fixed`.
 - Production persona activation: explicit path, exact digest and model configuration only.
@@ -128,4 +146,4 @@ misrepresented as persona-mode proof for this snapshot.
 - Release publication: not requested; no package version, tag, registry image or GitHub release
   was created.
 - Current decision: repository implementation is reviewable; real-group persona rollout remains
-  blocked by the external proof in section 5.
+  blocked by the external proof in section 6.
