@@ -115,7 +115,7 @@ Supported roles and response schemas:
 | --- | --- |
 | `trigger` | `{"kind":"engage|silence","reason_code":"..."}` |
 | `writer` | reply, silence or one application-owned tool call |
-| `recognition` | bounded list of typed memory proposals |
+| `recognition` | bounded proposals containing only application-owned safe semantic keys |
 
 Tests use `ScriptedModelClient`; production never falls back to a mock response.
 
@@ -331,7 +331,9 @@ Behavior:
 - enqueue a recognition job in the same transaction as persistent message ingestion;
 - run a background worker with a separate SQLite connection;
 - lease/recover jobs and call the Recognition view/model once;
-- validate subject, sources, categories, sensitive boundaries and reset generation;
+- resolve exact application-owned `(semantic_key, category)` pairs, render canonical
+  persistent statements, and validate subject, sources and reset generation;
+- reject unknown/mismatched semantic keys and any model-authored persistent statement;
 - apply proposals atomically with one database conflict retry and no second model call;
 - retry provider failures with persisted bounded backoff, max three attempts;
 - mark old-persona pending jobs `superseded`;
@@ -342,7 +344,10 @@ Proof:
 - recognition failure does not affect reply/polling;
 - Character Bundle relationship rules change impression/preference fixtures;
 - facts remain persona-neutral while impressions/preferences bind the exact bundle;
-- cross-group/sensitive/fabricated-source proposals are rejected;
+- cross-group/fabricated-source proposals are rejected;
+- sensitive paraphrases, named entities, high-impact judgments and free-form persistent text
+  cannot cross the closed semantic boundary, while explicit benign group-relation semantics
+  persist through the repository boundary;
 - reset racing a leased job prevents stale commit;
 - expired lease recovery and dead-job behavior.
 
@@ -521,7 +526,8 @@ Every slice must preserve:
 4. only ReplyCommitter performs Telegram writes;
 5. one external effect per `(chat_id, trigger_event_id)`;
 6. no model-supplied group scope, member scope, credentials or external action;
-7. no cross-group/private/external-profile recognition;
+7. no cross-group/private/external-profile recognition and no model-authored persistent
+   statement;
 8. no persistence before successful group notice;
 9. no old queued work restoring reset memory;
 10. fixed mode remains the default rollback path.

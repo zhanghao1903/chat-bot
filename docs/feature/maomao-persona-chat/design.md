@@ -107,7 +107,7 @@ flowchart TD
 | `ReadOnlyToolRegistry` | 工具注册、参数校验、群范围、预算和审计。 | 注册外部写工具或把工具结果当作可信指令。 |
 | `ReplyCommitter` | 单触发 claim、发送、结果状态和出站消息入库。 | 生成内容或自动重试不确定发送。 |
 | `RecognitionWorker` | 独立消费持久队列并提出认识变更。 | 生成 Telegram 回复或阻塞 polling/effector。 |
-| `RecognitionPolicyValidator` | 来源、类别、敏感属性、置信度、版本和 reset barrier 校验。 | 相信模型给出的群、成员或 source ID。 |
+| `RecognitionPolicyValidator` | 来源、封闭安全语义、类别、置信度、版本和 reset barrier 校验；由应用生成持久化文本。 | 相信模型给出的群、成员、source ID 或自由文本认识。 |
 | `MemberMemoryRepository` | 认识项、来源、修订、撤销、有效置信度和群隔离。 | 返回其他群或已重置内容。 |
 | `MemoryControlService` | 启用说明、禁用、自助/管理员重置和权限检查。 | 披露内部认识或在权限不确定时执行。 |
 | `AuditRepository` | 记录结构化运行、工具、认识变更和重置元数据。 | 保存 token、完整 prompt、思维链或无界消息正文。 |
@@ -259,7 +259,7 @@ MemberMemoryItem
   chat_id
   member_user_id
   category                 # fact | observation | impression | shared_experience | preference
-  statement
+  statement                 # application-rendered canonical text, never model-authored
   stored_confidence        # decimal in [0, 1]
   effective_confidence     # calculated at read time
   first_observed_at
@@ -306,14 +306,18 @@ RecognitionProposal
   subject_user_id
   operation                # add | strengthen | revise | weaken | revoke
   category
-  statement
+  semantic_key             # exact application-owned safe semantic
   confidence
   source_message_ids[]
   supersedes_memory_id?
 ```
 
 The worker derives `chat_id`, allowed subjects and allowed source IDs from the claimed job.
-Model-returned identity or source values outside that envelope are rejected.
+Model-returned identity or source values outside that envelope are rejected. The model cannot
+author persistent statement text. The application resolves an exact `(semantic_key, category)`
+pair through an immutable safe registry and renders the canonical `MemberMemoryItem.statement`;
+unknown or mismatched keys and any extra free-form `statement` field are rejected before the
+persistence boundary.
 
 ## 5. Persistence Model
 
@@ -599,7 +603,8 @@ separate SQLite connection:
 3. load the exact Character Bundle version/digest captured by the job and compile its
    recognition policy view;
 4. make one structured recognition-model call outside any database transaction;
-5. validate proposed identities, sources, categories and sensitive boundaries;
+5. resolve the exact application-owned safe semantic and validate identities, sources,
+   categories and reset boundaries;
 6. atomically apply accepted changes with optimistic revision checks;
 7. mark the job complete and append audit metadata.
 
@@ -627,8 +632,12 @@ The validator rejects a proposal when:
   participant in the source event;
 - any source message is from another group, purged by reset, older than the reset barrier or
   absent from the job envelope;
-- the proposal infers political views, religion, sexual orientation, disease, exact address,
-  financial condition or a high-impact risk score;
+- `semantic_key` is unknown, does not match `category`, or the response contains a free-form
+  persistent `statement`;
+- no application-owned safe semantic represents the evidence. This fail-closed rule covers
+  political views, religion, sexual orientation, disease, exact address, financial condition,
+  high-impact scores and their paraphrases or named entities without trying to enumerate their
+  vocabulary;
 - an impression or subjective preference is labeled as fact or lacks the captured persona
   version;
 - confidence is out of range, source support is missing, or a one-off message is proposed as
@@ -636,7 +645,9 @@ The validator rejects a proposal when:
 - the group memory policy was disabled or reset after the job was created.
 
 Recognition prompts treat messages as untrusted evidence and have no tools or external-write
-capability.
+capability. The safe registry contains explicit ordinary group behaviors such as supporting a
+member, supporting a group plan and joining a group activity, so benign relationship language
+does not depend on a generic relation-word blacklist.
 
 ### 9.3 Concurrency And Conflict
 

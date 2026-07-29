@@ -45,12 +45,12 @@ class RecognitionWorkerTests(unittest.TestCase):
                     _proposal(
                         operation="add",
                         category="fact",
-                        statement="The member publicly said they enjoy puzzle games.",
+                        semantic_key="stated_interest_games",
                     ),
                     _proposal(
                         operation="add",
                         category="impression",
-                        statement="The member currently welcomes playful follow-up questions.",
+                        semantic_key="welcomes_playful_follow_up",
                         confidence=0.72,
                     ),
                 )
@@ -67,6 +67,7 @@ class RecognitionWorkerTests(unittest.TestCase):
             self.assertEqual(ModelRole.RECOGNITION, model.calls[0]["model_role"])
             system = model.calls[0]["messages"][0].content
             self.assertIn("relationship_stance", system)
+            self.assertIn("SAFE_MEMORY_SEMANTICS", system)
             self.assertIn("No tools or external actions", system)
             connection = database.connect()
             try:
@@ -110,24 +111,29 @@ class RecognitionWorkerTests(unittest.TestCase):
                     _proposal(
                         operation="add",
                         category="fact",
-                        statement="The member has a specific political affiliation.",
+                        semantic_key="political_affiliation",
                     ),
                     _proposal(
                         operation="add",
                         category="observation",
-                        statement="Unsupported other-group observation.",
+                        semantic_key="asked_question",
                         source_message_ids=["99"],
                     ),
                     _proposal(
                         operation="add",
                         category="observation",
-                        statement="Wrong subject observation.",
+                        semantic_key="asked_question",
                         subject_user_id="member-b",
                     ),
                     _proposal(
                         operation="add",
                         category="observation",
-                        statement="The member asked a public follow-up question.",
+                        semantic_key="asked_follow_up",
+                    ),
+                    _proposal(
+                        operation="add",
+                        category="fact",
+                        semantic_key="supported_member",
                     ),
                 )
             )
@@ -160,16 +166,14 @@ class RecognitionWorkerTests(unittest.TestCase):
             )
             self.assertEqual("completed", job_status)
 
-    def test_semantic_sensitive_bypasses_and_high_impact_scores_are_rejected(self) -> None:
+    def test_closed_semantics_reject_sensitive_unknowns_and_allow_group_relations(self) -> None:
         bundle = _bundle()
-        unsafe_statements = (
-            "The member supports the Democratic Party.",
-            "The member attends Sunday mass.",
-            "The member needs a co-signer after two defaults.",
-            "The member observes Jainism.",
-            "The member takes Humira for Crohn's.",
-            "这位成员每周去教堂做礼拜。",
-            "The member is a strong hiring candidate.",
+        unsafe_semantics = (
+            "registered_democrat",
+            "dnc_donation",
+            "sunni_practice",
+            "lithium_treatment",
+            "strong_hiring_candidate",
         )
         with temporary_database() as database:
             messages = MessageRepository(database)
@@ -181,14 +185,24 @@ class RecognitionWorkerTests(unittest.TestCase):
                         _proposal(
                             operation="add",
                             category="observation",
-                            statement=statement,
+                            semantic_key=semantic_key,
                         )
-                        for statement in unsafe_statements
+                        for semantic_key in unsafe_semantics
                     ),
                     _proposal(
                         operation="add",
                         category="observation",
-                        statement="The member asked a public follow-up question.",
+                        semantic_key="supported_member",
+                    ),
+                    _proposal(
+                        operation="add",
+                        category="observation",
+                        semantic_key="supported_group_plan",
+                    ),
+                    _proposal(
+                        operation="add",
+                        category="observation",
+                        semantic_key="joined_group_activity",
                     ),
                 )
             )
@@ -210,9 +224,47 @@ class RecognitionWorkerTests(unittest.TestCase):
             finally:
                 connection.close()
             self.assertEqual(
-                ["The member asked a public follow-up question."],
+                [
+                    "The member supported another group member.",
+                    "The member supported a public group plan.",
+                    "The member joined a public group activity.",
+                ],
                 statements,
             )
+
+    def test_free_form_persistent_statement_is_not_part_of_model_contract(self) -> None:
+        bundle = _bundle()
+        with temporary_database() as database:
+            messages = MessageRepository(database)
+            _enable(messages, bundle, chat_id="group-a")
+            _ingest(messages, bundle, chat_id="group-a", message_id="1")
+            proposal = _proposal(
+                operation="add",
+                category="observation",
+                semantic_key="supported_member",
+            )
+            proposal["statement"] = "The member is a registered Democrat."
+            model = ScriptedModelClient(_proposals(proposal))
+
+            RecognitionWorker(
+                database=database,
+                model=model,
+                messages=messages,
+            ).run_once(bundle=bundle, now=_BASE_TIME)
+
+            connection = database.connect()
+            try:
+                memory_count = connection.execute(
+                    "SELECT count(*) FROM member_memory_items"
+                ).fetchone()[0]
+                job = connection.execute(
+                    "SELECT status, error_code FROM recognition_jobs"
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertEqual(0, memory_count)
+            self.assertEqual("retry", job["status"])
+            self.assertEqual("unexpected_fields", job["error_code"])
 
     def test_provider_failure_retries_with_backoff_then_becomes_dead(self) -> None:
         bundle = _bundle()
@@ -369,7 +421,7 @@ class RecognitionWorkerTests(unittest.TestCase):
                     _proposal(
                         operation="add",
                         category="observation",
-                        statement="The member asked a concrete question.",
+                        semantic_key="asked_question",
                     )
                 )
             )
@@ -415,7 +467,7 @@ class ResetDuringRecognitionModel:
             _proposal(
                 operation="add",
                 category="fact",
-                statement="This stale proposal must not be committed.",
+                semantic_key="made_public_group_commitment",
             )
         )
 
@@ -488,7 +540,7 @@ def _proposal(
     *,
     operation: str,
     category: str,
-    statement: str,
+    semantic_key: str,
     confidence: float = 0.7,
     source_message_ids: list[str] | None = None,
     subject_user_id: str = "member-a",
@@ -498,7 +550,7 @@ def _proposal(
         "subject_user_id": subject_user_id,
         "operation": operation,
         "category": category,
-        "statement": statement,
+        "semantic_key": semantic_key,
         "confidence": confidence,
         "source_message_ids": source_message_ids or ["1"],
         "supersedes_memory_id": supersedes_memory_id,

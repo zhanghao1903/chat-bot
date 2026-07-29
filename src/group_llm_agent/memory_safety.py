@@ -1,89 +1,212 @@
 from __future__ import annotations
 
-import re
-import unicodedata
+from dataclasses import dataclass
+from enum import StrEnum
+from types import MappingProxyType
+from typing import Final
 
-# These rules are application-owned and intentionally conservative. Recognition model output
-# is untrusted: a proposal is rejected when it names a prohibited attribute or uses a relation
-# that could encode one without naming the category.
-_PROHIBITED_ATTRIBUTE_PATTERNS = (
-    re.compile(
-        r"\b(?:politic(?:al|s)?|party affiliation|democratic party|republican party|"
-        r"communist party|labou?r party|conservative party|liberal party|green party|"
-        r"gop|ccp|cpc|communis[mt]|socialis[mt]|fascis[mt])\b|"
-        r"政治|政党|党派|民主党|共和党|共产党|国民党|工党|保守党|自民党|民进党|"
-        r"共产主义|社会主义|法西斯",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:religio(?:n|us)|christian(?:ity)?|catholic|protestant|muslim|islam(?:ic)?|"
-        r"jewish|judaism|buddhis[mt]|hindu(?:ism)?|sikh(?:ism)?|mormon|atheis[mt]|"
-        r"jain(?:ism)?|tao(?:ism|ist)?|shinto|bah[aá]['’]?i|church|mosque|synagogue|"
-        r"worship|bapti[sz]ed|ramadan)\b|"
-        r"宗教|基督徒?|天主教|新教|伊斯兰教|穆斯林|犹太教|佛教徒?|印度教|锡克教|"
-        r"摩门教|无神论|教堂|清真寺|犹太会堂|礼拜|祈祷|受洗",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:sexual orientation|homosexual|heterosexual|bisexual|lesbian|gay|"
-        r"lgbtq?\+?|queer|came out)\b|性取向|同性恋|异性恋|双性恋|女同性恋|男同性恋|"
-        r"酷儿|出柜",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:disease|medical condition|medical history|diagnos(?:is|ed)|prescription|"
-        r"medication|diabet(?:es|ic)|cancer|depression|anxiety disorder|bipolar|adhd|"
-        r"autis[mt]|hiv|aids|epilepsy|asthma|schizophrenia|ptsd|ocd|crohn['’]?s?|"
-        r"arthritis|hypertension|humira|metformin|insulin|prozac|sertraline)\b|"
-        r"疾病|病史|病历|确诊|处方|服药|药物|糖尿病|癌症|抑郁症|焦虑症|双相|"
-        r"注意力缺陷|自闭症|艾滋|癫痫|哮喘|精神分裂|创伤后|强迫症|克罗恩|"
-        r"关节炎|高血压|二甲双胍|胰岛素",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:exact address|home address|street address|postal code|zip code|"
-        r"(?:lives?|resides?) at \d+)\b|精确地址|家庭住址|家住|住址|门牌号|邮政编码|"
-        r"邮编|住在.{0,20}(?:路|街|号|栋|单元|室)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"\b(?:financial condition|income|salary|net worth|account balance|debt|owes?|"
-        r"loan|mortgage|bankrupt(?:cy)?|credit(?:worthy| score)?|defaulted?|co-?signer)\b|"
-        r"财务状况|收入|月薪|年薪|资产|账户余额|欠债|负债|贷款|房贷|破产|信用|"
-        r"违约|担保人",
-        re.IGNORECASE,
-    ),
+from group_llm_agent.events import MemoryCategory
+
+
+class MemorySemanticKey(StrEnum):
+    """Application-owned meanings that are safe to persist as member memory."""
+
+    STATED_INTEREST_GAMES = "stated_interest_games"
+    STATED_INTEREST_READING = "stated_interest_reading"
+    STATED_INTEREST_MUSIC = "stated_interest_music"
+    STATED_INTEREST_FILM = "stated_interest_film"
+    STATED_INTEREST_FOOD = "stated_interest_food"
+    STATED_INTEREST_TECHNOLOGY = "stated_interest_technology"
+    STATED_INTEREST_ART = "stated_interest_art"
+    STATED_INTEREST_WRITING = "stated_interest_writing"
+    STATED_INTEREST_PHOTOGRAPHY = "stated_interest_photography"
+    STATED_INTEREST_PETS = "stated_interest_pets"
+    STATED_INTEREST_NATURE = "stated_interest_nature"
+    STATED_INTEREST_LEARNING = "stated_interest_learning"
+    STATED_INTEREST_TRAVEL = "stated_interest_travel"
+    STATED_INTEREST_SPORTS = "stated_interest_sports"
+    STATED_INTEREST_RECREATION = "stated_interest_recreation"
+    MADE_PUBLIC_GROUP_COMMITMENT = "made_public_group_commitment"
+    ASKED_QUESTION = "asked_question"
+    ASKED_FOLLOW_UP = "asked_follow_up"
+    ANSWERED_QUESTION = "answered_question"
+    SUPPORTED_MEMBER = "supported_member"
+    SUPPORTED_GROUP_PLAN = "supported_group_plan"
+    SHARED_RESOURCE = "shared_resource"
+    CORRECTED_INFORMATION = "corrected_information"
+    MADE_JOKE = "made_joke"
+    JOINED_GROUP_ACTIVITY = "joined_group_activity"
+    FOLLOWED_UP = "followed_up"
+    WELCOMES_PLAYFUL_FOLLOW_UP = "welcomes_playful_follow_up"
+    WELCOMES_DIRECT_FOLLOW_UP = "welcomes_direct_follow_up"
+    PREFERS_CONCISE_REPLIES = "prefers_concise_replies"
+    ENJOYS_PLAYFUL_EXCHANGE = "enjoys_playful_exchange"
+    PARTICIPATED_TOGETHER = "participated_together"
+    RESOLVED_QUESTION_TOGETHER = "resolved_question_together"
+
+
+@dataclass(frozen=True)
+class SafeMemorySemantic:
+    category: MemoryCategory
+    statement: str
+
+
+_SAFE_MEMORY_SEMANTICS: Final = MappingProxyType(
+    {
+        MemorySemanticKey.STATED_INTEREST_GAMES: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in games.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_READING: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in reading.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_MUSIC: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in music.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_FILM: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in film.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_FOOD: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in food.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_TECHNOLOGY: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in technology.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_ART: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in art.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_WRITING: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in writing.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_PHOTOGRAPHY: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in photography.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_PETS: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in pets.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_NATURE: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in nature.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_LEARNING: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in learning.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_TRAVEL: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in travel.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_SPORTS: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in sports.",
+        ),
+        MemorySemanticKey.STATED_INTEREST_RECREATION: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member publicly expressed interest in a recreational activity.",
+        ),
+        MemorySemanticKey.MADE_PUBLIC_GROUP_COMMITMENT: SafeMemorySemantic(
+            MemoryCategory.FACT,
+            "The member made a public commitment to the group.",
+        ),
+        MemorySemanticKey.ASKED_QUESTION: SafeMemorySemantic(
+            MemoryCategory.OBSERVATION,
+            "The member asked a public group question.",
+        ),
+        MemorySemanticKey.ASKED_FOLLOW_UP: SafeMemorySemantic(
+            MemoryCategory.OBSERVATION,
+            "The member asked a public follow-up question.",
+        ),
+        MemorySemanticKey.ANSWERED_QUESTION: SafeMemorySemantic(
+            MemoryCategory.OBSERVATION,
+            "The member answered a public group question.",
+        ),
+        MemorySemanticKey.SUPPORTED_MEMBER: SafeMemorySemantic(
+            MemoryCategory.OBSERVATION,
+            "The member supported another group member.",
+        ),
+        MemorySemanticKey.SUPPORTED_GROUP_PLAN: SafeMemorySemantic(
+            MemoryCategory.OBSERVATION,
+            "The member supported a public group plan.",
+        ),
+        MemorySemanticKey.SHARED_RESOURCE: SafeMemorySemantic(
+            MemoryCategory.OBSERVATION,
+            "The member shared a resource with the group.",
+        ),
+        MemorySemanticKey.CORRECTED_INFORMATION: SafeMemorySemantic(
+            MemoryCategory.OBSERVATION,
+            "The member corrected information in the group.",
+        ),
+        MemorySemanticKey.MADE_JOKE: SafeMemorySemantic(
+            MemoryCategory.OBSERVATION,
+            "The member made a joke in the group.",
+        ),
+        MemorySemanticKey.JOINED_GROUP_ACTIVITY: SafeMemorySemantic(
+            MemoryCategory.OBSERVATION,
+            "The member joined a public group activity.",
+        ),
+        MemorySemanticKey.FOLLOWED_UP: SafeMemorySemantic(
+            MemoryCategory.OBSERVATION,
+            "The member followed up on an earlier group discussion.",
+        ),
+        MemorySemanticKey.WELCOMES_PLAYFUL_FOLLOW_UP: SafeMemorySemantic(
+            MemoryCategory.IMPRESSION,
+            "The member currently welcomes playful follow-up questions.",
+        ),
+        MemorySemanticKey.WELCOMES_DIRECT_FOLLOW_UP: SafeMemorySemantic(
+            MemoryCategory.IMPRESSION,
+            "The member currently welcomes direct follow-up questions.",
+        ),
+        MemorySemanticKey.PREFERS_CONCISE_REPLIES: SafeMemorySemantic(
+            MemoryCategory.PREFERENCE,
+            "The member currently prefers concise replies.",
+        ),
+        MemorySemanticKey.ENJOYS_PLAYFUL_EXCHANGE: SafeMemorySemantic(
+            MemoryCategory.PREFERENCE,
+            "The member currently enjoys playful group exchanges.",
+        ),
+        MemorySemanticKey.PARTICIPATED_TOGETHER: SafeMemorySemantic(
+            MemoryCategory.SHARED_EXPERIENCE,
+            "The member and character participated in a public group activity together.",
+        ),
+        MemorySemanticKey.RESOLVED_QUESTION_TOGETHER: SafeMemorySemantic(
+            MemoryCategory.SHARED_EXPERIENCE,
+            "The member and character resolved a public group question together.",
+        ),
+    }
 )
-_UNCERTAIN_SENSITIVE_RELATION = re.compile(
-    r"\b(?:supports?|backs?|votes? for|campaigns? for|affiliated with|member of|"
-    r"converted to|attends?.{0,16}\b(?:mass|services?)|prays?|takes? [a-z][\w-]* "
-    r"(?:daily|every|for treatment)|prescribed|treated for|suffers? from|living with|"
-    r"came out as|attracted to|resides? at|lives? at|earns?|makes? \$|owes?)\b|"
-    r"支持|拥护|投票给|隶属于|加入.{0,12}党|信奉|皈依|每周.{0,8}礼拜|做礼拜|"
-    r"服用|被诊断|确诊为|住在|家住|月入|年收入|欠了",
-    re.IGNORECASE,
-)
-_HIGH_IMPACT_DECISION = re.compile(
-    r"\b(?:risk score|risk rating|credit risk|creditworthy|hiring candidate|"
-    r"employment suitability|should (?:not )?be hired|loan eligibility|"
-    r"insurance risk|housing eligibility|education admission|criminal risk)\b|"
-    r"(?:高影响|信用|就业|招聘|贷款|保险|住房|入学|犯罪).{0,12}(?:评分|评级|"
-    r"风险|适合|资格)|(?:应该|不应).{0,8}(?:录用|放贷|承保|录取)",
-    re.IGNORECASE,
-)
 
 
-def memory_safety_rejection(statement: str) -> str | None:
-    """Return a stable rejection code for prohibited or uncertain member inferences."""
+def resolve_memory_semantic(
+    semantic_key: str,
+    category: MemoryCategory,
+) -> SafeMemorySemantic | None:
+    """Resolve only explicitly safe meanings; every unknown or mismatched key is rejected."""
 
-    normalized = unicodedata.normalize("NFKC", statement).casefold()
-    normalized = " ".join(normalized.split())
-    if not normalized:
-        return "empty_statement"
-    if _HIGH_IMPACT_DECISION.search(normalized):
-        return "high_impact_decision"
-    if any(pattern.search(normalized) for pattern in _PROHIBITED_ATTRIBUTE_PATTERNS):
-        return "sensitive_attribute"
-    if _UNCERTAIN_SENSITIVE_RELATION.search(normalized):
-        return "uncertain_sensitive_relation"
-    return None
+    try:
+        key = MemorySemanticKey(semantic_key)
+    except ValueError:
+        return None
+    semantic = _SAFE_MEMORY_SEMANTICS[key]
+    return semantic if semantic.category is category else None
+
+
+def memory_semantic_catalog() -> tuple[dict[str, str], ...]:
+    """Return the exact model-facing contract without exposing mutable policy state."""
+
+    return tuple(
+        {
+            "semantic_key": key.value,
+            "category": semantic.category.value,
+            "persisted_statement": semantic.statement,
+        }
+        for key, semantic in _SAFE_MEMORY_SEMANTICS.items()
+    )

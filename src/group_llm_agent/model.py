@@ -20,6 +20,7 @@ from group_llm_agent.events import (
     PersonaTriggerDecision,
     PersonaTriggerKind,
 )
+from group_llm_agent.memory_safety import resolve_memory_semantic
 
 _MAX_RESPONSE_BYTES = 256_000
 _MAX_MESSAGES = 32
@@ -97,6 +98,7 @@ class RecognitionProposal:
     subject_user_id: str
     operation: RecognitionOperation
     category: MemoryCategory
+    semantic_key: str
     statement: str
     confidence: float
     source_message_ids: tuple[str, ...]
@@ -312,7 +314,7 @@ def parse_recognition_proposals(
                 "subject_user_id",
                 "operation",
                 "category",
-                "statement",
+                "semantic_key",
                 "confidence",
                 "source_message_ids",
                 "supersedes_memory_id",
@@ -342,6 +344,12 @@ def parse_recognition_proposals(
         supersedes = item["supersedes_memory_id"]
         if supersedes is not None and not _is_identifier(supersedes, maximum=128):
             raise ModelResultError("invalid_supersedes_id")
+        semantic_key = _parse_identifier(
+            item["semantic_key"],
+            maximum=64,
+            category="invalid_semantic_key",
+        )
+        semantic = resolve_memory_semantic(semantic_key, category)
         parsed.append(
             RecognitionProposal(
                 subject_user_id=_parse_identifier(
@@ -351,11 +359,8 @@ def parse_recognition_proposals(
                 ),
                 operation=operation,
                 category=category,
-                statement=_parse_text(
-                    item["statement"],
-                    maximum=500,
-                    category="invalid_statement",
-                ),
+                semantic_key=semantic_key,
+                statement=semantic.statement if semantic is not None else "",
                 confidence=float(confidence),
                 source_message_ids=tuple(source_ids),
                 supersedes_memory_id=supersedes,
