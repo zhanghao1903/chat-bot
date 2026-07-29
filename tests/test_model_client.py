@@ -118,6 +118,63 @@ class ModelClientTests(unittest.TestCase):
         sent = json.loads(request.data.decode("utf-8"))  # type: ignore[union-attr]
         self.assertEqual({"type": "json_object"}, sent["response_format"])
         self.assertEqual("test-writer", sent["model"])
+        self.assertEqual("system", sent["messages"][0]["role"])
+        self.assertIn("OUTPUT_PROTOCOL:", sent["messages"][0]["content"])
+        self.assertIn(
+            'APPLICATION_RESPONSE_SCHEMA={"type":"object"}',
+            sent["messages"][0]["content"],
+        )
+        self.assertEqual(
+            {"role": "user", "content": "bounded test input"},
+            sent["messages"][1],
+        )
+
+    def test_response_schema_is_canonical_and_appended_to_existing_system_message(
+        self,
+    ) -> None:
+        opener = RecordingOpener(_response({"kind": "silence", "reason_code": "no_value"}))
+        client = _client(opener)
+
+        client.complete(
+            model_role=ModelRole.WRITER,
+            messages=(
+                ModelMessage("system", "application safety policy"),
+                ModelMessage("user", "bounded input"),
+            ),
+            response_schema={
+                "required": ["kind", "reason_code"],
+                "type": "object",
+            },
+            deadline=datetime.now(UTC) + timedelta(seconds=5),
+            max_output_tokens=200,
+            temperature=0.2,
+        )
+
+        request, _ = opener.requests[0]
+        sent = json.loads(request.data.decode("utf-8"))  # type: ignore[union-attr]
+        self.assertEqual(2, len(sent["messages"]))
+        system = sent["messages"][0]
+        self.assertTrue(system["content"].startswith("application safety policy\n"))
+        self.assertIn(
+            'APPLICATION_RESPONSE_SCHEMA={"required":["kind","reason_code"],"type":"object"}',
+            system["content"],
+        )
+
+    def test_non_json_response_schema_fails_before_network(self) -> None:
+        opener = RecordingOpener(_response({"kind": "silence", "reason_code": "no_value"}))
+        client = _client(opener)
+
+        with self.assertRaisesRegex(ValueError, "JSON serializable"):
+            client.complete(
+                model_role=ModelRole.WRITER,
+                messages=(ModelMessage("user", "bounded input"),),
+                response_schema={"invalid": object()},
+                deadline=datetime.now(UTC) + timedelta(seconds=5),
+                max_output_tokens=200,
+                temperature=0.2,
+            )
+
+        self.assertEqual([], opener.requests)
 
     def test_http_timeout_and_malformed_body_are_redacted(self) -> None:
         cases = (

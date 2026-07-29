@@ -735,8 +735,15 @@ failure categories are `timeout`, `authentication`, `rate_limited`, `invalid_res
 `provider_error` and `budget_exhausted`. API keys, request URLs containing secrets and raw
 provider bodies are never logged.
 
-The concrete provider adapter and package dependency are selected in F3. That selection cannot
-change the contracts, budgets, privacy notice or failure behavior defined here.
+The F3 adapter serializes the application-owned `response_schema` canonically into a
+high-priority system instruction and also supplies the role-specific exact JSON shapes in the
+Trigger, Writer and Recognition prompts. Provider `json_object` mode is only the transport
+envelope; it is not treated as schema enforcement. The application still performs strict
+role-specific parsing and fails closed on aliases, extra fields or invalid decisions. Schemas
+are bounded to 32 KiB before any network request.
+
+The concrete provider selection cannot change the contracts, budgets, privacy notice or
+failure behavior defined here.
 
 ### 11.3 Environment Settings
 

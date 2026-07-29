@@ -48,6 +48,9 @@ class WriterEffectorTests(unittest.TestCase):
             self.assertEqual(1, len(fixture.model.calls))
             self.assertEqual((), final.used_tool_call_ids)
             self.assertEqual(("reply", 1, 0), fixture.effect_run_summary())
+            system = fixture.model.calls[0]["messages"][0].content
+            self.assertIn('{"kind":"reply","reason_code":"snake_case"', system)
+            self.assertIn('Do not use {"reply":...}', system)
 
     def test_two_serial_tool_calls_then_reply_and_third_call_disables_tools(self) -> None:
         with EffectorFixtureContext(

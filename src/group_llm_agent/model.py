@@ -26,6 +26,7 @@ _MAX_RESPONSE_BYTES = 256_000
 _MAX_MESSAGES = 32
 _MAX_MESSAGE_CHARS = 80_000
 _MAX_TOOL_ARGUMENT_BYTES = 8_000
+_MAX_RESPONSE_SCHEMA_BYTES = 32_000
 _REASON_CODE = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
 _SAFE_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
 
@@ -162,6 +163,7 @@ class OpenAICompatibleStructuredModelClient:
             raise ValueError("max_output_tokens must be in [1, 8192]")
         if temperature < 0 or temperature > 2:
             raise ValueError("temperature must be in [0, 2]")
+        schema_instruction = _response_schema_instruction(response_schema)
         timeout = _remaining_timeout(deadline, maximum=self._timeout_seconds)
         if timeout <= 0:
             raise ModelApiError(model_role, ModelErrorCode.BUDGET_EXHAUSTED)
@@ -169,9 +171,10 @@ class OpenAICompatibleStructuredModelClient:
         body = json.dumps(
             {
                 "model": self._models[model_role],
-                "messages": [
-                    {"role": message.role, "content": message.content} for message in messages
-                ],
+                "messages": _messages_with_response_schema(
+                    messages,
+                    schema_instruction=schema_instruction,
+                ),
                 "response_format": {"type": "json_object"},
                 "temperature": temperature,
                 "max_tokens": max_output_tokens,
@@ -224,6 +227,41 @@ class OpenAICompatibleStructuredModelClient:
         if not isinstance(payload, dict):
             raise ModelApiError(model_role, ModelErrorCode.INVALID_RESPONSE)
         return StructuredModelResult(payload=payload)
+
+
+def _response_schema_instruction(response_schema: Mapping[str, Any]) -> str:
+    try:
+        encoded = json.dumps(
+            response_schema,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError):
+        raise ValueError("response_schema must be JSON serializable") from None
+    if len(encoded.encode("utf-8")) > _MAX_RESPONSE_SCHEMA_BYTES:
+        raise ValueError("response_schema is too large")
+    return (
+        "OUTPUT_PROTOCOL: Return exactly one JSON object matching "
+        "APPLICATION_RESPONSE_SCHEMA. Do not add fields, prose, or Markdown.\n"
+        f"APPLICATION_RESPONSE_SCHEMA={encoded}"
+    )
+
+
+def _messages_with_response_schema(
+    messages: Sequence[ModelMessage],
+    *,
+    schema_instruction: str,
+) -> list[dict[str, str]]:
+    wire = [{"role": message.role, "content": message.content} for message in messages]
+    if wire and wire[0]["role"] == "system":
+        wire[0] = {
+            "role": "system",
+            "content": f"{wire[0]['content']}\n{schema_instruction}",
+        }
+    else:
+        wire.insert(0, {"role": "system", "content": schema_instruction})
+    return wire
 
 
 def parse_trigger_decision(

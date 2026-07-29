@@ -180,6 +180,9 @@ class TriggerTests(unittest.TestCase):
             )
             self.assertEqual(1, len(model.calls))
             self.assertEqual(ModelRole.TRIGGER, model.calls[0]["model_role"])
+            system = model.calls[0]["messages"][0].content
+            self.assertIn('{"kind":"engage","reason_code":"snake_case"}', system)
+            self.assertIn('Do not use {"engage":...}', system)
             self.assertEqual(PersonaTriggerKind.ENGAGE, result.persona.kind)  # type: ignore[union-attr]
             assert result.effect_request is not None
             self.assertEqual(TriggerPath.CONTEXTUAL, result.effect_request.trigger_path)

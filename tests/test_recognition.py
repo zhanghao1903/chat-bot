@@ -69,6 +69,8 @@ class RecognitionWorkerTests(unittest.TestCase):
             self.assertIn("relationship_stance", system)
             self.assertIn("SAFE_MEMORY_SEMANTICS", system)
             self.assertIn("No tools or external actions", system)
+            self.assertIn('{"proposals":[{"subject_user_id":"exact subject ID"', system)
+            self.assertIn('Do not add a "statement" field', system)
             connection = database.connect()
             try:
                 rows = connection.execute(

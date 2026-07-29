@@ -102,6 +102,10 @@ The adapter:
 
 - accepts only an `https` base URL in production; test clients inject an opener;
 - validates the configured base URL before interpolating paths;
+- canonically serializes the bounded application `response_schema` into the leading system
+  instruction because OpenAI-compatible `json_object` mode does not itself enforce that schema;
+- keeps an explicit role-specific JSON shape in each Trigger, Writer and Recognition prompt,
+  including prohibited alias examples observed during provider UAT;
 - translates construction, HTTP, connection, response-body, timeout, decode and schema errors
   into redacted `ModelApiError` categories;
 - never logs the API key, request URL, raw provider body or prompt;
