@@ -1,6 +1,6 @@
 # Technical Design: 乐枝对话连续性触发 v0.2
 
-- Status: Proposed for implementation
+- Status: Approved for implementation
 - Feature: `lezhi-conversation-triggers-v0-2`
 - Requirements input: `1e467fe7942ae057424e8600eb493759d4bc456c`
 - Requirements handoff: `b98e47b6e4d49709c7e9d6d0477130da37caa92cd5fc3432ae6f17e7c85960e6`
