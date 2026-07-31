@@ -1,8 +1,8 @@
 # Telegram 群聊人格机器人
 
 这是一个面向单个 Telegram 公开群的长轮询机器人。它保留 0.1 的确定性
-`1 → 1` 模式，并新增原创人格“乐枝”、直接/选择性群聊触发、限次作家效应器、
-当前群上下文工具，以及需管理员公开启用的成员认识。
+`1 → 1` 模式，并提供原创人格“乐枝”、自然称呼与连续对话触发、选择性群聊参与、
+限次作家效应器、当前群上下文工具，以及需管理员公开启用的成员认识。
 
 `fixed` 仍是默认模式；人格能力不会因升级而静默开启。
 
@@ -11,11 +11,28 @@
 | `BOT_MODE` | 行为 |
 | --- | --- |
 | `fixed` | 仅在目标群收到精确文本 `1` 时回复一次 `1`；不调用模型 |
-| `persona_direct` | 仅在成员 @bot、回复 bot 或发送 bot command 时调用“乐枝”效应器 |
-| `persona_full` | 包含直接触发；普通消息至少间隔 15 分钟且累计 5 条真人消息后，才允许人格 Trigger 判断回复或静默 |
+| `persona_direct` | 响应 @bot、回复 bot、bot command、明确呼叫“乐枝”，以及对乐枝近期实际发言的语义连续回应；不主动参与无关普通消息 |
+| `persona_full` | 包含 `persona_direct` 的全部响应式触发；无关普通消息仍需至少间隔 15 分钟且累计 5 条真人消息，才允许人格 Trigger 判断回复或静默 |
 
 所有模式只处理配置的一个群，忽略私聊、媒体、其他群、bot 消息和重复 update。每个
 Telegram 事件最多产生一个外部效果。
+
+## 对话连续性触发 v0.2
+
+运行时只从当前 Character Bundle 读取正式名“乐枝”，不会从群消息学习永久昵称。类似
+“乐枝，你看看这个”“乐枝 你怎么看？”和“你觉得呢，乐枝？”会按直接触发处理；第三
+人称谈论、引用、历史发言讨论或名单中的名字不会仅凭名字出现触发。
+
+乐枝成功发言后，系统可在当前群最近一次实际已发送消息后的 10 分钟内、且其后不超过
+5 条真人消息时评估对话连续性。时间相邻只决定是否值得评估，语义模型仍必须区分：
+
+- `continue`：回答、追问、接受/拒绝建议、反应或继续邀请，进入一次相关回复；
+- `close`：致谢、确认、笑声或自然收尾，记录为正常静默；
+- `not_addressed` / `ambiguous`：与乐枝无关或对象不明确，回到原有普通参与规则。
+
+优先级固定为群范围/控制命令 → Telegram 显式直接触发 → 正式名称呼 → 对话连续性 →
+普通主动参与。群文本不能修改称呼集合、窗口、优先级、人格或安全合同。审计只记录类别、
+结果、理由码和锚点消息 ID，不额外延长消息全文保留期。
 
 ## 人格与作家效应器
 
@@ -33,7 +50,8 @@ Trigger、Recognition 和 Effector 都从同一不可变人格快照编译。作
 - 检索当前群保留期内的近期消息。
 
 模型不能指定群范围、凭据、外部写操作或任意工具。只有 Telegram 回复提交器可以发送
-消息；模型失败时直接触发会给出一次安全失败回复，选择性群聊触发则保持静默。
+消息；模型失败时 Telegram 显式直接触发和正式名称呼会给出一次安全失败回复，连续性
+判断/回复和选择性群聊触发则安全降级或保持静默。
 
 人格包的静态一致性证据见
 [persona-evaluation.md](docs/feature/maomao-persona-chat/persona-evaluation.md)。选定生产模型后，
@@ -185,7 +203,7 @@ docker compose -f deploy/compose.yaml config
 ```
 
 完整证据、验收矩阵和未执行的外部证明见
-[verification.md](docs/feature/maomao-persona-chat/verification.md)。部署步骤见
+[verification.md](docs/feature/lezhi-conversation-triggers-v0-2/verification.md)。部署步骤见
 [deploy/README.md](deploy/README.md)。
 
 ## 生命周期文档
@@ -196,3 +214,7 @@ docker compose -f deploy/compose.yaml config
 - [Implementation plan](docs/feature/maomao-persona-chat/implementation-plan.md)
 - [Persona evaluation](docs/feature/maomao-persona-chat/persona-evaluation.md)
 - [Verification](docs/feature/maomao-persona-chat/verification.md)
+- [Conversation trigger v0.2 requirements](docs/feature/lezhi-conversation-triggers-v0-2/requirements.md)
+- [Conversation trigger v0.2 design](docs/feature/lezhi-conversation-triggers-v0-2/design.md)
+- [Conversation trigger v0.2 implementation plan](docs/feature/lezhi-conversation-triggers-v0-2/implementation-plan.md)
+- [Conversation trigger v0.2 verification](docs/feature/lezhi-conversation-triggers-v0-2/verification.md)
