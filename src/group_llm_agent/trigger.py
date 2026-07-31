@@ -15,6 +15,7 @@ from group_llm_agent.events import (
     TelegramTextMessage,
     TriggerModelStatus,
     TriggerPath,
+    TriggerCategory,
 )
 from group_llm_agent.messages import MessageRepository
 from group_llm_agent.model import (
@@ -331,6 +332,11 @@ class TriggerCoordinator:
         return EffectRequest(
             request_id=request_id,
             trigger_path=trigger_path,
+            trigger_category=(
+                TriggerCategory.DIRECT_PLATFORM
+                if trigger_path is TriggerPath.DIRECT
+                else TriggerCategory.ORDINARY_CONTEXTUAL
+            ),
             trigger_reason=trigger_reason,
             message=message,
             persona=bundle.snapshot,

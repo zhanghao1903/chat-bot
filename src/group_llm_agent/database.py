@@ -240,6 +240,61 @@ _MIGRATIONS: tuple[tuple[int, str, str], ...] = (
         );
         """,
     ),
+    (
+        2,
+        "conversation_triggers_v0_2",
+        """
+        ALTER TABLE effect_runs
+            ADD COLUMN trigger_category TEXT NOT NULL DEFAULT 'ordinary_contextual'
+                CHECK (
+                    trigger_category IN (
+                        'direct_platform', 'direct_persona_name',
+                        'conversation_continuity', 'ordinary_contextual'
+                    )
+                );
+
+        UPDATE effect_runs
+        SET trigger_category = 'direct_platform'
+        WHERE trigger_path = 'direct';
+
+        CREATE TABLE IF NOT EXISTS trigger_evaluations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id TEXT NOT NULL UNIQUE,
+            chat_id TEXT NOT NULL,
+            trigger_event_id TEXT NOT NULL,
+            trigger_message_id TEXT NOT NULL,
+            trigger_category TEXT NOT NULL
+                CHECK (
+                    trigger_category IN (
+                        'direct_platform', 'direct_persona_name',
+                        'conversation_continuity', 'ordinary_contextual',
+                        'control', 'ignored'
+                    )
+                ),
+            persona_name_hit INTEGER NOT NULL DEFAULT 0
+                CHECK (persona_name_hit IN (0, 1)),
+            continuity_anchor_message_id TEXT,
+            decision_kind TEXT NOT NULL
+                CHECK (
+                    decision_kind IN (
+                        'effect_requested', 'silence', 'ignored', 'control'
+                    )
+                ),
+            reason_code TEXT NOT NULL,
+            model_status TEXT NOT NULL
+                CHECK (model_status IN ('not_called', 'completed', 'failed')),
+            persona_id TEXT NOT NULL,
+            persona_version TEXT NOT NULL,
+            persona_digest TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(chat_id, trigger_event_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_trigger_evaluations_chat_event
+            ON trigger_evaluations(chat_id, trigger_event_id);
+        """,
+    ),
 )
 
 

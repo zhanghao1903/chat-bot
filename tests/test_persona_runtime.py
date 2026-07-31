@@ -17,6 +17,7 @@ from group_llm_agent.events import (
     ExternalEffectKind,
     FinalEffect,
     FinalEffectKind,
+    TriggerCategory,
     TriggerPath,
 )
 from group_llm_agent.messages import MessageRepository
@@ -229,6 +230,7 @@ class PersonaRuntimeTests(unittest.TestCase):
                 request = EffectRequest(
                     request_id=_effect_request_id(event.group_id, event.event_id),
                     trigger_path=TriggerPath.DIRECT,
+                    trigger_category=TriggerCategory.DIRECT_PLATFORM,
                     trigger_reason="direct_address",
                     message=event,
                     persona=bundle.snapshot,

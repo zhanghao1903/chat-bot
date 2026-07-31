@@ -17,6 +17,7 @@ from group_llm_agent.events import (
     MemoryCategory,
     ModelErrorCode,
     TelegramTextMessage,
+    TriggerCategory,
     TriggerPath,
 )
 from group_llm_agent.memory import MemoryRepository
@@ -337,6 +338,11 @@ class EffectorFixtureContext:
         request = EffectRequest(
             request_id=f"request-{id(self)}",
             trigger_path=self.trigger_path,
+            trigger_category=(
+                TriggerCategory.DIRECT_PLATFORM
+                if self.trigger_path is TriggerPath.DIRECT
+                else TriggerCategory.ORDINARY_CONTEXTUAL
+            ),
             trigger_reason="test",
             message=current,
             persona=bundle.snapshot,

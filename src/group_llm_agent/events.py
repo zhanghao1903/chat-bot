@@ -9,6 +9,7 @@ class PlatformTriggerKind(StrEnum):
     IGNORE = "ignore"
     CONTROL = "control"
     DIRECT = "direct"
+    CONTINUITY_CANDIDATE = "continuity_candidate"
     CONTEXTUAL_CANDIDATE = "contextual_candidate"
 
 
@@ -20,6 +21,29 @@ class PersonaTriggerKind(StrEnum):
 class TriggerPath(StrEnum):
     DIRECT = "direct"
     CONTEXTUAL = "contextual"
+
+
+class TriggerCategory(StrEnum):
+    DIRECT_PLATFORM = "direct_platform"
+    DIRECT_PERSONA_NAME = "direct_persona_name"
+    CONVERSATION_CONTINUITY = "conversation_continuity"
+    ORDINARY_CONTEXTUAL = "ordinary_contextual"
+    CONTROL = "control"
+    IGNORED = "ignored"
+
+
+class ContinuityDecisionKind(StrEnum):
+    CONTINUE = "continue"
+    CLOSE = "close"
+    NOT_ADDRESSED = "not_addressed"
+    AMBIGUOUS = "ambiguous"
+
+
+class TriggerEvaluationDecisionKind(StrEnum):
+    EFFECT_REQUESTED = "effect_requested"
+    SILENCE = "silence"
+    IGNORED = "ignored"
+    CONTROL = "control"
 
 
 class FinalEffectKind(StrEnum):
@@ -107,6 +131,8 @@ class PersonaSnapshot:
 class PlatformTriggerDecision:
     kind: PlatformTriggerKind
     reason_code: str
+    persona_name_hit: bool = False
+    continuity_anchor_message_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -117,9 +143,17 @@ class PersonaTriggerDecision:
 
 
 @dataclass(frozen=True)
+class ConversationContinuityDecision:
+    kind: ContinuityDecisionKind
+    reason_code: str
+    persona: PersonaSnapshot
+
+
+@dataclass(frozen=True)
 class EffectRequest:
     request_id: str
     trigger_path: TriggerPath
+    trigger_category: TriggerCategory
     trigger_reason: str
     message: TelegramTextMessage
     persona: PersonaSnapshot
