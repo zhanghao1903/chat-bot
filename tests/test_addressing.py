@@ -16,6 +16,10 @@ class PersonaAddressMatcherTests(unittest.TestCase):
             "乐枝你看看",
             "早上好乐枝！",
             "麻烦乐枝帮我看下",
+            "怎么看，乐枝？",
+            "有空吗，乐枝？",
+            "说句话吧，乐枝！",
+            "来帮忙吧，乐枝",
         )
         for text in cases:
             with self.subTest(text=text):

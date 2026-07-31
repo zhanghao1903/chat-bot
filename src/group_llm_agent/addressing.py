@@ -44,7 +44,26 @@ _COMPACT_OPENING_CUES = (
     "在吗",
 )
 _COMPACT_ENDING_CUES = ("你好", "早上好", "晚上好", "晚安", "谢谢", "在吗", "拜托", "请问")
-_TERMINAL_VOCATIVE_CUES = ("怎么办", "怎么样", "可以吗", "好吗", "行吗", "拜托", "谢谢", "请问")
+_TERMINAL_VOCATIVE_CUES = (
+    "怎么办",
+    "怎么样",
+    "怎么看",
+    "为什么",
+    "为何",
+    "如何",
+    "可以吗",
+    "好吗",
+    "行吗",
+    "行不行",
+    "可不可以",
+    "能不能",
+    "要不要",
+    "是不是",
+    "拜托",
+    "谢谢",
+    "请问",
+)
+_TERMINAL_SPEECH_PARTICLES = ("吗", "么", "呢", "吧", "嘛", "呀", "啊")
 _REQUEST_PREFIXES = ("请", "麻烦", "想请", "问问", "让")
 _REQUEST_SUFFIXES = ("帮", "看", "说", "来", "给", "回答", "分析", "解释", "查", "搜", "选", "推荐")
 _QUOTE_PAIRS = {'"': '"', "'": "'", "“": "”", "‘": "’", "「": "」", "『": "』", "《": "》"}
@@ -133,7 +152,12 @@ def _is_terminal_vocative(before_raw: str) -> bool:
     clause = before_raw.rstrip().rstrip("".join(_OPENING_SEPARATORS)).rstrip()
     if not clause or _LIST_CONTEXT_PATTERN.search(clause):
         return False
-    return "你" in clause or "您" in clause or clause.endswith(_TERMINAL_VOCATIVE_CUES)
+    return (
+        "你" in clause
+        or "您" in clause
+        or clause.endswith(_TERMINAL_VOCATIVE_CUES)
+        or clause.endswith(_TERMINAL_SPEECH_PARTICLES)
+    )
 
 
 def _quote_ranges(text: str) -> tuple[tuple[int, int], ...]:

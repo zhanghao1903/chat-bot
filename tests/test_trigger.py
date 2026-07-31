@@ -116,6 +116,36 @@ def _record_bot_anchor(
 
 
 class TriggerTests(unittest.TestCase):
+    def test_terminal_request_vocatives_reach_direct_path(self) -> None:
+        fixture = Path(__file__).parents[1] / "src/group_llm_agent/persona_bundles/lezhi/lezhi-v1.0"
+        bundle = load_character_bundle(fixture)
+        cases = ("怎么看，乐枝？", "有空吗，乐枝？", "说句话吧，乐枝！", "来帮忙吧，乐枝")
+        for index, text in enumerate(cases, start=1):
+            with self.subTest(text=text), temporary_database() as database:
+                messages = MessageRepository(database)
+                direct = _message(index, text=text)
+                messages.ingest_inbound(
+                    direct,
+                    persona=bundle.snapshot,
+                    recognition_policy_version="policy-v1",
+                )
+                model = ScriptedModelClient()
+                coordinator, _runs = _coordinator(
+                    database=database,
+                    messages=messages,
+                    model=model,
+                )
+
+                result = coordinator.evaluate(message=direct, bundle=bundle, now=direct.timestamp)
+
+                self.assertEqual(PlatformTriggerKind.DIRECT, result.platform.kind)
+                self.assertEqual([], model.calls)
+                assert result.effect_request is not None
+                self.assertEqual(
+                    TriggerCategory.DIRECT_PERSONA_NAME,
+                    result.effect_request.trigger_category,
+                )
+
     def test_character_bundle_name_is_direct_without_participation_model(self) -> None:
         bundle = _bundle()
         with temporary_database() as database:
