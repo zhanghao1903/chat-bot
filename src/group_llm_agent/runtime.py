@@ -228,7 +228,7 @@ class PersonaMessageProcessor:
         self.recognition_policy_version = recognition_policy_version
 
     def handle_message(self, event: TelegramTextMessage) -> ProcessingOutcome:
-        platform = self.triggers.platform_gate.decide(event)
+        platform = self.triggers.platform_gate.decide(event, bundle=self.bundle)
         if platform.kind is PlatformTriggerKind.CONTROL:
             if (
                 self.runs.get_external_effect(
@@ -238,6 +238,11 @@ class PersonaMessageProcessor:
                 is not None
             ):
                 return ProcessingOutcome("duplicate", event.group_id, event.message_id)
+            self.triggers.evaluate(
+                message=event,
+                bundle=self.bundle,
+                allow_ordinary_contextual=False,
+            )
             outcome = self.controls.handle(event, persona=self.bundle.snapshot)
             return ProcessingOutcome(outcome.status, event.group_id, event.message_id)
         if platform.reason_code in {"other_group", "self_message"}:
@@ -256,22 +261,25 @@ class PersonaMessageProcessor:
             is not None
         ):
             return ProcessingOutcome("duplicate", event.group_id, event.message_id)
-        if ingested.duplicate and self.runs.has_terminal_silence(
-            chat_id=event.group_id,
-            trigger_event_id=event.event_id,
+        if ingested.duplicate and (
+            self.runs.has_terminal_silence(
+                chat_id=event.group_id,
+                trigger_event_id=event.event_id,
+            )
+            or self.runs.has_terminal_trigger_evaluation(
+                chat_id=event.group_id,
+                trigger_event_id=event.event_id,
+            )
         ):
             return ProcessingOutcome("duplicate", event.group_id, event.message_id)
-        post_ingest_platform = self.triggers.platform_gate.decide(event)
-        if (
-            self.mode == "persona_direct"
-            and post_ingest_platform.kind is PlatformTriggerKind.CONTEXTUAL_CANDIDATE
-        ):
-            return ProcessingOutcome("persona_direct_only", event.group_id, event.message_id)
         evaluation = self.triggers.evaluate(
             message=event,
             bundle=self.bundle,
+            allow_ordinary_contextual=self.mode == "persona_full",
         )
         if evaluation.effect_request is None:
+            if evaluation.continuity is not None and evaluation.continuity.kind.value == "close":
+                return ProcessingOutcome("silence", event.group_id, event.message_id)
             return ProcessingOutcome(
                 evaluation.platform.reason_code,
                 event.group_id,

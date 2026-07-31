@@ -5,17 +5,25 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from group_llm_agent.addressing import AddressMatchKind, match_persona_address
 from group_llm_agent.context import ContextAssembler, TriggerContext
+from group_llm_agent.continuity import (
+    ConversationContinuityDecider,
+    ConversationContinuityGate,
+)
 from group_llm_agent.events import (
+    ContinuityDecisionKind,
+    ConversationContinuityDecision,
     EffectRequest,
     PersonaTriggerDecision,
     PersonaTriggerKind,
     PlatformTriggerDecision,
     PlatformTriggerKind,
     TelegramTextMessage,
+    TriggerCategory,
+    TriggerEvaluationDecisionKind,
     TriggerModelStatus,
     TriggerPath,
-    TriggerCategory,
 )
 from group_llm_agent.messages import MessageRepository
 from group_llm_agent.model import (
@@ -52,6 +60,7 @@ class TriggerEvaluation:
     platform: PlatformTriggerDecision
     persona: PersonaTriggerDecision | None
     effect_request: EffectRequest | None
+    continuity: ConversationContinuityDecision | None = None
 
 
 class PlatformTriggerGate:
@@ -73,6 +82,10 @@ class PlatformTriggerGate:
         self.bot_user_id = bot_user_id
         self.messages = messages
         self.runs = runs
+        self.continuity_gate = ConversationContinuityGate(
+            bot_user_id=bot_user_id,
+            messages=messages,
+        )
         self.contextual_interval = contextual_interval
         self.minimum_human_messages = minimum_human_messages
 
@@ -80,6 +93,7 @@ class PlatformTriggerGate:
         self,
         message: TelegramTextMessage,
         *,
+        bundle: CharacterBundle,
         now: datetime | None = None,
     ) -> PlatformTriggerDecision:
         current = now or datetime.now(UTC)
@@ -89,12 +103,24 @@ class PlatformTriggerGate:
             return PlatformTriggerDecision(PlatformTriggerKind.IGNORE, "self_message")
         if _command_name(message.text) in _CONTROL_COMMANDS:
             return PlatformTriggerDecision(PlatformTriggerKind.CONTROL, "memory_control")
+        address = match_persona_address(message.text, bundle.direct_address_terms)
+        persona_name_hit = address.kind is not AddressMatchKind.NONE
         if (
             message.mentioned_bot
             or message.replied_to_user_id == self.bot_user_id
             or message.is_bot_command
         ):
-            return PlatformTriggerDecision(PlatformTriggerKind.DIRECT, "direct_address")
+            return PlatformTriggerDecision(
+                PlatformTriggerKind.DIRECT,
+                "direct_address",
+                persona_name_hit=persona_name_hit,
+            )
+        if address.kind is AddressMatchKind.DIRECT:
+            return PlatformTriggerDecision(
+                PlatformTriggerKind.DIRECT,
+                address.reason_code,
+                persona_name_hit=True,
+            )
         if (
             self.runs.get_external_effect(
                 chat_id=message.group_id,
@@ -104,9 +130,35 @@ class PlatformTriggerGate:
         ):
             return PlatformTriggerDecision(PlatformTriggerKind.IGNORE, "already_processed")
 
+        continuity = self.continuity_gate.evaluate(message, now=current)
+        if continuity.anchor is not None:
+            return PlatformTriggerDecision(
+                PlatformTriggerKind.CONTINUITY_CANDIDATE,
+                continuity.reason_code,
+                persona_name_hit=persona_name_hit,
+                continuity_anchor_message_id=continuity.anchor.telegram_message_id,
+            )
+        return self.decide_ordinary(
+            message,
+            now=current,
+            persona_name_hit=persona_name_hit,
+        )
+
+    def decide_ordinary(
+        self,
+        message: TelegramTextMessage,
+        *,
+        now: datetime | None = None,
+        persona_name_hit: bool = False,
+    ) -> PlatformTriggerDecision:
+        current = now or datetime.now(UTC)
         last_reply = self._last_contextual_reply_at(chat_id=message.group_id)
         if last_reply is not None and current - last_reply < self.contextual_interval:
-            return PlatformTriggerDecision(PlatformTriggerKind.IGNORE, "contextual_cooldown")
+            return PlatformTriggerDecision(
+                PlatformTriggerKind.IGNORE,
+                "contextual_cooldown",
+                persona_name_hit=persona_name_hit,
+            )
         recent = self.messages.recent(chat_id=message.group_id, limit=20)
         new_human_messages = sum(
             1
@@ -119,10 +171,12 @@ class PlatformTriggerGate:
             return PlatformTriggerDecision(
                 PlatformTriggerKind.IGNORE,
                 "insufficient_human_messages",
+                persona_name_hit=persona_name_hit,
             )
         return PlatformTriggerDecision(
             PlatformTriggerKind.CONTEXTUAL_CANDIDATE,
             "contextual_cadence_ready",
+            persona_name_hit=persona_name_hit,
         )
 
     def _last_contextual_reply_at(self, *, chat_id: str) -> datetime | None:
@@ -235,6 +289,7 @@ class PersonaTriggerDecider:
             kind=PersonaTriggerKind.SILENCE,
             reason_code=reason_code,
             persona=bundle.snapshot,
+            model_status=TriggerModelStatus.FAILED,
         )
         self.runs.record_trigger_run(
             request_id=request_id,
@@ -253,6 +308,7 @@ class TriggerCoordinator:
         *,
         platform_gate: PlatformTriggerGate,
         persona_decider: PersonaTriggerDecider,
+        continuity_decider: ConversationContinuityDecider,
         contexts: ContextAssembler,
         effect_deadline_seconds: int = 20,
     ) -> None:
@@ -260,7 +316,9 @@ class TriggerCoordinator:
             raise ValueError("effect_deadline_seconds must be in [5, 30]")
         self.platform_gate = platform_gate
         self.persona_decider = persona_decider
+        self.continuity_decider = continuity_decider
         self.contexts = contexts
+        self.runs = platform_gate.runs
         self.effect_deadline_seconds = effect_deadline_seconds
 
     def evaluate(
@@ -268,40 +326,248 @@ class TriggerCoordinator:
         *,
         message: TelegramTextMessage,
         bundle: CharacterBundle,
+        allow_ordinary_contextual: bool = True,
         now: datetime | None = None,
     ) -> TriggerEvaluation:
         current = now or datetime.now(UTC)
-        platform = self.platform_gate.decide(message, now=current)
+        platform = self.platform_gate.decide(message, bundle=bundle, now=current)
         request_id = _request_id(message)
         if platform.kind is PlatformTriggerKind.DIRECT:
+            category = (
+                TriggerCategory.DIRECT_PLATFORM
+                if platform.reason_code == "direct_address"
+                else TriggerCategory.DIRECT_PERSONA_NAME
+            )
             direct_request = self._effect_request(
                 message=message,
                 bundle=bundle,
                 trigger_path=TriggerPath.DIRECT,
+                trigger_category=category,
                 trigger_reason=platform.reason_code,
                 request_id=request_id,
                 now=current,
+            )
+            self._record_final(
+                request_id=request_id,
+                message=message,
+                bundle=bundle,
+                platform=platform,
+                trigger_category=category,
+                decision_kind=TriggerEvaluationDecisionKind.EFFECT_REQUESTED,
+                reason_code=platform.reason_code,
+                model_status=TriggerModelStatus.NOT_CALLED,
             )
             return TriggerEvaluation(
                 platform=platform,
                 persona=None,
                 effect_request=direct_request,
             )
-        if platform.kind is not PlatformTriggerKind.CONTEXTUAL_CANDIDATE:
-            return TriggerEvaluation(platform=platform, persona=None, effect_request=None)
+        if platform.kind is PlatformTriggerKind.CONTINUITY_CANDIDATE:
+            return self._evaluate_continuity(
+                request_id=request_id,
+                message=message,
+                bundle=bundle,
+                platform=platform,
+                allow_ordinary_contextual=allow_ordinary_contextual,
+                now=current,
+            )
+        if platform.kind is PlatformTriggerKind.CONTEXTUAL_CANDIDATE:
+            if allow_ordinary_contextual:
+                return self._evaluate_ordinary(
+                    request_id=request_id,
+                    message=message,
+                    bundle=bundle,
+                    platform=platform,
+                    now=current,
+                )
+            ignored = PlatformTriggerDecision(
+                PlatformTriggerKind.IGNORE,
+                "persona_direct_only",
+                persona_name_hit=platform.persona_name_hit,
+            )
+            self._record_final(
+                request_id=request_id,
+                message=message,
+                bundle=bundle,
+                platform=ignored,
+                trigger_category=TriggerCategory.IGNORED,
+                decision_kind=TriggerEvaluationDecisionKind.IGNORED,
+                reason_code=ignored.reason_code,
+                model_status=TriggerModelStatus.NOT_CALLED,
+            )
+            return TriggerEvaluation(ignored, None, None)
 
+        decision_kind = (
+            TriggerEvaluationDecisionKind.CONTROL
+            if platform.kind is PlatformTriggerKind.CONTROL
+            else TriggerEvaluationDecisionKind.IGNORED
+        )
+        category = (
+            TriggerCategory.CONTROL
+            if platform.kind is PlatformTriggerKind.CONTROL
+            else TriggerCategory.IGNORED
+        )
+        self._record_final(
+            request_id=request_id,
+            message=message,
+            bundle=bundle,
+            platform=platform,
+            trigger_category=category,
+            decision_kind=decision_kind,
+            reason_code=platform.reason_code,
+            model_status=TriggerModelStatus.NOT_CALLED,
+        )
+        return TriggerEvaluation(platform, None, None)
+
+    def _evaluate_continuity(
+        self,
+        *,
+        request_id: str,
+        message: TelegramTextMessage,
+        bundle: CharacterBundle,
+        platform: PlatformTriggerDecision,
+        allow_ordinary_contextual: bool,
+        now: datetime,
+    ) -> TriggerEvaluation:
         context = self.contexts.trigger_context(
             bundle=bundle,
             message=message,
             hard_gate_reason=platform.reason_code,
-            at=current,
+            continuity_anchor_message_id=platform.continuity_anchor_message_id,
+            at=now,
+        )
+        model_evaluation = self.continuity_decider.decide(
+            request_id=f"continuity:{request_id}",
+            message=message,
+            bundle=bundle,
+            context=context,
+            now=now,
+        )
+        continuity = model_evaluation.decision
+        if (
+            model_evaluation.model_status is TriggerModelStatus.COMPLETED
+            and continuity.kind is ContinuityDecisionKind.CONTINUE
+        ):
+            effect_request = self._effect_request(
+                message=message,
+                bundle=bundle,
+                trigger_path=TriggerPath.CONTEXTUAL,
+                trigger_category=TriggerCategory.CONVERSATION_CONTINUITY,
+                trigger_reason=continuity.reason_code,
+                request_id=request_id,
+                now=now,
+            )
+            self._record_final(
+                request_id=request_id,
+                message=message,
+                bundle=bundle,
+                platform=platform,
+                trigger_category=TriggerCategory.CONVERSATION_CONTINUITY,
+                decision_kind=TriggerEvaluationDecisionKind.EFFECT_REQUESTED,
+                reason_code=continuity.reason_code,
+                model_status=model_evaluation.model_status,
+            )
+            return TriggerEvaluation(platform, None, effect_request, continuity)
+        if (
+            model_evaluation.model_status is TriggerModelStatus.COMPLETED
+            and continuity.kind is ContinuityDecisionKind.CLOSE
+        ):
+            self._record_final(
+                request_id=request_id,
+                message=message,
+                bundle=bundle,
+                platform=platform,
+                trigger_category=TriggerCategory.CONVERSATION_CONTINUITY,
+                decision_kind=TriggerEvaluationDecisionKind.SILENCE,
+                reason_code=continuity.reason_code,
+                model_status=model_evaluation.model_status,
+            )
+            return TriggerEvaluation(platform, None, None, continuity)
+
+        fallback_reason = f"continuity_{continuity.reason_code}"
+        if not allow_ordinary_contextual:
+            reason_code = f"{fallback_reason}_fallback_persona_direct_only"
+            ignored = PlatformTriggerDecision(
+                PlatformTriggerKind.IGNORE,
+                reason_code,
+                persona_name_hit=platform.persona_name_hit,
+                continuity_anchor_message_id=platform.continuity_anchor_message_id,
+            )
+            self._record_final(
+                request_id=request_id,
+                message=message,
+                bundle=bundle,
+                platform=ignored,
+                trigger_category=TriggerCategory.IGNORED,
+                decision_kind=TriggerEvaluationDecisionKind.IGNORED,
+                reason_code=reason_code,
+                model_status=model_evaluation.model_status,
+            )
+            return TriggerEvaluation(ignored, None, None, continuity)
+
+        ordinary = self.platform_gate.decide_ordinary(
+            message,
+            now=now,
+            persona_name_hit=platform.persona_name_hit,
+        )
+        if ordinary.kind is not PlatformTriggerKind.CONTEXTUAL_CANDIDATE:
+            reason_code = f"{fallback_reason}_fallback_{ordinary.reason_code}"
+            ignored = PlatformTriggerDecision(
+                ordinary.kind,
+                reason_code,
+                persona_name_hit=ordinary.persona_name_hit,
+                continuity_anchor_message_id=platform.continuity_anchor_message_id,
+            )
+            self._record_final(
+                request_id=request_id,
+                message=message,
+                bundle=bundle,
+                platform=ignored,
+                trigger_category=TriggerCategory.IGNORED,
+                decision_kind=TriggerEvaluationDecisionKind.IGNORED,
+                reason_code=reason_code,
+                model_status=model_evaluation.model_status,
+            )
+            return TriggerEvaluation(ignored, None, None, continuity)
+        ordinary_with_anchor = PlatformTriggerDecision(
+            ordinary.kind,
+            ordinary.reason_code,
+            persona_name_hit=ordinary.persona_name_hit,
+            continuity_anchor_message_id=platform.continuity_anchor_message_id,
+        )
+        return self._evaluate_ordinary(
+            request_id=request_id,
+            message=message,
+            bundle=bundle,
+            platform=ordinary_with_anchor,
+            now=now,
+            continuity=continuity,
+            fallback_reason=fallback_reason,
+        )
+
+    def _evaluate_ordinary(
+        self,
+        *,
+        request_id: str,
+        message: TelegramTextMessage,
+        bundle: CharacterBundle,
+        platform: PlatformTriggerDecision,
+        now: datetime,
+        continuity: ConversationContinuityDecision | None = None,
+        fallback_reason: str | None = None,
+    ) -> TriggerEvaluation:
+        context = self.contexts.trigger_context(
+            bundle=bundle,
+            message=message,
+            hard_gate_reason=platform.reason_code,
+            at=now,
         )
         persona = self.persona_decider.decide(
             request_id=f"trigger:{request_id}",
             message=message,
             bundle=bundle,
             context=context,
-            now=current,
+            now=now,
         )
         contextual_request: EffectRequest | None = None
         if persona.kind is PersonaTriggerKind.ENGAGE:
@@ -309,14 +575,55 @@ class TriggerCoordinator:
                 message=message,
                 bundle=bundle,
                 trigger_path=TriggerPath.CONTEXTUAL,
+                trigger_category=TriggerCategory.ORDINARY_CONTEXTUAL,
                 trigger_reason=persona.reason_code,
                 request_id=request_id,
-                now=current,
+                now=now,
             )
-        return TriggerEvaluation(
+        decision_kind = (
+            TriggerEvaluationDecisionKind.EFFECT_REQUESTED
+            if contextual_request is not None
+            else TriggerEvaluationDecisionKind.SILENCE
+        )
+        audit_reason = (
+            f"{fallback_reason}_fallback_{persona.reason_code}"
+            if fallback_reason is not None
+            else persona.reason_code
+        )
+        self._record_final(
+            request_id=request_id,
+            message=message,
+            bundle=bundle,
             platform=platform,
-            persona=persona,
-            effect_request=contextual_request,
+            trigger_category=TriggerCategory.ORDINARY_CONTEXTUAL,
+            decision_kind=decision_kind,
+            reason_code=audit_reason,
+            model_status=persona.model_status,
+        )
+        return TriggerEvaluation(platform, persona, contextual_request, continuity)
+
+    def _record_final(
+        self,
+        *,
+        request_id: str,
+        message: TelegramTextMessage,
+        bundle: CharacterBundle,
+        platform: PlatformTriggerDecision,
+        trigger_category: TriggerCategory,
+        decision_kind: TriggerEvaluationDecisionKind,
+        reason_code: str,
+        model_status: TriggerModelStatus,
+    ) -> None:
+        self.runs.record_trigger_evaluation(
+            request_id=f"evaluation:{request_id}",
+            message=message,
+            trigger_category=trigger_category,
+            persona_name_hit=platform.persona_name_hit,
+            continuity_anchor_message_id=platform.continuity_anchor_message_id,
+            decision_kind=decision_kind,
+            reason_code=reason_code,
+            model_status=model_status,
+            persona=bundle.snapshot,
         )
 
     def _effect_request(
@@ -325,6 +632,7 @@ class TriggerCoordinator:
         message: TelegramTextMessage,
         bundle: CharacterBundle,
         trigger_path: TriggerPath,
+        trigger_category: TriggerCategory,
         trigger_reason: str,
         request_id: str,
         now: datetime,
@@ -332,11 +640,7 @@ class TriggerCoordinator:
         return EffectRequest(
             request_id=request_id,
             trigger_path=trigger_path,
-            trigger_category=(
-                TriggerCategory.DIRECT_PLATFORM
-                if trigger_path is TriggerPath.DIRECT
-                else TriggerCategory.ORDINARY_CONTEXTUAL
-            ),
+            trigger_category=trigger_category,
             trigger_reason=trigger_reason,
             message=message,
             persona=bundle.snapshot,

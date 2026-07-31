@@ -371,8 +371,7 @@ class RunRepositoryTests(unittest.TestCase):
             finally:
                 connection.close()
             self.assertTrue(
-                {"trigger_category", "persona_name_hit", "continuity_anchor_message_id"}
-                <= columns
+                {"trigger_category", "persona_name_hit", "continuity_anchor_message_id"} <= columns
             )
             self.assertTrue({"text", "prompt", "response", "confidence"}.isdisjoint(columns))
 

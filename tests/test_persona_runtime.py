@@ -70,6 +70,158 @@ class PersonaTelegramClient:
 
 
 class PersonaRuntimeTests(unittest.TestCase):
+    def test_character_name_direct_sends_in_direct_mode_and_audits_category(self) -> None:
+        bundle = _bundle()
+        with TemporaryDirectory() as tmpdir:
+            database_path = Path(tmpdir) / "runtime.sqlite3"
+            client = PersonaTelegramClient([_update(1, text="Test Lantern, please look")])
+            model = ScriptedModelClient(
+                StructuredModelResult(
+                    {"kind": "reply", "reason_code": "name_answer", "text": "我在看。"}
+                )
+            )
+
+            exit_code = run(
+                _env(bundle, database_path, mode="persona_direct"),
+                client_factory=lambda *_args, **_kwargs: client,
+                model_factory=lambda _settings: model,
+            )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual([("-1001", "我在看。", "1")], client.sent)
+            self.assertEqual([ModelRole.WRITER], [call["model_role"] for call in model.calls])
+            connection = sqlite3.connect(database_path)
+            try:
+                audit = connection.execute(
+                    """
+                    SELECT trigger_category, persona_name_hit, decision_kind
+                    FROM trigger_evaluations
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertEqual(("direct_persona_name", 1, "effect_requested"), audit)
+
+    def test_recent_direct_reply_can_continue_without_addressing_in_direct_mode(self) -> None:
+        bundle = _bundle()
+        with TemporaryDirectory() as tmpdir:
+            database_path = Path(tmpdir) / "runtime.sqlite3"
+            client = PersonaTelegramClient(
+                [_update(1, direct=True), _update(2, text="第二个，比较省事")]
+            )
+            model = ScriptedModelClient(
+                StructuredModelResult(
+                    {"kind": "reply", "reason_code": "ask", "text": "你更喜欢哪个方案？"}
+                ),
+                StructuredModelResult(
+                    {"kind": "continue", "reason_code": "answered_anchor_question"}
+                ),
+                StructuredModelResult(
+                    {"kind": "reply", "reason_code": "continue", "text": "那就选第二个。"}
+                ),
+            )
+
+            exit_code = run(
+                _env(bundle, database_path, mode="persona_direct"),
+                client_factory=lambda *_args, **_kwargs: client,
+                model_factory=lambda _settings: model,
+            )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual(
+                [ModelRole.WRITER, ModelRole.TRIGGER, ModelRole.WRITER],
+                [call["model_role"] for call in model.calls],
+            )
+            self.assertEqual(
+                [
+                    ("-1001", "你更喜欢哪个方案？", "1"),
+                    ("-1001", "那就选第二个。", "2"),
+                ],
+                client.sent,
+            )
+            connection = sqlite3.connect(database_path)
+            try:
+                effects = connection.execute("SELECT count(*) FROM external_effects").fetchone()[0]
+                continuation = connection.execute(
+                    """
+                    SELECT trigger_category, continuity_anchor_message_id, decision_kind
+                    FROM trigger_evaluations
+                    WHERE trigger_message_id = '2'
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertEqual(2, effects)
+            self.assertEqual(("conversation_continuity", "901", "effect_requested"), continuation)
+
+    def test_natural_close_is_silent_and_not_recorded_as_failure(self) -> None:
+        bundle = _bundle()
+        with TemporaryDirectory() as tmpdir:
+            database_path = Path(tmpdir) / "runtime.sqlite3"
+            client = PersonaTelegramClient([_update(1, direct=True), _update(2, text="好哒")])
+            model = ScriptedModelClient(
+                StructuredModelResult(
+                    {"kind": "reply", "reason_code": "answer", "text": "那我们先这样。"}
+                ),
+                StructuredModelResult({"kind": "close", "reason_code": "natural_close"}),
+            )
+
+            exit_code = run(
+                _env(bundle, database_path, mode="persona_direct"),
+                client_factory=lambda *_args, **_kwargs: client,
+                model_factory=lambda _settings: model,
+            )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual([("-1001", "那我们先这样。", "1")], client.sent)
+            connection = sqlite3.connect(database_path)
+            try:
+                close = connection.execute(
+                    """
+                    SELECT trigger_category, decision_kind, reason_code, model_status
+                    FROM trigger_evaluations
+                    WHERE trigger_message_id = '2'
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertEqual(
+                ("conversation_continuity", "silence", "natural_close", "completed"),
+                close,
+            )
+
+    def test_direct_mode_ordinary_candidate_is_silent_and_audited(self) -> None:
+        bundle = _bundle()
+        with TemporaryDirectory() as tmpdir:
+            database_path = Path(tmpdir) / "runtime.sqlite3"
+            client = PersonaTelegramClient([_update(index) for index in range(1, 6)])
+            model = ScriptedModelClient()
+
+            exit_code = run(
+                _env(bundle, database_path, mode="persona_direct"),
+                client_factory=lambda *_args, **_kwargs: client,
+                model_factory=lambda _settings: model,
+            )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual([], client.sent)
+            self.assertEqual([], model.calls)
+            connection = sqlite3.connect(database_path)
+            try:
+                audit = connection.execute(
+                    """
+                    SELECT trigger_category, decision_kind, reason_code, model_status
+                    FROM trigger_evaluations
+                    WHERE trigger_message_id = '5'
+                    """
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertEqual(
+                ("ignored", "ignored", "persona_direct_only", "not_called"),
+                audit,
+            )
+
     def test_direct_end_to_end_sends_once_and_records_confirmed_effect(self) -> None:
         bundle = _bundle()
         with TemporaryDirectory() as tmpdir:
@@ -401,8 +553,13 @@ def _env(
     }
 
 
-def _update(index: int, *, direct: bool = False) -> dict[str, object]:
-    text = "/hello@agent" if direct else f"ordinary group message {index}"
+def _update(
+    index: int,
+    *,
+    direct: bool = False,
+    text: str | None = None,
+) -> dict[str, object]:
+    text = text or ("/hello@agent" if direct else f"ordinary group message {index}")
     message: dict[str, object] = {
         "message_id": index,
         "date": 1785283200 + index,

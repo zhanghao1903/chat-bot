@@ -9,6 +9,7 @@ from typing import Any
 
 from group_llm_agent.config import ConfigError, Settings
 from group_llm_agent.context import ContextAssembler
+from group_llm_agent.continuity import ConversationContinuityDecider
 from group_llm_agent.control import MemoryControlService
 from group_llm_agent.database import SQLiteDatabase
 from group_llm_agent.delivery import SQLiteDeliveryLedger
@@ -253,9 +254,15 @@ def _persona_runtime(
         runs=runs,
         timeout_seconds=settings.trigger_decision_timeout_seconds,
     )
+    continuity_decider = ConversationContinuityDecider(
+        model=model,
+        runs=runs,
+        timeout_seconds=settings.trigger_decision_timeout_seconds,
+    )
     triggers = TriggerCoordinator(
         platform_gate=platform_gate,
         persona_decider=trigger_decider,
+        continuity_decider=continuity_decider,
         contexts=contexts,
         effect_deadline_seconds=settings.effect_deadline_seconds,
     )
