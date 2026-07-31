@@ -8,6 +8,7 @@ from typing import Literal
 from group_llm_agent.database import SQLiteDatabase
 from group_llm_agent.events import (
     ControlAuthorizationStatus,
+    ConversationContinuityDecision,
     EffectRequest,
     EffectRunStatus,
     ExternalEffectKind,
@@ -70,7 +71,7 @@ class RunRepository:
         request_id: str,
         message: TelegramTextMessage,
         candidate_kind: PlatformTriggerKind,
-        decision: PersonaTriggerDecision,
+        decision: PersonaTriggerDecision | ConversationContinuityDecision,
         model_status: TriggerModelStatus,
         deadline_at: datetime,
     ) -> int:

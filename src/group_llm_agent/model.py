@@ -14,6 +14,8 @@ from enum import StrEnum
 from typing import Any, Protocol
 
 from group_llm_agent.events import (
+    ContinuityDecisionKind,
+    ConversationContinuityDecision,
     MemoryCategory,
     ModelErrorCode,
     PersonaSnapshot,
@@ -277,6 +279,21 @@ def parse_trigger_decision(
         raise ModelResultError("invalid_trigger_kind") from None
     reason_code = _parse_reason_code(payload["reason_code"])
     return PersonaTriggerDecision(kind=kind, reason_code=reason_code, persona=persona)
+
+
+def parse_continuity_decision(
+    result: StructuredModelResult,
+    *,
+    persona: PersonaSnapshot,
+) -> ConversationContinuityDecision:
+    payload = result.payload
+    _require_fields(payload, {"kind", "reason_code"})
+    try:
+        kind = ContinuityDecisionKind(payload["kind"])
+    except (TypeError, ValueError):
+        raise ModelResultError("invalid_continuity_kind") from None
+    reason_code = _parse_reason_code(payload["reason_code"])
+    return ConversationContinuityDecision(kind=kind, reason_code=reason_code, persona=persona)
 
 
 def parse_writer_decision(

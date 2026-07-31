@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,7 @@ class CharacterBundle:
     confirmed_snapshot_ref: str
     evaluation_report_ref: str
     evaluation_cases_jsonl: tuple[str, ...]
+    direct_address_terms: tuple[str, ...]
     views: CompiledCharacterViews
 
 
@@ -132,12 +134,14 @@ def load_character_bundle(
         persona_digest=digest,
     )
     example_lines = tuple(_canonical_json(item) for item in examples)
+    formal_name = str(character["identity_and_stable_facts"]["name"]).strip()
     return CharacterBundle(
         snapshot=snapshot,
         requirements_commit=str(manifest["requirements_commit"]),
         confirmed_snapshot_ref=str(manifest["confirmed_snapshot_ref"]),
         evaluation_report_ref=str(manifest["evaluation_report_ref"]),
         evaluation_cases_jsonl=tuple(_canonical_json(item) for item in evaluation_cases),
+        direct_address_terms=(formal_name,),
         views=_compile_views(snapshot, character, example_lines),
     )
 
@@ -298,6 +302,14 @@ def _validate_character(character: dict[str, Any]) -> None:
             or len(_canonical_json(value).encode("utf-8")) > 16_000
         ):
             raise CharacterBundleError("invalid_character")
+    identity = character["identity_and_stable_facts"]
+    name = identity.get("name")
+    if (
+        not _is_nonempty_text(name, maximum=64)
+        or str(name) != str(name).strip()
+        or any(unicodedata.category(character).startswith("C") for character in str(name))
+    ):
+        raise CharacterBundleError("invalid_character_name")
 
 
 def _validate_evaluation_coverage(

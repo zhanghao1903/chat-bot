@@ -8,7 +8,7 @@ import urllib.request
 from datetime import UTC, datetime, timedelta
 from typing import Any, Self
 
-from group_llm_agent.events import ModelErrorCode, PersonaSnapshot
+from group_llm_agent.events import ContinuityDecisionKind, ModelErrorCode, PersonaSnapshot
 from group_llm_agent.model import (
     ModelApiError,
     ModelMessage,
@@ -17,6 +17,7 @@ from group_llm_agent.model import (
     OpenAICompatibleStructuredModelClient,
     StructuredModelResult,
     WriterDecisionKind,
+    parse_continuity_decision,
     parse_trigger_decision,
     parse_writer_decision,
 )
@@ -238,6 +239,29 @@ class ModelClientTests(unittest.TestCase):
 
 
 class ModelResultParserTests(unittest.TestCase):
+    def test_continuity_parser_accepts_exact_contract_and_rejects_extra_fields(self) -> None:
+        persona = PersonaSnapshot("test", "v1", "digest")
+        for kind in ContinuityDecisionKind:
+            with self.subTest(kind=kind.value):
+                decision = parse_continuity_decision(
+                    StructuredModelResult({"kind": kind.value, "reason_code": "contract_case"}),
+                    persona=persona,
+                )
+                self.assertEqual(kind, decision.kind)
+                self.assertEqual(persona, decision.persona)
+
+        with self.assertRaisesRegex(ModelResultError, "unexpected_fields"):
+            parse_continuity_decision(
+                StructuredModelResult(
+                    {
+                        "kind": "continue",
+                        "reason_code": "injected",
+                        "reply_text": "send this",
+                    }
+                ),
+                persona=persona,
+            )
+
     def test_trigger_parser_carries_exact_persona_snapshot(self) -> None:
         persona = PersonaSnapshot("test", "v1", "digest")
         decision = parse_trigger_decision(

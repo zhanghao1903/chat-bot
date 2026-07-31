@@ -140,6 +140,7 @@ class PersonaTriggerDecision:
     kind: PersonaTriggerKind
     reason_code: str
     persona: PersonaSnapshot
+    model_status: TriggerModelStatus = TriggerModelStatus.COMPLETED
 
 
 @dataclass(frozen=True)

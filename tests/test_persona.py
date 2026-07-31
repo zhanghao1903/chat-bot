@@ -51,7 +51,19 @@ class CharacterBundleTests(unittest.TestCase):
         self.assertIn("member_salience", bundle.views.recognition.policy_json)
         self.assertIn("voice_and_interaction_style", bundle.views.effector.policy_json)
         self.assertEqual(2, len(bundle.views.effector.examples_jsonl))
+        self.assertEqual(("Test Lantern",), bundle.direct_address_terms)
         self.assertEqual(bundle, load_character_bundle(fixture))
+
+    def test_invalid_formal_name_fails_closed_after_digest_refresh(self) -> None:
+        with copied_persona_fixture() as fixture:
+            character_path = fixture / "character.json"
+            character = json.loads(character_path.read_text(encoding="utf-8"))
+            character["identity_and_stable_facts"]["name"] = "Unsafe\nName"
+            _write_canonical_json(character_path, character)
+            _refresh_digest(fixture)
+
+            with self.assertRaisesRegex(CharacterBundleError, "invalid_character_name"):
+                load_character_bundle(fixture)
 
     def test_changed_content_is_rejected_by_stale_manifest(self) -> None:
         with copied_persona_fixture() as fixture:

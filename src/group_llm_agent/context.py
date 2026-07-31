@@ -23,6 +23,7 @@ class TriggerContext:
     recent_scene: tuple[StoredGroupMessage, ...]
     member_memory: tuple[MemberMemoryContext, ...]
     hard_gate_reason: str
+    continuity_anchor: StoredGroupMessage | None = None
 
 
 @dataclass(frozen=True)
@@ -62,19 +63,31 @@ class ContextAssembler:
         bundle: CharacterBundle,
         message: TelegramTextMessage,
         hard_gate_reason: str,
+        continuity_anchor_message_id: str | None = None,
         at: datetime | None = None,
     ) -> TriggerContext:
+        recent_scene = self.messages.recent(chat_id=message.group_id, limit=20)
+        continuity_anchor = next(
+            (
+                item
+                for item in recent_scene
+                if item.telegram_message_id == continuity_anchor_message_id
+                and item.direction == "outbound"
+            ),
+            None,
+        )
         return TriggerContext(
             persona=bundle.snapshot,
             character=bundle.views.trigger,
             current_message=message,
-            recent_scene=self.messages.recent(chat_id=message.group_id, limit=20),
+            recent_scene=recent_scene,
             member_memory=self._member_context(
                 message=message,
                 persona=bundle.snapshot,
                 at=at,
             ),
             hard_gate_reason=hard_gate_reason,
+            continuity_anchor=continuity_anchor,
         )
 
     def effect_context(
