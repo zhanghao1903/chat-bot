@@ -8,6 +8,7 @@ from typing import Literal
 from group_llm_agent.database import SQLiteDatabase
 from group_llm_agent.events import (
     ControlAuthorizationStatus,
+    ConversationContinuityDecision,
     EffectRequest,
     EffectRunStatus,
     ExternalEffectKind,
@@ -17,6 +18,8 @@ from group_llm_agent.events import (
     PersonaTriggerDecision,
     PlatformTriggerKind,
     TelegramTextMessage,
+    TriggerCategory,
+    TriggerEvaluationDecisionKind,
     TriggerModelStatus,
 )
 
@@ -46,6 +49,16 @@ class ExternalEffectRecord:
     error_code: str | None
 
 
+@dataclass(frozen=True)
+class TriggerEvaluationRecord:
+    trigger_category: TriggerCategory
+    decision_kind: TriggerEvaluationDecisionKind
+    reason_code: str
+    model_status: TriggerModelStatus
+    persona_name_hit: bool
+    continuity_anchor_message_id: str | None
+
+
 class RunRepository:
     """Persists run metadata without message, prompt, or model-response content."""
 
@@ -58,7 +71,7 @@ class RunRepository:
         request_id: str,
         message: TelegramTextMessage,
         candidate_kind: PlatformTriggerKind,
-        decision: PersonaTriggerDecision,
+        decision: PersonaTriggerDecision | ConversationContinuityDecision,
         model_status: TriggerModelStatus,
         deadline_at: datetime,
     ) -> int:
@@ -124,15 +137,16 @@ class RunRepository:
                 """
                 INSERT INTO effect_runs (
                     request_id, chat_id, trigger_event_id, trigger_message_id,
-                    trigger_path, persona_id, persona_version, persona_digest,
-                    status, deadline_at, created_at, updated_at
+                    trigger_path, trigger_category, persona_id, persona_version,
+                    persona_digest, status, deadline_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)
                 ON CONFLICT(request_id) DO UPDATE SET
                     chat_id = excluded.chat_id,
                     trigger_event_id = excluded.trigger_event_id,
                     trigger_message_id = excluded.trigger_message_id,
                     trigger_path = excluded.trigger_path,
+                    trigger_category = excluded.trigger_category,
                     persona_id = excluded.persona_id,
                     persona_version = excluded.persona_version,
                     persona_digest = excluded.persona_digest,
@@ -150,6 +164,7 @@ class RunRepository:
                     request.message.event_id,
                     request.message.message_id,
                     request.trigger_path.value,
+                    request.trigger_category.value,
                     request.persona.persona_id,
                     request.persona.persona_version,
                     request.persona.persona_digest,
@@ -164,6 +179,122 @@ class RunRepository:
             ).fetchone()
             assert row is not None
             return int(row["id"])
+
+    def record_trigger_evaluation(
+        self,
+        *,
+        request_id: str,
+        message: TelegramTextMessage,
+        trigger_category: TriggerCategory,
+        persona_name_hit: bool,
+        continuity_anchor_message_id: str | None,
+        decision_kind: TriggerEvaluationDecisionKind,
+        reason_code: str,
+        model_status: TriggerModelStatus,
+        persona: PersonaSnapshot,
+    ) -> int:
+        now = _utc_now()
+        with self.database.transaction() as connection:
+            connection.execute(
+                """
+                INSERT INTO trigger_evaluations (
+                    request_id, chat_id, trigger_event_id, trigger_message_id,
+                    trigger_category, persona_name_hit,
+                    continuity_anchor_message_id, decision_kind, reason_code,
+                    model_status, persona_id, persona_version, persona_digest,
+                    created_at, updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(request_id) DO UPDATE SET
+                    chat_id = excluded.chat_id,
+                    trigger_event_id = excluded.trigger_event_id,
+                    trigger_message_id = excluded.trigger_message_id,
+                    trigger_category = excluded.trigger_category,
+                    persona_name_hit = excluded.persona_name_hit,
+                    continuity_anchor_message_id = excluded.continuity_anchor_message_id,
+                    decision_kind = excluded.decision_kind,
+                    reason_code = excluded.reason_code,
+                    model_status = excluded.model_status,
+                    persona_id = excluded.persona_id,
+                    persona_version = excluded.persona_version,
+                    persona_digest = excluded.persona_digest,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    request_id,
+                    message.group_id,
+                    message.event_id,
+                    message.message_id,
+                    trigger_category.value,
+                    int(persona_name_hit),
+                    continuity_anchor_message_id,
+                    decision_kind.value,
+                    reason_code,
+                    model_status.value,
+                    persona.persona_id,
+                    persona.persona_version,
+                    persona.persona_digest,
+                    now,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT id FROM trigger_evaluations WHERE request_id = ?",
+                (request_id,),
+            ).fetchone()
+            assert row is not None
+            return int(row["id"])
+
+    def get_trigger_evaluation(
+        self,
+        *,
+        chat_id: str,
+        trigger_event_id: str,
+    ) -> TriggerEvaluationRecord | None:
+        connection = self.database.connect()
+        try:
+            row = connection.execute(
+                """
+                SELECT trigger_category, decision_kind, reason_code,
+                       model_status, persona_name_hit,
+                       continuity_anchor_message_id
+                FROM trigger_evaluations
+                WHERE chat_id = ? AND trigger_event_id = ?
+                """,
+                (chat_id, trigger_event_id),
+            ).fetchone()
+        finally:
+            connection.close()
+        if row is None:
+            return None
+        return TriggerEvaluationRecord(
+            trigger_category=TriggerCategory(str(row["trigger_category"])),
+            decision_kind=TriggerEvaluationDecisionKind(str(row["decision_kind"])),
+            reason_code=str(row["reason_code"]),
+            model_status=TriggerModelStatus(str(row["model_status"])),
+            persona_name_hit=bool(row["persona_name_hit"]),
+            continuity_anchor_message_id=(
+                str(row["continuity_anchor_message_id"])
+                if row["continuity_anchor_message_id"] is not None
+                else None
+            ),
+        )
+
+    def has_terminal_trigger_evaluation(
+        self,
+        *,
+        chat_id: str,
+        trigger_event_id: str,
+    ) -> bool:
+        evaluation = self.get_trigger_evaluation(
+            chat_id=chat_id,
+            trigger_event_id=trigger_event_id,
+        )
+        return evaluation is not None and evaluation.decision_kind in {
+            TriggerEvaluationDecisionKind.SILENCE,
+            TriggerEvaluationDecisionKind.IGNORED,
+            TriggerEvaluationDecisionKind.CONTROL,
+        }
 
     def has_terminal_silence(
         self,

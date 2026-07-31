@@ -18,6 +18,9 @@ from group_llm_agent.events import (
     FinalEffectKind,
     PersonaSnapshot,
     TelegramTextMessage,
+    TriggerCategory,
+    TriggerEvaluationDecisionKind,
+    TriggerModelStatus,
     TriggerPath,
 )
 from group_llm_agent.runs import RunRepository
@@ -35,6 +38,7 @@ _EXPECTED_RUNTIME_TABLES = {
     "recognition_jobs",
     "schema_migrations",
     "tool_call_audit",
+    "trigger_evaluations",
     "trigger_runs",
 }
 
@@ -77,7 +81,10 @@ class DatabaseMigrationTests(unittest.TestCase):
                 connection.close()
 
             self.assertTrue(_EXPECTED_RUNTIME_TABLES.issubset(tables))
-            self.assertEqual([(1, "persona_runtime")], [tuple(row) for row in migrations])
+            self.assertEqual(
+                [(1, "persona_runtime"), (2, "conversation_triggers_v0_2")],
+                [tuple(row) for row in migrations],
+            )
             self.assertEqual(1, foreign_keys)
             self.assertEqual("wal", journal_mode)
 
@@ -261,6 +268,7 @@ class RunRepositoryTests(unittest.TestCase):
             request = EffectRequest(
                 request_id="request-1",
                 trigger_path=TriggerPath.DIRECT,
+                trigger_category=TriggerCategory.DIRECT_PLATFORM,
                 trigger_reason="mention",
                 message=_message(),
                 persona=persona,
@@ -283,7 +291,8 @@ class RunRepositoryTests(unittest.TestCase):
             try:
                 row = connection.execute(
                     """
-                    SELECT status, model_call_count, tool_call_count, reason_code
+                    SELECT status, model_call_count, tool_call_count, reason_code,
+                           trigger_category
                     FROM effect_runs WHERE id = ?
                     """,
                     (run_id,),
@@ -295,10 +304,76 @@ class RunRepositoryTests(unittest.TestCase):
             finally:
                 connection.close()
 
-            self.assertEqual(("reply", 2, 1, "character_reply"), tuple(row))
+            self.assertEqual(
+                ("reply", 2, 1, "character_reply", "direct_platform"),
+                tuple(row),
+            )
             self.assertNotIn("text", columns)
             self.assertNotIn("prompt", columns)
             self.assertNotIn("response", columns)
+
+    def test_final_trigger_evaluation_is_minimal_upserted_and_terminal_by_kind(self) -> None:
+        with temporary_database() as database:
+            repository = RunRepository(database)
+            message = _message()
+            persona = PersonaSnapshot("original", "v1", "digest-1")
+
+            evaluation_id = repository.record_trigger_evaluation(
+                request_id="evaluation-1",
+                message=message,
+                trigger_category=TriggerCategory.CONVERSATION_CONTINUITY,
+                persona_name_hit=False,
+                continuity_anchor_message_id="outbound-9",
+                decision_kind=TriggerEvaluationDecisionKind.EFFECT_REQUESTED,
+                reason_code="answered_anchor_question",
+                model_status=TriggerModelStatus.COMPLETED,
+                persona=persona,
+            )
+            self.assertFalse(
+                repository.has_terminal_trigger_evaluation(
+                    chat_id=message.group_id,
+                    trigger_event_id=message.event_id,
+                )
+            )
+            same_id = repository.record_trigger_evaluation(
+                request_id="evaluation-1",
+                message=message,
+                trigger_category=TriggerCategory.CONVERSATION_CONTINUITY,
+                persona_name_hit=False,
+                continuity_anchor_message_id="outbound-9",
+                decision_kind=TriggerEvaluationDecisionKind.SILENCE,
+                reason_code="natural_close",
+                model_status=TriggerModelStatus.COMPLETED,
+                persona=persona,
+            )
+
+            self.assertEqual(evaluation_id, same_id)
+            self.assertTrue(
+                repository.has_terminal_trigger_evaluation(
+                    chat_id=message.group_id,
+                    trigger_event_id=message.event_id,
+                )
+            )
+            record = repository.get_trigger_evaluation(
+                chat_id=message.group_id,
+                trigger_event_id=message.event_id,
+            )
+            assert record is not None
+            self.assertEqual(TriggerEvaluationDecisionKind.SILENCE, record.decision_kind)
+            self.assertEqual("outbound-9", record.continuity_anchor_message_id)
+
+            connection = database.connect()
+            try:
+                columns = {
+                    str(column["name"])
+                    for column in connection.execute("PRAGMA table_info(trigger_evaluations)")
+                }
+            finally:
+                connection.close()
+            self.assertTrue(
+                {"trigger_category", "persona_name_hit", "continuity_anchor_message_id"} <= columns
+            )
+            self.assertTrue({"text", "prompt", "response", "confidence"}.isdisjoint(columns))
 
 
 if __name__ == "__main__":

@@ -24,6 +24,7 @@ class ProductionLezhiBundleTests(unittest.TestCase):
         self.assertEqual("lezhi", bundle.snapshot.persona_id)
         self.assertEqual("lezhi-v1.0", bundle.snapshot.persona_version)
         self.assertEqual(_BUNDLE_DIGEST, bundle.snapshot.persona_digest)
+        self.assertEqual(("乐枝",), bundle.direct_address_terms)
         self.assertEqual(
             "c5ea34553e52505ff50ee421cc08efff297df01f",
             bundle.requirements_commit,

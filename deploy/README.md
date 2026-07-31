@@ -67,9 +67,16 @@ RECOGNITION_MODEL=<model id>
 MEMBER_MEMORY_CAPABILITY=disabled
 ```
 
-执行 `deploy/manage.sh restart` 后，在群里 @bot 或回复 bot 验证直接人格回复。确认直接模式
-稳定后，才把 `BOT_MODE` 改成 `persona_full`：普通群聊仍需满足至少 15 分钟和 5 条真人消息
+执行 `deploy/manage.sh restart` 后，在群里依次用 @bot、回复 bot 和“乐枝，你看看……”验证
+直接人格回复。乐枝发言后，还可以在 10 分钟、其后不超过 5 条真人消息的范围内发送不带
+@ 的明确回答或追问，验证连续对话；单纯“收到”应自然静默。确认直接模式稳定后，才把
+`BOT_MODE` 改成 `persona_full`：与乐枝无关的普通群聊仍需满足至少 15 分钟和 5 条真人消息
 的硬门限，之后由人格 Trigger 选择回复或静默。
+
+正式称呼来自不可变 Character Bundle，不会从群消息学习昵称。连续性只锚定当前群最近
+一次实际成功发送的乐枝消息，且成员消息的 Telegram 秒级时间必须严格晚于锚点；超窗、
+同秒或更早、对象不明、无关内容和模型失败回到原普通规则或静默。
+此功能继续使用出站 Telegram/model HTTPS，不新增 webhook、监听端口或环境变量。
 
 ## 启用成员认识
 
@@ -84,13 +91,16 @@ MEMBER_MEMORY_CAPABILITY=disabled
 ## 验收顺序
 
 1. `fixed`：精确文本 `1` 回复一次 `1`，其他文本静默。
-2. `persona_direct`：@bot 和回复 bot 各产生至多一条乐枝回复。
-3. 非直接普通消息在 `persona_direct` 中保持静默。
-4. 启用认识前，重启后不应出现持久成员认识。
-5. 管理员 `/memory_enable` 后出现公开说明；重启后认识可继续演进。
-6. `/memory_forget_me` 后，后续互动不得使用已清除认识。
-7. `persona_full` 在不足 15 分钟或不足 5 条真人消息时保持静默。
-8. 检查日志不含 Telegram/model token、完整 prompt 或 provider 原始响应体。
+2. `persona_direct`：@bot、回复 bot 和明确“乐枝”称呼各产生至多一条乐枝回复。
+3. 乐枝提问后发送不带寻址的明确回答，确认连续性锚定实际已发送消息并回复。
+4. 乐枝完成回答后发送“收到”，确认自然收尾静默且不记录为失败。
+5. 紧随乐枝但内容无关、多人对象不明、超过 10 分钟或第 6 条真人消息，均不得提升为
+   连续性回复；`persona_direct` 中保持静默。
+6. 启用认识前，重启后不应出现持久成员认识。
+7. 管理员 `/memory_enable` 后出现公开说明；重启后认识可继续演进。
+8. `/memory_forget_me` 后，后续互动不得使用已清除认识。
+9. `persona_full` 中与乐枝无关的消息仍受 15 分钟/5 条真人消息门槛约束。
+10. 检查日志不含 Telegram/model token、完整 prompt 或 provider 原始响应体。
 
 模型人格评分和真实群 smoke 是运营证明，不会由仓库内 scripted-model 测试替代。
 
@@ -121,6 +131,9 @@ TELEGRAM_BOT_ENV_FILE=/secure/path/telegram-bot.env deploy/manage.sh start
 - 收不到普通文本：检查 bot 所在群、privacy mode 和权限。
 - `poll_failed`：长轮询按配置退避重试；持续失败时检查家庭网络/DNS/HTTPS。
 - 直接触发无回复：检查模型 endpoint、预算和日志中的脱敏错误类别。
+- 自然连续对话未回复：确认锚点是当前群实际发送消息，未超过 10 分钟/5 条真人消息；
+  成员消息还必须在 Telegram 时间上至少晚一个整秒；同秒、无关、歧义和自然收尾会按
+  设计降级或静默。
 - 认识未启用：确认 capability 为 `available`，命令发送者是管理员，且公开说明发送成功。
 - SQLite 错误：检查 `telegram-bot-data` 可写性和磁盘容量。
 

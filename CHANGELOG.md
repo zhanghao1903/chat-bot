@@ -17,6 +17,11 @@
   authorization.
 - Production persona evaluation carrier, aggregate verification matrix, deployment guidance, and
   exact bundle integrity configuration.
+- High-precision direct addressing through the Character Bundle formal name, plus semantic
+  continuity for replies to the bot's latest confirmed group message within ten minutes and five
+  subsequent human messages.
+- Minimal trigger-evaluation audit records for final category, decision, reason, persona-name hit,
+  and confirmed continuity anchor ID without extending raw-text retention.
 
 ### Changed
 
@@ -25,6 +30,9 @@
   delivery behavior.
 - Docker and local configuration templates now expose persona, model, budget, retention, and
   memory-capability settings without embedding secrets or silently activating a persona.
+- `persona_direct` now supports formal-name and recent-conversation responses while continuing to
+  exclude unrelated proactive participation; `persona_full` keeps the existing 15-minute/five-
+  human-message gate for unrelated ordinary messages.
 
 ### Security
 
@@ -34,6 +42,9 @@
   publishes the in-group disclosure; reset operations invalidate stale queued recognition.
 - Logs and safe exceptions exclude Telegram/model credentials, prompts, tool payloads, and raw
   provider response bodies.
+- Group text cannot teach trigger aliases or override the continuity window, trigger priority,
+  Character Bundle, group boundary, or safety contract; ambiguous and failed continuity checks
+  fall back to ordinary cadence or silence.
 
 ### Limitations
 
