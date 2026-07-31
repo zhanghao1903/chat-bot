@@ -74,7 +74,8 @@ MEMBER_MEMORY_CAPABILITY=disabled
 的硬门限，之后由人格 Trigger 选择回复或静默。
 
 正式称呼来自不可变 Character Bundle，不会从群消息学习昵称。连续性只锚定当前群最近
-一次实际成功发送的乐枝消息；超窗、对象不明、无关内容和模型失败回到原普通规则或静默。
+一次实际成功发送的乐枝消息，且成员消息的 Telegram 秒级时间必须严格晚于锚点；超窗、
+同秒或更早、对象不明、无关内容和模型失败回到原普通规则或静默。
 此功能继续使用出站 Telegram/model HTTPS，不新增 webhook、监听端口或环境变量。
 
 ## 启用成员认识
@@ -131,7 +132,8 @@ TELEGRAM_BOT_ENV_FILE=/secure/path/telegram-bot.env deploy/manage.sh start
 - `poll_failed`：长轮询按配置退避重试；持续失败时检查家庭网络/DNS/HTTPS。
 - 直接触发无回复：检查模型 endpoint、预算和日志中的脱敏错误类别。
 - 自然连续对话未回复：确认锚点是当前群实际发送消息，未超过 10 分钟/5 条真人消息；
-  无关、歧义和自然收尾会按设计降级或静默。
+  成员消息还必须在 Telegram 时间上至少晚一个整秒；同秒、无关、歧义和自然收尾会按
+  设计降级或静默。
 - 认识未启用：确认 capability 为 `available`，命令发送者是管理员，且公开说明发送成功。
 - SQLite 错误：检查 `telegram-bot-data` 可写性和磁盘容量。
 

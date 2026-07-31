@@ -35,6 +35,10 @@ class PersonaAddressMatcherTests(unittest.TestCase):
             "乐枝推荐的第二个方案不错",
             "候选人：小王、乐枝、小李",
             "1. 乐枝",
+            "候选人：小王、乐枝",
+            "成员包括小王、乐枝",
+            "喜欢的角色：猫猫、乐枝",
+            "我喜欢 乐枝",
         )
         for text in cases:
             with self.subTest(text=text):

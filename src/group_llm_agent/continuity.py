@@ -103,6 +103,10 @@ class ConversationContinuityGate:
             return ContinuityEligibility(None, "future_anchor")
         if age > self.maximum_age:
             return ContinuityEligibility(None, "anchor_expired")
+        anchor_second = anchor.sent_at.astimezone(UTC).replace(microsecond=0)
+        message_second = message.timestamp.astimezone(UTC).replace(microsecond=0)
+        if message_second <= anchor_second:
+            return ContinuityEligibility(None, "message_not_after_anchor")
 
         human_messages = sum(
             1

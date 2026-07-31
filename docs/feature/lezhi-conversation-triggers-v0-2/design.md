@@ -70,7 +70,8 @@ The matcher recognizes:
 - a standalone configured name;
 - a configured name used as a sentence-opening vocative with normal Chinese/ASCII punctuation
   or spacing;
-- a configured name used as a sentence-ending vocative after an utterance boundary;
+- a configured name used as a sentence-ending vocative after both an utterance boundary and
+  positive address evidence, such as second-person wording or a bounded question/request cue;
 - compact sentence-opening requests whose first lexical unit clearly addresses the named
   persona.
 
@@ -79,7 +80,7 @@ It does not elevate:
 - a name inside balanced quotation marks;
 - possessive, reported-speech, historical-reference, or third-person name use;
 - a mid-sentence name with no address boundary;
-- a list item or text directed to another named member;
+- a list item, third-person relation statement, or text directed to another named member;
 - malformed or ambiguous name placement.
 
 An uncertain match returns `mention_only`, which continues through ordinary trigger evaluation.
@@ -97,8 +98,15 @@ An anchor is eligible only when all conditions hold:
 - it belongs to the current group;
 - its direction is outbound and sender is the authenticated bot;
 - its send time is not in the future and is at most ten minutes old;
+- the current Telegram message timestamp, compared at Telegram's whole-second precision, is
+  strictly later than the anchor send second;
 - no more than five human inbound messages occur after it, including the current message;
 - its retained text is available in the recent twenty-message scene.
+
+Strictly-later ordering is the causal proof boundary. Messages timestamped before the anchor, and
+messages sharing its second, fail closed to ordinary cadence. This prevents an already-received
+second update in one polling batch from becoming a response to an outbound message created while
+the batch is being handled; same-second order cannot be proven from Telegram's timestamp.
 
 Eligibility is not semantic proof. It only permits a bounded model classification. If no anchor
 is eligible, processing proceeds directly to the existing ordinary cadence gate.
@@ -295,9 +303,11 @@ flowchart TD
 - Address matcher positive variants: sentence start/end, Chinese/ASCII punctuation, spacing,
   direct compact request, and standalone name.
 - Address matcher negatives: third-person discussion, historical reference, quote, possessive,
-  another-member address, list, and injection text.
+  another-member address, terminal list membership, whitespace-separated third-person text, and
+  injection text.
 - Continuity eligibility at exact ten-minute and five-human-message boundaries; reject expired,
-  future, missing-text, other-group, unsent, and sixth-human-message anchors.
+  future, missing-text, other-group, unsent, sixth-human-message, pre-anchor, and same-second
+  anchors.
 - Exact continuity prompt/schema/parser agreement for all four decisions and extra-field rejection.
 - Continue, natural close, unrelated fallback, ambiguity fallback, timeout fallback, and invalid
   result fallback.
@@ -312,6 +322,8 @@ flowchart TD
 
 - End-to-end direct-name reply bypasses ordinary cadence and calls no participation classifier.
 - End-to-end answer/follow-up continuity bypasses ordinary cadence and sends at most one reply.
+- Same-poll messages that predate a newly sent anchor remain on ordinary cadence in both transient
+  and persisted-memory paths; a genuine later-poll, later-second reply remains eligible.
 - Natural-close continuity remains silent and replay does not re-call the model.
 - Unrelated or ambiguous messages retain original 15-minute/five-human cadence.
 - Cross-group and self-message cases remain ignored.

@@ -158,6 +158,68 @@ class ConversationContinuityGateTests(unittest.TestCase):
             )
             self.assertEqual("no_recent_bot_message", result.reason_code)
 
+    def test_anchor_must_precede_message_at_telegram_second_precision(self) -> None:
+        bundle = _bundle()
+        with temporary_database() as database:
+            messages = MessageRepository(database)
+            anchor_at = _NOW - timedelta(seconds=10, microseconds=-500_000)
+            _record_anchor(messages, sent_at=anchor_at)
+            before_anchor = _message(1, timestamp=_NOW - timedelta(seconds=20))
+            _ingest(messages, before_anchor, bundle=bundle)
+            gate = ConversationContinuityGate(bot_user_id="bot-1", messages=messages)
+
+            rejected = gate.evaluate(before_anchor, now=_NOW)
+
+            self.assertFalse(rejected.eligible)
+            self.assertEqual("message_not_after_anchor", rejected.reason_code)
+
+        with temporary_database() as database:
+            messages = MessageRepository(database)
+            anchor_at = (_NOW - timedelta(seconds=10)).replace(microsecond=500_000)
+            _record_anchor(messages, sent_at=anchor_at)
+            same_second = _message(
+                2,
+                timestamp=anchor_at.replace(microsecond=0),
+            )
+            _ingest(messages, same_second, bundle=bundle)
+            gate = ConversationContinuityGate(bot_user_id="bot-1", messages=messages)
+
+            rejected = gate.evaluate(same_second, now=_NOW)
+
+            self.assertFalse(rejected.eligible)
+            self.assertEqual("message_not_after_anchor", rejected.reason_code)
+
+        with temporary_database() as database:
+            messages = MessageRepository(database)
+            anchor_at = _NOW - timedelta(seconds=10)
+            _record_anchor(messages, sent_at=anchor_at)
+            next_second = _message(3, timestamp=anchor_at + timedelta(seconds=1))
+            _ingest(messages, next_second, bundle=bundle)
+            gate = ConversationContinuityGate(bot_user_id="bot-1", messages=messages)
+
+            accepted = gate.evaluate(next_second, now=_NOW)
+
+            self.assertTrue(accepted.eligible)
+
+    def test_persisted_pre_anchor_message_cannot_use_later_outbound(self) -> None:
+        bundle = _bundle()
+        with temporary_database() as database:
+            messages = MessageRepository(database)
+            messages.policies.set_memory_status(
+                chat_id="group-a",
+                status="enabled",
+                persona=bundle.snapshot,
+            )
+            _record_anchor(messages, sent_at=_NOW - timedelta(seconds=10))
+            earlier = _message(1, timestamp=_NOW - timedelta(seconds=20))
+            _ingest(messages, earlier, bundle=bundle)
+            gate = ConversationContinuityGate(bot_user_id="bot-1", messages=messages)
+
+            rejected = gate.evaluate(earlier, now=_NOW)
+
+            self.assertFalse(rejected.eligible)
+            self.assertEqual("no_recent_bot_message", rejected.reason_code)
+
 
 class ConversationContinuityDeciderTests(unittest.TestCase):
     def test_prompt_schema_parser_and_all_four_decisions_agree(self) -> None:

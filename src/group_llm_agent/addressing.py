@@ -44,9 +44,13 @@ _COMPACT_OPENING_CUES = (
     "在吗",
 )
 _COMPACT_ENDING_CUES = ("你好", "早上好", "晚上好", "晚安", "谢谢", "在吗", "拜托", "请问")
+_TERMINAL_VOCATIVE_CUES = ("怎么办", "怎么样", "可以吗", "好吗", "行吗", "拜托", "谢谢", "请问")
 _REQUEST_PREFIXES = ("请", "麻烦", "想请", "问问", "让")
 _REQUEST_SUFFIXES = ("帮", "看", "说", "来", "给", "回答", "分析", "解释", "查", "搜", "选", "推荐")
 _QUOTE_PAIRS = {'"': '"', "'": "'", "“": "”", "‘": "’", "「": "」", "『": "』", "《": "》"}
+_LIST_CONTEXT_PATTERN = re.compile(
+    r"(?:候选|成员|包括|包含|名单|角色|选项|人物|参与者|嘉宾|例如|比如).*[、,，]"
+)
 
 
 def match_persona_address(text: str, terms: tuple[str, ...]) -> AddressMatch:
@@ -108,16 +112,28 @@ def _direct_reason(text: str, start: int, end: int) -> str | None:
     if not after_without_closing:
         if re.fullmatch(r"\s*(?:[-*+]|(?:\d+|[一二三四五六七八九十]+)[.)、])\s*", before_raw):
             return None
-        if before and before[-1] in _OPENING_SEPARATORS:
-            return "persona_name_ending_vocative"
-        if before_raw and before_raw[-1].isspace():
-            return "persona_name_ending_vocative"
         if before.endswith(_COMPACT_ENDING_CUES):
             return "persona_name_ending_greeting"
+        if _is_terminal_vocative(before_raw):
+            return "persona_name_ending_vocative"
 
     if before.endswith(_REQUEST_PREFIXES) and after.startswith(_REQUEST_SUFFIXES):
         return "persona_name_explicit_request"
     return None
+
+
+def _is_terminal_vocative(before_raw: str) -> bool:
+    """Require positive address evidence before a terminal persona name."""
+
+    if not before_raw:
+        return False
+    delimiter = before_raw[-1]
+    if delimiter == "、" or not (delimiter.isspace() or delimiter in _OPENING_SEPARATORS):
+        return False
+    clause = before_raw.rstrip().rstrip("".join(_OPENING_SEPARATORS)).rstrip()
+    if not clause or _LIST_CONTEXT_PATTERN.search(clause):
+        return False
+    return "你" in clause or "您" in clause or clause.endswith(_TERMINAL_VOCATIVE_CUES)
 
 
 def _quote_ranges(text: str) -> tuple[tuple[int, int], ...]:

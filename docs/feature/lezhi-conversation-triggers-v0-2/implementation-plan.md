@@ -120,7 +120,8 @@ absorbing unrelated lexical and continuity policy logic.
 3. Implement a pure Unicode-normalizing matcher returning `none`, `direct`, or `mention_only` plus
    a stable reason.
 4. Match standalone, opening-vocative, ending-vocative, punctuation/spacing, and bounded compact
-   request forms.
+   request forms. Ending vocatives require positive second-person or bounded question/request
+   evidence; separators and whitespace alone are not address evidence.
 5. Exclude balanced quoted spans, possessives, reports/history, lists, third-person references,
    another-member address, and uncertain mid-sentence uses.
 6. Never mutate the address tuple from messages or model output.
@@ -129,7 +130,8 @@ absorbing unrelated lexical and continuity policy logic.
 
 - Positive production cases include all AC-001 strings and formatting variants.
 - Negative production cases include all AC-002 strings, quoted name text, reported speech,
-  another-member address, and injection attempts.
+  another-member address, a persona name as the final list member, whitespace-separated
+  third-person statements, and injection attempts.
 - Test persona names and the production `乐枝` name bind to their existing persona digest.
 - No Character Bundle content/digest change is required for the derived formal name.
 
@@ -153,7 +155,9 @@ Included with Slice 3 as one coherent trigger-classification commit after both u
 
 1. Select the latest outbound authenticated-bot message from the current retained group scene.
 2. Enforce age `<= 10 minutes`, subsequent human count `<= 5`, current-group authorship, actual
-   outbound direction, available retained text, and no future timestamp.
+   outbound direction, available retained text, no future timestamp, and causal order. Compare the
+   current Telegram timestamp and anchor at whole-second precision and require the current message
+   to be strictly later; equal seconds fail closed because order is unprovable.
 3. Carry the exact anchor into `TriggerContext`; resolve by message ID from the same bounded scene.
 4. Add the exact four-kind response schema and `parse_continuity_decision` with strict fields and
    stable reason-code validation.
@@ -170,6 +174,9 @@ Included with Slice 3 as one coherent trigger-classification commit after both u
   six rejected.
 - Other-group, inbound-as-anchor, wrong-bot, future, missing, expired/purged, and unsent candidates
   are rejected.
+- Transient and persisted messages sent before a later anchor, including a second update already
+  present in the same polling batch, cannot use that anchor; a later-poll next-second reply remains
+  eligible.
 - All four legal outputs parse; unknown kind, extra field, prose, invalid reason, and protocol
   injection fail closed.
 - Prompt, schema, and parser operation sets are derived from one application-owned tuple.
