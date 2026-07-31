@@ -1,12 +1,13 @@
 # Verification: 乐枝对话连续性触发 v0.2
 
-- Status: Review remediation verification passed
+- Status: Second review remediation verification passed
 - Verified at: 2026-07-31
 - Requirements commit: `1e467fe7942ae057424e8600eb493759d4bc456c`
 - Requirements SHA-256: `1fdd2e87e35c1cb4f1cd9e5794946daee2d4d879fbefc832c8f4bc8e92f76f2a`
 - Initial implementation snapshot: `950d46a7e499a9423e5171bb3c5ba1a1fb4887b7`
 - Initial verification snapshot: `1b3f2db7fe44735e3a9f38fbf2a7a7d7c8c67404`
 - Review remediation snapshot: `4ccb29a7aed0c14272e7c1c2bfc4876fd050ab21`
+- Second review remediation snapshot: `79060c22ed6f7cd895581929c9273b9caa5bd23a`
 - Branch: `codex/lezhi-conversation-triggers-v0-2`
 
 ## Evidence Boundary
@@ -16,8 +17,10 @@ acceptance-matrix changes. The initial verification snapshot adds only `README.m
 `deploy/README.md`, and `CHANGELOG.md`. The review remediation snapshot contains the deterministic
 fixes, regression tests, and corresponding design/operator-documentation corrections for
 FINDING-001 and FINDING-002. All commands and Docker proof below were rerun against that exact
-remediation snapshot before this carrier was added. This carrier changes only this verification
-document and does not claim that an earlier SHA contained later fixes or tests.
+remediation snapshot before its carrier was added. The second review remediation snapshot adds the
+FINDING-003 matcher and direct-path regressions. Commands and Docker proof below were rerun again
+against that second exact snapshot before this carrier was updated. The carrier does not claim that
+an earlier SHA contained later fixes or tests.
 
 Repository verification proves deterministic trigger contracts, persistence and replay behavior,
 packaging, local deployment rendering, and a candidate image. It does not substitute for consuming a
@@ -52,7 +55,7 @@ real provider or sending operator-owned Telegram messages.
 
 | AC | Result | Evidence |
 | --- | --- | --- |
-| AC-001 | PASS | `test_addressing` accepts all three confirmed “乐枝” vocatives; `test_persona_runtime` proves name-direct bypasses ordinary cadence in `persona_direct` and sends once. |
+| AC-001 | PASS | `test_addressing` accepts all three confirmed “乐枝” vocatives plus bounded terminal questions/requests; `test_trigger.test_terminal_request_vocatives_reach_direct_path` proves the four reviewed terminal requests bypass ordinary cadence without a participation-model call. |
 | AC-002 | PASS | `test_addressing` rejects discussion, other-member addressing, quoted/block-quoted text, historical assertions, terminal list/enumeration occurrences, and whitespace-separated third-person statements as name-direct. |
 | AC-003 | PASS | `test_persona_runtime.test_recent_direct_reply_can_continue_without_addressing_in_direct_mode` uses a later polling batch and a strictly later Telegram second, anchors the actual sent message, and executes Trigger then Writer without the ordinary gate. |
 | AC-004 | PASS | `test_continuity` validates the four-way protocol; `test_trigger` proves `continue` produces a continuity-category effect tied to the confirmed outbound anchor. |
@@ -65,12 +68,12 @@ real provider or sending operator-owned Telegram messages.
 | AC-011 | PASS | Configured-term-only matcher and injection/window tests prove group text cannot add nicknames, expand ten minutes/five messages, or override prompt/schema/safety contracts. |
 | AC-012 | PASS | Migration/repository and trigger/runtime tests distinguish direct platform, direct name, continuity, ordinary, control, and ignored outcomes with safe reasons and actual anchor IDs. |
 | AC-013 | PASS | `test_continuity` maps provider failure to audited ambiguous fallback; runtime/effector regression preserves one neutral failure reply only for direct-path Writer failure. |
-| AC-014 | PASS | The complete 141-test suite covers unchanged persona digest, recognition safety, group isolation, context, tools, final validation, transport, control, delivery, terminal-address, and causal-anchor contracts. |
+| AC-014 | PASS | The complete 142-test suite covers unchanged persona digest, recognition safety, group isolation, context, tools, final validation, transport, control, delivery, terminal-address, and causal-anchor contracts. |
 | AC-015 | PASS | `test_conversation_trigger_runtime` centralizes the critical name, mention, four-way continuity, priority, scope, window, and injection matrix; the full suite has zero unexpected effects or duplicate sends. |
 
 ## Exact Verification Commands
 
-Run from a clean `4ccb29a7aed0c14272e7c1c2bfc4876fd050ab21` checkout:
+Run from a clean `79060c22ed6f7cd895581929c9273b9caa5bd23a` checkout:
 
 ```text
 python3 -m compileall -q src tests
@@ -86,7 +89,7 @@ TELEGRAM_BOT_ENV_FILE=../.env.example docker compose -f deploy/compose.yaml conf
 Results:
 
 - Compileall passed.
-- Unit discovery passed 141 tests.
+- Unit discovery passed 142 tests.
 - Ruff check passed; Ruff format reported 48 files already formatted.
 - Mypy reported no issues in 25 source files.
 - Build produced `group_llm_agent-0.1.0.tar.gz` and
@@ -103,8 +106,8 @@ Results:
 ## Docker Proof
 
 - Docker Engine server: 29.4.0.
-- Exact remediation-snapshot image tag: `group-llm-agent:lezhi-trigger-v0-2-4ccb29a`.
-- Image ID: `sha256:38e5644a2a9e7129ea7c3f27816c777b48195888fa2516eb0bc22e2d0face04e`.
+- Exact second-remediation image tag: `group-llm-agent:lezhi-trigger-v0-2-79060c2`.
+- Image ID: `sha256:c94f01be6d969055eae4309aaad43cf278b9471b65168453499a6bed3ec7c74d`.
 - Read-only inspection: user `app`; command `group-llm-agent`.
 - A one-shot no-credential container loaded persona `lezhi`, version `lezhi-v1.0`, all 22
   evaluation cases, and formal address term `乐枝`.
@@ -121,6 +124,11 @@ Results:
   intentionally fail-closed. Unit coverage proves before/same/next-second behavior; end-to-end
   coverage proves same-batch pre-anchor messages cannot continue in transient or persisted mode,
   while a genuine later-batch message can.
+- `FINDING-003` fixed: terminal vocatives now accept a bounded set of interrogative/request endings
+  and Chinese speech particles instead of only eight exact phrases. The exact reviewed forms
+  `怎么看，乐枝？`, `有空吗，乐枝？`, `说句话吧，乐枝！`, and `来帮忙吧，乐枝` enter the
+  direct persona-name path without a model call. The terminal-list, enumeration, and third-person
+  reviewer negatives remain mention-only, so the original false-positive repair is preserved.
 
 ## Migration, Rollout, and Rollback
 
