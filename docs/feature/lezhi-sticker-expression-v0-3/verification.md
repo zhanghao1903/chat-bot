@@ -8,6 +8,9 @@
 - Baseline persona-v2 squash commit: `ffdcee9a7e410a9fcad226dca99e52d349cfe54e`
 - Asset generation commit: `cb90237d9c9b03b475efef5ee5c9e3d8474aa4f7`
 - Runtime implementation commit: `48d5e88d3c80ef9e1189a996525704bf5696c73c`
+- First reviewed carrier: `5d07a566874579c041fb19a6b7dbf3b914deed80`
+- Review dispatch: `b7f08ace016ce9c405d1ece3a5dec43beafce62650adcf422b0bb68e59699aff`
+- Review remediation implementation: `434b400a8f4bc464ecf823b093744bea467c778c`
 
 ## 2. Candidate artifact identity
 
@@ -31,7 +34,8 @@
   untrusted evidence sources.
 - Application-owned final validation rejects person identity, sensitive/hidden person attributes,
   medical inference, unsafe asset identity, stale persona/catalog snapshots, serious sticker-only
-  choices, relationship overreach and consecutive duplicate stickers.
+  choices in either text or validated visual evidence, relationship overreach and consecutive
+  duplicate stickers.
 - Writer supports exactly one final text reply, one allowlisted sticker or silence. Read-only tool
   attempts use the confirmed 0/3/5 accounting with a hard five-call stop.
 - Telegram sticker delivery owns one external-effect claim. Confirmed failure permits at most one
@@ -39,16 +43,21 @@
 - Operator-only publish, attach, enable and avatar commands are signal-safe, digest-bound and never
   exposed as Writer tools. Catalog approval, Telegram smoke, production enable, avatar approval and
   automatic rotation remain distinct gates.
+- Avatar application requires the exact approved default-image baseline before any mood image,
+  downloads the post-write Telegram profile photo and compares its SHA-256, and rejects stale,
+  mismatched or unknown readback. Rotation requires consistent bot-wide scope plus at least two
+  chats and two members; the current single-chat deployment is therefore fail-closed.
 - `external_effects` supports aggregate-only expression observability: visible effect count,
   sticker request/success, consecutive repetition and degradation rate without message bodies.
 
 ## 4. Deterministic verification
 
-Exact runtime implementation source at `48d5e88d3c80ef9e1189a996525704bf5696c73c` passed:
+Exact remediation implementation source at
+`434b400a8f4bc464ecf823b093744bea467c778c` passed:
 
 - `python3 -m compileall -q src tests`
-- `PYTHONPATH=src:tests .venv/bin/python -m unittest discover -s tests -v` — 216 tests
-- `uvx ruff format --check src tests` — all files formatted after the two reported mechanical fixes
+- `PYTHONPATH=src:tests .venv/bin/python -m unittest discover -s tests -v` — 219 tests
+- `uvx ruff format --check src tests` — 79 files already formatted
 - `uvx ruff check src tests` — passed
 - `mypy src/group_llm_agent --config-file pyproject.toml` — no issues in 40 source files
 - `sh -n deploy/manage.sh` — passed
@@ -73,14 +82,30 @@ Targeted proofs include:
   effect;
 - signal interruption retains the operator lock until a non-success terminal state.
 
+Review finding closure proofs:
+
+- **FINDING-001 fixed:** after profile write, the controller resolves the returned Telegram
+  `file_id`, downloads the readback under the 8 MB bound and compares its SHA-256 with the approved
+  candidate. Exact stale/unchanged and mismatched readbacks record `failed`, attempt rollback and
+  never record `verified`.
+- **FINDING-002 fixed:** an empty audit state rejects direct operator application of
+  `lezhi-joyful` before any upload. The exact default content digest must first have a verified audit
+  under the catalog version; only then can a mood candidate proceed. Rotation uses the same guard.
+- **FINDING-003 fixed:** migration 4 stores chat and member provenance plus the required explicit
+  bot scope count. Single-member, single-group and scope-count-one matrices all return ineligible;
+  only consistent evidence spanning two chats and two members can become a candidate.
+- **FINDING-004 fixed:** benign caption plus visual evidence describing a bleeding wound,
+  medication and `injury`/`medical` flags degrades the scripted sticker decision to a textual direct
+  failure (`sticker_necessary_text_required`); no sticker identity reaches the final effect.
+
 ## 5. Build and container proof
 
 - Wheel: `group_llm_agent-0.1.0-py3-none-any.whl`, SHA-256
-  `073f5b8b36de3a74084210a1d2486290a7c3c04581eb40627a0e46c9966dbcf0`
+  `98c0f48bf8b3e68da23956875c41c5b571e2a521621eb795b2079e7cee5e93ca`
 - Source distribution: `group_llm_agent-0.1.0.tar.gz`, SHA-256
-  `1bf85feb5bd76366645248b6318097c8c54810aa226b6d5f7e92398fb2e14327`
-- Candidate image: `group-llm-agent:lezhi-sticker-v0.3-candidate`, image ID
-  `sha256:db9297150733ebfde06bfd19214aab9cd812c24f8a0c273bf8a6bd833adc3aec`
+  `dbb0ac3e49d44221ff5b6385b8f5c5eec9408dfda409d7096ba6ce2056516d6f`
+- Candidate image: `group-llm-agent:lezhi-sticker-v0.3-remediation`, image ID
+  `sha256:fa33248c26e12110c4629bc8e41aaa45a3e8896958774e612c36a5f15babd2e0`
 - Image configuration uses user `app` and command `group-llm-agent`.
 - A read-only one-shot image run loaded exactly 48 candidate catalog entries and 20 fixed
   evaluation cases at the digests in section 2.
