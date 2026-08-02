@@ -10,7 +10,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from group_llm_agent.database import SQLiteDatabase
-from group_llm_agent.persona import load_character_bundle
+from group_llm_agent.persona import CharacterBundle, load_character_bundle
 from group_llm_agent.persona_evaluation import write_evaluation_report
 from group_llm_agent.persona_release import (
     PersonaImportSpec,
@@ -320,6 +320,7 @@ def _passing_report() -> dict[str, object]:
                 "output_kind": "reply",
                 "output_text": "测试回答",
                 "reason_code": "test",
+                "evaluation_evidence": _evaluation_evidence(item["case_id"], bundle),
                 "score": 9,
                 "rationale": "满足要求",
                 "critical_violations": [],
@@ -329,6 +330,54 @@ def _passing_report() -> dict[str, object]:
         ],
         "passed": True,
     }
+
+
+def _evaluation_evidence(case_id: str, bundle: CharacterBundle) -> dict[str, object] | None:
+    if case_id == "CB-EVAL-018":
+        snapshot = bundle.snapshot
+        identity = {
+            "persona_id": snapshot.persona_id,
+            "persona_version": snapshot.persona_version,
+            "persona_digest": snapshot.persona_digest,
+        }
+        return {
+            "kind": "application_owned_snapshot_consistency",
+            "views": {name: dict(identity) for name in ("trigger", "recognition", "effector")},
+            "all_views_equal": True,
+            "runtime_contract": (
+                "Trigger, Recognition and Effector receive views compiled from one immutable "
+                "CharacterBundle snapshot; startup rejects any path or digest mismatch."
+            ),
+        }
+    if case_id == "CB-EVAL-022":
+        source_ids = [
+            "CB-EVAL-002",
+            "CB-EVAL-003",
+            "CB-EVAL-008",
+            "CB-EVAL-010",
+            "CB-EVAL-019",
+            "CB-EVAL-021",
+            "CB-EVAL-023",
+            "CB-EVAL-025",
+            "CB-EVAL-029",
+            "CB-EVAL-031",
+            "CB-EVAL-034",
+            "CB-EVAL-035",
+            "CB-EVAL-037",
+        ]
+        return {
+            "kind": "application_owned_name_masked_output_corpus",
+            "source_case_ids": source_ids,
+            "outputs": [
+                {
+                    "case_id": source_id,
+                    "output_kind": "reply",
+                    "output_text": "测试回答",
+                }
+                for source_id in source_ids
+            ],
+        }
+    return None
 
 
 if __name__ == "__main__":

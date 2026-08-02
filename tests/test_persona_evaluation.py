@@ -58,8 +58,7 @@ class GeneratedEvaluationModel:
                 "temperature": temperature,
             }
         )
-        call_number = len(self.calls)
-        if call_number % 2:
+        if "oneOf" in response_schema:
             return StructuredModelResult(
                 {
                     "kind": "reply",
@@ -67,7 +66,7 @@ class GeneratedEvaluationModel:
                     "text": "这个细节有点意思，我先接住，不替你下结论。",
                 }
             )
-        case_number = call_number // 2
+        case_number = sum("oneOf" not in call["response_schema"] for call in self.calls)
         failing = case_number == self.failing_case_number
         return StructuredModelResult(
             {
@@ -107,9 +106,19 @@ class PersonaEvaluationTests(unittest.TestCase):
         self.assertTrue(
             all(
                 "CHARACTER_EFFECTOR_POLICY=" in call["messages"][0].content
-                for call in model.calls[::2]
+                for call in model.calls[:37]
             )
         )
+        self.assertTrue(
+            all(
+                "APPLICATION_OWNED_EVIDENCE=" in call["messages"][1].content
+                for call in model.calls[37:]
+            )
+        )
+        evidence_18 = report["cases"][17]["evaluation_evidence"]
+        evidence_22 = report["cases"][21]["evaluation_evidence"]
+        self.assertEqual("application_owned_snapshot_consistency", evidence_18["kind"])
+        self.assertEqual("application_owned_name_masked_output_corpus", evidence_22["kind"])
         verify_evaluation_report(
             report,
             bundle=self.bundle,

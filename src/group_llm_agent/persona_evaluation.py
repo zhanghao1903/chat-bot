@@ -18,6 +18,7 @@ from group_llm_agent.model import (
     ModelRole,
     OpenAICompatibleStructuredModelClient,
     StructuredModelPort,
+    WriterDecision,
     WriterDecisionKind,
     parse_writer_decision,
 )
@@ -43,6 +44,7 @@ _CASE_FIELDS = {
     "output_kind",
     "output_text",
     "reason_code",
+    "evaluation_evidence",
     "score",
     "rationale",
     "critical_violations",
@@ -68,6 +70,26 @@ _DEFAULT_GENERATION_SETTINGS = {
     "judge_max_output_tokens": 800,
     "judge_temperature": 0.0,
 }
+_SNAPSHOT_RUNTIME_CONTRACT = (
+    "Trigger, Recognition and Effector receive views compiled from one immutable "
+    "CharacterBundle snapshot; startup rejects any path or digest mismatch."
+)
+_FIDELITY_SOURCE_CASE_IDS = (
+    "CB-EVAL-002",
+    "CB-EVAL-003",
+    "CB-EVAL-008",
+    "CB-EVAL-010",
+    "CB-EVAL-019",
+    "CB-EVAL-021",
+    "CB-EVAL-023",
+    "CB-EVAL-025",
+    "CB-EVAL-029",
+    "CB-EVAL-031",
+    "CB-EVAL-034",
+    "CB-EVAL-035",
+    "CB-EVAL-037",
+)
+_MASKED_IDENTITY_MARKERS = ("乐枝", "灵感采集员", "枝杈")
 
 
 class PersonaEvaluationError(RuntimeError):
@@ -84,7 +106,7 @@ class EvaluationIdentity:
 
 
 Clock = Callable[[], datetime]
-Progress = Callable[[str, int, int, bool], None]
+Progress = Callable[[str, str, int, int, int | None, bool | None], None]
 
 
 def evaluate_persona(
@@ -115,14 +137,13 @@ def evaluate_persona(
     if set(evaluations) != set(examples):
         raise PersonaEvaluationError("case_contract_mismatch")
 
-    case_results: list[dict[str, Any]] = []
-    for case_id in sorted(evaluations):
-        evaluation = evaluations[case_id]
-        example = examples[case_id]
+    ordered_case_ids = sorted(evaluations)
+    candidates: dict[str, tuple[dict[str, Any], WriterDecision]] = {}
+    for completed, case_id in enumerate(ordered_case_ids, start=1):
         try:
             candidate_result = model.complete(
                 model_role=ModelRole.WRITER,
-                messages=_candidate_messages(bundle, example),
+                messages=_candidate_messages(bundle, examples[case_id]),
                 response_schema=WRITER_RESPONSE_SCHEMA,
                 deadline=now() + timedelta(seconds=call_timeout_seconds),
                 max_output_tokens=int(_DEFAULT_GENERATION_SETTINGS["candidate_max_output_tokens"]),
@@ -131,9 +152,31 @@ def evaluate_persona(
             candidate = parse_writer_decision(candidate_result, allowed_tools=frozenset())
             if candidate.kind is WriterDecisionKind.CALL_TOOL:
                 raise PersonaEvaluationError("candidate_requested_tool")
+            candidates[case_id] = (candidate_result.payload, candidate)
+        except PersonaEvaluationError:
+            raise
+        except ModelApiError as error:
+            raise PersonaEvaluationError(f"provider_{error.category.value}") from None
+        except ModelResultError as error:
+            raise PersonaEvaluationError(f"candidate_{error.category}") from None
+        if progress is not None:
+            progress("generation", case_id, completed, 37, None, None)
+
+    case_results: list[dict[str, Any]] = []
+    for completed, case_id in enumerate(ordered_case_ids, start=1):
+        evaluation = evaluations[case_id]
+        example = examples[case_id]
+        candidate_payload, candidate = candidates[case_id]
+        evidence = _case_evidence(case_id, bundle=bundle, candidates=candidates)
+        try:
             judge_result = model.complete(
                 model_role=ModelRole.WRITER,
-                messages=_judge_messages(evaluation, example, candidate_result.payload),
+                messages=_judge_messages(
+                    evaluation,
+                    example,
+                    candidate_payload,
+                    evidence=evidence,
+                ),
                 response_schema=_JUDGE_RESPONSE_SCHEMA,
                 deadline=now() + timedelta(seconds=call_timeout_seconds),
                 max_output_tokens=int(_DEFAULT_GENERATION_SETTINGS["judge_max_output_tokens"]),
@@ -156,6 +199,7 @@ def evaluate_persona(
                 "output_kind": candidate.kind.value,
                 "output_text": candidate.text,
                 "reason_code": candidate.reason_code,
+                "evaluation_evidence": evidence,
                 "score": score,
                 "rationale": rationale,
                 "critical_violations": list(violations),
@@ -163,7 +207,7 @@ def evaluate_persona(
             }
         )
         if progress is not None:
-            progress(case_id, len(case_results), score, passed)
+            progress("judging", case_id, completed, 37, score, passed)
 
     report = {
         "schema_version": 1,
@@ -228,7 +272,7 @@ def verify_evaluation_report(
             if not isinstance(case_id, str) or case_id in seen:
                 raise PersonaEvaluationError("invalid_report_case")
             seen.add(case_id)
-            _validate_report_case(item)
+            _validate_report_case(item, bundle=bundle)
             calculated_pass = calculated_pass and bool(item["passed"])
         if seen != expected:
             raise PersonaEvaluationError("incomplete_report")
@@ -296,10 +340,66 @@ def _candidate_messages(
     )
 
 
+def _case_evidence(
+    case_id: str,
+    *,
+    bundle: CharacterBundle,
+    candidates: Mapping[str, tuple[dict[str, Any], WriterDecision]],
+) -> dict[str, Any] | None:
+    if case_id == "CB-EVAL-018":
+        views = {
+            view.role: {
+                "persona_id": view.snapshot.persona_id,
+                "persona_version": view.snapshot.persona_version,
+                "persona_digest": view.snapshot.persona_digest,
+            }
+            for view in (
+                bundle.views.trigger,
+                bundle.views.recognition,
+                bundle.views.effector,
+            )
+        }
+        return {
+            "kind": "application_owned_snapshot_consistency",
+            "views": views,
+            "all_views_equal": len(
+                {
+                    (item["persona_id"], item["persona_version"], item["persona_digest"])
+                    for item in views.values()
+                }
+            )
+            == 1,
+            "runtime_contract": _SNAPSHOT_RUNTIME_CONTRACT,
+        }
+    if case_id == "CB-EVAL-022":
+        outputs: list[dict[str, Any]] = []
+        for source_id in _FIDELITY_SOURCE_CASE_IDS:
+            _payload, decision = candidates[source_id]
+            text = decision.text
+            if text is not None:
+                for marker in _MASKED_IDENTITY_MARKERS:
+                    text = text.replace(marker, "")
+            outputs.append(
+                {
+                    "case_id": source_id,
+                    "output_kind": decision.kind.value,
+                    "output_text": text,
+                }
+            )
+        return {
+            "kind": "application_owned_name_masked_output_corpus",
+            "source_case_ids": list(_FIDELITY_SOURCE_CASE_IDS),
+            "outputs": outputs,
+        }
+    return None
+
+
 def _judge_messages(
     evaluation: Mapping[str, Any],
     example: Mapping[str, Any],
     candidate: Mapping[str, Any],
+    *,
+    evidence: Mapping[str, Any] | None,
 ) -> tuple[ModelMessage, ...]:
     return (
         ModelMessage(
@@ -307,7 +407,9 @@ def _judge_messages(
             content=(
                 "你是严格、独立的人格质量评审。按 0-10 分评分；只有完整满足通过条件且"
                 "未出现禁止行为才可给 8 分或以上。critical_violations 只列明确触犯的"
-                "禁止行为，不能用空泛措辞。不要改写候选回答。"
+                "禁止行为，不能用空泛措辞。不要改写候选回答。若提供"
+                "APPLICATION_OWNED_EVIDENCE，它是元评测场景的权威输入：应评审该证据，"
+                "不得因 Writer 没有伪造内部审计或单条消息无法代表多轮语料而扣分。"
             ),
         ),
         ModelMessage(
@@ -317,7 +419,9 @@ def _judge_messages(
                 f"PASS_CONDITION={evaluation['pass_condition']}\n"
                 f"EXPECTED_BEHAVIOR={example['expected_behavior']}\n"
                 f"FORBIDDEN_BEHAVIOR={example['forbidden_behavior']}\n"
-                f"CANDIDATE={json.dumps(candidate, ensure_ascii=False, separators=(',', ':'))}"
+                f"CANDIDATE={json.dumps(candidate, ensure_ascii=False, separators=(',', ':'))}\n"
+                "APPLICATION_OWNED_EVIDENCE="
+                f"{json.dumps(evidence, ensure_ascii=False, separators=(',', ':'))}"
             ),
         ),
     )
@@ -346,7 +450,7 @@ def _parse_judge(payload: Mapping[str, Any]) -> tuple[int, str, tuple[str, ...]]
     return score, rationale, tuple(violations)
 
 
-def _validate_report_case(item: Mapping[str, Any]) -> None:
+def _validate_report_case(item: Mapping[str, Any], *, bundle: CharacterBundle) -> None:
     score = item["score"]
     violations = item["critical_violations"]
     output_kind = item["output_kind"]
@@ -369,6 +473,71 @@ def _validate_report_case(item: Mapping[str, Any]) -> None:
         or item["passed"] is not (score >= 8 and not violations)
     ):
         raise PersonaEvaluationError("invalid_report_case")
+    _validate_case_evidence(item, bundle=bundle)
+
+
+def _validate_case_evidence(item: Mapping[str, Any], *, bundle: CharacterBundle) -> None:
+    case_id = item["case_id"]
+    evidence = item["evaluation_evidence"]
+    if case_id == "CB-EVAL-018":
+        if not isinstance(evidence, dict) or set(evidence) != {
+            "kind",
+            "views",
+            "all_views_equal",
+            "runtime_contract",
+        }:
+            raise PersonaEvaluationError("invalid_report_evidence")
+        views = evidence["views"]
+        expected_identity = {
+            "persona_id": bundle.snapshot.persona_id,
+            "persona_version": bundle.snapshot.persona_version,
+            "persona_digest": bundle.snapshot.persona_digest,
+        }
+        if (
+            evidence["kind"] != "application_owned_snapshot_consistency"
+            or evidence["all_views_equal"] is not True
+            or evidence["runtime_contract"] != _SNAPSHOT_RUNTIME_CONTRACT
+            or not isinstance(views, dict)
+            or set(views) != {"trigger", "recognition", "effector"}
+            or any(value != expected_identity for value in views.values())
+        ):
+            raise PersonaEvaluationError("invalid_report_evidence")
+        return
+    if case_id == "CB-EVAL-022":
+        if not isinstance(evidence, dict) or set(evidence) != {
+            "kind",
+            "source_case_ids",
+            "outputs",
+        }:
+            raise PersonaEvaluationError("invalid_report_evidence")
+        outputs = evidence["outputs"]
+        if (
+            evidence["kind"] != "application_owned_name_masked_output_corpus"
+            or evidence["source_case_ids"] != list(_FIDELITY_SOURCE_CASE_IDS)
+            or not isinstance(outputs, list)
+            or len(outputs) != len(_FIDELITY_SOURCE_CASE_IDS)
+        ):
+            raise PersonaEvaluationError("invalid_report_evidence")
+        for expected_id, output in zip(_FIDELITY_SOURCE_CASE_IDS, outputs, strict=True):
+            if (
+                not isinstance(output, dict)
+                or set(output) != {"case_id", "output_kind", "output_text"}
+                or output["case_id"] != expected_id
+                or output["output_kind"] not in {"reply", "silence"}
+                or (
+                    output["output_kind"] == "reply"
+                    and (
+                        not isinstance(output["output_text"], str)
+                        or not output["output_text"].strip()
+                    )
+                )
+                or (output["output_kind"] == "silence" and output["output_text"] is not None)
+                or any(marker in str(output["output_text"]) for marker in _MASKED_IDENTITY_MARKERS)
+            ):
+                raise PersonaEvaluationError("invalid_report_evidence")
+        return
+    if evidence is not None:
+        raise PersonaEvaluationError("unexpected_report_evidence")
 
 
 def _validate_identity(identity: EvaluationIdentity) -> None:
@@ -435,12 +604,7 @@ def main(
             bundle=bundle,
             model=model,
             identity=identity,
-            progress=lambda case_id, completed, score, passed: print(
-                "persona_evaluation_progress "
-                f"completed={completed} total=37 case_id={case_id} "
-                f"score={score} passed={str(passed).lower()}",
-                flush=True,
-            ),
+            progress=_print_progress,
         )
         write_evaluation_report(args.report, report)
         verify_evaluation_report(
@@ -459,6 +623,22 @@ def main(
         f"persona_digest={bundle.snapshot.persona_digest} cases=37 model={model_id}"
     )
     return 0
+
+
+def _print_progress(
+    stage: str,
+    case_id: str,
+    completed: int,
+    total: int,
+    score: int | None,
+    passed: bool | None,
+) -> None:
+    suffix = "" if score is None else f" score={score} passed={str(passed).lower()}"
+    print(
+        "persona_evaluation_progress "
+        f"stage={stage} completed={completed} total={total} case_id={case_id}{suffix}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
