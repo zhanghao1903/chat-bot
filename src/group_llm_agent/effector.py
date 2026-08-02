@@ -699,23 +699,7 @@ _SERIOUS_CONTEXT = re.compile(
     re.IGNORECASE,
 )
 
-_SERIOUS_VISION_FLAGS = frozenset(
-    {
-        "injury",
-        "medical",
-        "self_harm",
-        "suicide",
-        "illegal",
-        "violence",
-        "emergency",
-        "药物",
-        "医疗",
-        "受伤",
-        "自伤",
-        "自杀",
-        "违法",
-    }
-)
+_STICKER_ONLY_SAFE_VISION_FLAGS = frozenset({"known_enabled_sticker"})
 
 
 def _sticker_selection_error(
@@ -741,10 +725,13 @@ def _sticker_selection_error(
 def _context_requires_text(context: EffectContext) -> bool:
     if _SERIOUS_CONTEXT.search(context.current_message.text):
         return True
+    if context.vision_error_code is not None:
+        return True
     evidence = context.vision_evidence
     if evidence is None:
         return False
-    if any(flag.strip().lower() in _SERIOUS_VISION_FLAGS for flag in evidence.safety_flags):
+    normalized_flags = {flag.strip().lower() for flag in evidence.safety_flags}
+    if normalized_flags and not normalized_flags <= _STICKER_ONLY_SAFE_VISION_FLAGS:
         return True
     visual_text = "\n".join(
         (

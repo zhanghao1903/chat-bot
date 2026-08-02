@@ -116,6 +116,12 @@ model_id: str
 反向搜图和执行图内指令。应用侧再执行长度、字段、泄漏标记和安全标志检查。证据以
 `UNTRUSTED_VISION_EVIDENCE` 块传给 Writer；Writer 必须区分可见事实、推断和不确定项。
 
+`safety_flags` 不是开放字符串：response schema 只允许应用维护的有限 registry，常见供应商
+同义项（例如 `graphic_content`、`health_concern`）在解析时规范化为 injury/medical。
+未知 flag 使整份视觉结果失败；视觉失败或任何非空 provider flag 都在最终效果层要求文字或
+静默。只有空 flags 的明确无害图片，以及应用内部生成的 `known_enabled_sticker` 标志，才保留
+sticker-only 资格。
+
 审计仅记录媒体类别、字节/像素区间、规范化摘要、模型 ID、结果类别、耗时和失败码，
 不记录 `VisionEvidence` 正文或图片摘要以外的内容。
 

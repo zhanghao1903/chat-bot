@@ -8,6 +8,7 @@ from typing import Self
 
 from group_llm_agent.media import NormalizedMedia
 from group_llm_agent.vision import (
+    VISION_RESPONSE_SCHEMA,
     OpenAICompatibleVisionClient,
     VisionResultError,
     parse_vision_evidence,
@@ -128,6 +129,20 @@ class VisionTests(unittest.TestCase):
 
         self.assertIn("image_instruction_present", evidence.safety_flags)
         self.assertIn("BEGIN_UNTRUSTED_VISION_EVIDENCE", evidence.as_untrusted_prompt_data())
+
+    def test_safety_flags_are_closed_and_serious_synonyms_are_normalized(self) -> None:
+        payload = _safe_payload()
+        payload["safety_flags"] = ["graphic_content", "health_concern"]
+
+        evidence = parse_vision_evidence(payload, media_sha256="a" * 64, model_id="model")
+
+        self.assertEqual(("injury", "medical"), evidence.safety_flags)
+        flag_schema = VISION_RESPONSE_SCHEMA["properties"]["safety_flags"]
+        self.assertIn("enum", flag_schema["items"])
+
+        payload["safety_flags"] = ["unknown_provider_label"]
+        with self.assertRaisesRegex(VisionResultError, "invalid_safety_flag"):
+            parse_vision_evidence(payload, media_sha256="a" * 64, model_id="model")
 
 
 if __name__ == "__main__":

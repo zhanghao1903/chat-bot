@@ -347,55 +347,105 @@ class WriterEffectorTests(unittest.TestCase):
         selected = next(
             entry for entry in candidate.entries if entry.minimum_relationship == "public"
         )
-        with EffectorFixtureContext(
-            StructuredModelResult(
-                {
-                    "kind": "sticker",
-                    "reason_code": "light_reaction",
-                    "sticker_id": selected.semantic_id,
-                    "catalog_version": candidate.catalog_version,
-                    "catalog_digest": candidate.digest,
-                    "fallback_text": "我看到了。",
-                    "mood_signal": "gentle",
-                }
-            )
-        ) as fixture:
-            fixture.effector.expression_catalog_provider = lambda: replace(
-                candidate,
-                status="enabled",
-                persona_id=fixture.bundle.snapshot.persona_id,
-                persona_version=fixture.bundle.snapshot.persona_version,
-                persona_digest=fixture.bundle.snapshot.persona_digest,
-                entries=tuple(
-                    replace(
-                        entry,
-                        status="enabled",
-                        telegram_file_id=f"file-{entry.semantic_id}",
-                        telegram_file_unique_id=f"unique-{entry.semantic_id}",
-                    )
-                    for entry in candidate.entries
+        cases = (
+            (
+                "schema_serious_synonyms",
+                VisionEvidence(
+                    summary="A deep gash with red liquid beside two tablets.",
+                    visible_text=(),
+                    observations=("The skin is split and red fluid is visible.",),
+                    inferences=(),
+                    uncertainties=(),
+                    safety_flags=("graphic_content", "health_concern"),
+                    media_sha256="a" * 64,
+                    model_id="vision-test",
                 ),
-            )
-            evidence = VisionEvidence(
-                summary="A visibly bleeding wound beside medication.",
-                visible_text=(),
-                observations=("Blood is visible on an open wound.",),
-                inferences=("The person may need medical care.",),
-                uncertainties=(),
-                safety_flags=("injury", "medical"),
-                media_sha256="a" * 64,
-                model_id="vision-test",
-            )
+                None,
+                FinalEffectKind.FAILURE_REPLY,
+            ),
+            (
+                "unknown_flag_defense_in_depth",
+                VisionEvidence(
+                    summary="The image needs additional review.",
+                    visible_text=(),
+                    observations=(),
+                    inferences=(),
+                    uncertainties=("Risk classification is uncertain.",),
+                    safety_flags=("unknown_provider_label",),
+                    media_sha256="b" * 64,
+                    model_id="vision-test",
+                ),
+                None,
+                FinalEffectKind.FAILURE_REPLY,
+            ),
+            (
+                "unknown_flag_parser_failure",
+                None,
+                "invalid_safety_flag",
+                FinalEffectKind.FAILURE_REPLY,
+            ),
+            (
+                "benign_image",
+                VisionEvidence(
+                    summary="A blue cup is on a table.",
+                    visible_text=(),
+                    observations=("The cup is centered in the image.",),
+                    inferences=(),
+                    uncertainties=(),
+                    safety_flags=(),
+                    media_sha256="c" * 64,
+                    model_id="vision-test",
+                ),
+                None,
+                FinalEffectKind.STICKER,
+            ),
+        )
+        for label, evidence, error_code, expected_kind in cases:
+            with (
+                self.subTest(label=label),
+                EffectorFixtureContext(
+                    StructuredModelResult(
+                        {
+                            "kind": "sticker",
+                            "reason_code": "light_reaction",
+                            "sticker_id": selected.semantic_id,
+                            "catalog_version": candidate.catalog_version,
+                            "catalog_digest": candidate.digest,
+                            "fallback_text": "我看到了。",
+                            "mood_signal": "gentle",
+                        }
+                    )
+                ) as fixture,
+            ):
+                fixture.effector.expression_catalog_provider = lambda: replace(
+                    candidate,
+                    status="enabled",
+                    persona_id=fixture.bundle.snapshot.persona_id,
+                    persona_version=fixture.bundle.snapshot.persona_version,
+                    persona_digest=fixture.bundle.snapshot.persona_digest,
+                    entries=tuple(
+                        replace(
+                            entry,
+                            status="enabled",
+                            telegram_file_id=f"file-{entry.semantic_id}",
+                            telegram_file_unique_id=f"unique-{entry.semantic_id}",
+                        )
+                        for entry in candidate.entries
+                    ),
+                )
+                final = fixture.effector.execute(
+                    request=fixture.request,
+                    bundle=fixture.bundle,
+                    vision_evidence=evidence,
+                    vision_error_code=error_code,
+                )
 
-            final = fixture.effector.execute(
-                request=fixture.request,
-                bundle=fixture.bundle,
-                vision_evidence=evidence,
-            )
-
-            self.assertEqual(FinalEffectKind.FAILURE_REPLY, final.kind)
-            self.assertIsNone(final.sticker_id)
-            self.assertEqual("sticker_necessary_text_required", final.reason_code)
+                self.assertEqual(expected_kind, final.kind)
+                if expected_kind is FinalEffectKind.FAILURE_REPLY:
+                    self.assertIsNone(final.sticker_id)
+                    self.assertEqual("sticker_necessary_text_required", final.reason_code)
+                else:
+                    self.assertEqual(selected.semantic_id, final.sticker_id)
 
 
 class EffectorFixture:
