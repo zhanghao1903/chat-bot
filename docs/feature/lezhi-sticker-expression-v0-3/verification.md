@@ -9,8 +9,12 @@
 - Asset generation commit: `cb90237d9c9b03b475efef5ee5c9e3d8474aa4f7`
 - Runtime implementation commit: `48d5e88d3c80ef9e1189a996525704bf5696c73c`
 - First reviewed carrier: `5d07a566874579c041fb19a6b7dbf3b914deed80`
-- Review dispatch: `b7f08ace016ce9c405d1ece3a5dec43beafce62650adcf422b0bb68e59699aff`
-- Review remediation implementation: `434b400a8f4bc464ecf823b093744bea467c778c`
+- First review dispatch: `b7f08ace016ce9c405d1ece3a5dec43beafce62650adcf422b0bb68e59699aff`
+- First review remediation implementation: `434b400a8f4bc464ecf823b093744bea467c778c`
+- First remediation carrier: `d79289dde5d64e2b4f9d3f8d3569bbde4b463dab`
+- Second review dispatch: `40ac64795e670bf04d32543a4430697270483a5ecb072a57582644ed858e8936`
+- Closed visual-safety implementation: `0a0fec7dc662cff3058b6cf6ea16b170880a0a3d`
+- Container dependency repair: `55def535765f1e897c64fa0df66d7fa9d1e5e0d5`
 
 ## 2. Candidate artifact identity
 
@@ -32,6 +36,11 @@
 - Unknown eligible media uses bounded download, Pillow verification/normalization and an
   OpenAI-compatible multimodal JSON contract. Pixels, OCR, caption and scene remain separate,
   untrusted evidence sources.
+- Vision safety labels are an application-owned closed registry. Approved provider aliases are
+  normalized to canonical serious categories; an unknown label fails parsing, becomes an explicit
+  vision error and therefore requires text or silence. Any provider safety label requires text;
+  only a confidently benign image with no label (or an internally resolved enabled sticker) may
+  remain sticker-only eligible.
 - Application-owned final validation rejects person identity, sensitive/hidden person attributes,
   medical inference, unsafe asset identity, stale persona/catalog snapshots, serious sticker-only
   choices in either text or validated visual evidence, relationship overreach and consecutive
@@ -52,16 +61,18 @@
 
 ## 4. Deterministic verification
 
-Exact remediation implementation source at
-`434b400a8f4bc464ecf823b093744bea467c778c` passed:
+Exact remediation source through
+`55def535765f1e897c64fa0df66d7fa9d1e5e0d5` passed:
 
 - `python3 -m compileall -q src tests`
-- `PYTHONPATH=src:tests .venv/bin/python -m unittest discover -s tests -v` — 219 tests
-- `uvx ruff format --check src tests` — 79 files already formatted
+- `PYTHONPATH=src:tests .venv/bin/python -m unittest discover -s tests -q` — 221 tests
+- `uvx ruff format --check src tests` — 80 files already formatted
 - `uvx ruff check src tests` — passed
 - `mypy src/group_llm_agent --config-file pyproject.toml` — no issues in 40 source files
 - `sh -n deploy/manage.sh` — passed
-- `TELEGRAM_BOT_ENV_FILE=.env.example docker compose -f deploy/compose.yaml config` — passed
+- `TELEGRAM_BOT_ENV_FILE=/Users/zhanghao/Documents/telegram-bot/deploy/.env docker compose
+  --env-file /Users/zhanghao/Documents/telegram-bot/deploy/.env -f deploy/compose.yaml config` —
+  passed without printing credential values
 - `git diff --check` — passed
 - tracked-file private-key, Telegram token and common model-key pattern scan — no match
 
@@ -81,6 +92,8 @@ Targeted proofs include:
 - all success, confirmed failure, uncertain failure and replay boundaries preserve one external
   effect;
 - signal interruption retains the operator lock until a non-success terminal state.
+- the Docker build installs declared runtime dependencies; the candidate image imports Pillow
+  11.3.0 and the visual schema before any credentials are supplied.
 
 Review finding closure proofs:
 
@@ -94,21 +107,27 @@ Review finding closure proofs:
 - **FINDING-003 fixed:** migration 4 stores chat and member provenance plus the required explicit
   bot scope count. Single-member, single-group and scope-count-one matrices all return ineligible;
   only consistent evidence spanning two chats and two members can become a candidate.
-- **FINDING-004 fixed:** benign caption plus visual evidence describing a bleeding wound,
-  medication and `injury`/`medical` flags degrades the scripted sticker decision to a textual direct
-  failure (`sticker_necessary_text_required`); no sticker identity reaches the final effect.
+- **FINDING-004 fixed:** the response schema now enumerates all accepted safety labels, normalizes
+  `graphic_content` to `injury` and `health_concern` to `medical`, and rejects unknown labels.
+  The exact reviewer synonym probe (deep gash, red liquid and tablets) degrades the scripted sticker
+  decision to a textual direct failure (`sticker_necessary_text_required`). Unknown-label parse
+  failure also forces text or silence, while a benign image with an empty safety list remains
+  sticker eligible. No unsafe sticker identity reaches the final effect.
 
 ## 5. Build and container proof
 
 - Wheel: `group_llm_agent-0.1.0-py3-none-any.whl`, SHA-256
-  `98c0f48bf8b3e68da23956875c41c5b571e2a521621eb795b2079e7cee5e93ca`
+  `5150168bd7f5dfcca23da47b543752fc2ffebcf8e5ce31c337860f4d673e56d4`
 - Source distribution: `group_llm_agent-0.1.0.tar.gz`, SHA-256
-  `dbb0ac3e49d44221ff5b6385b8f5c5eec9408dfda409d7096ba6ce2056516d6f`
-- Candidate image: `group-llm-agent:lezhi-sticker-v0.3-remediation`, image ID
-  `sha256:fa33248c26e12110c4629bc8e41aaa45a3e8896958774e612c36a5f15babd2e0`
+  `b4c0b66048e12e7a9512aa39e3cd8de37d424d5a1e90067612e8ecd15b6bff96`
+- Candidate image: `group-llm-agent:lezhi-sticker-v0.3-final2`, image ID
+  `sha256:d90b5339279a1c9c90e2b490315cae0c2ffec7e3b67ec71f5f14beda858255c5`
 - Image configuration uses user `app` and command `group-llm-agent`.
-- A read-only one-shot image run loaded exactly 48 candidate catalog entries and 20 fixed
-  evaluation cases at the digests in section 2.
+- A no-credential one-shot image run imported Pillow 11.3.0, loaded exactly 48 candidate catalog
+  entries and exposed the bounded 14-label visual safety registry. The catalog stayed `candidate`
+  and therefore runtime-disabled.
+- The normal image entry point imported successfully and returned the expected safe exit code 2
+  when `TELEGRAM_BOT_TOKEN` was absent.
 
 ## 6. Deliberately pending gates
 
