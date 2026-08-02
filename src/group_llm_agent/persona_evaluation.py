@@ -18,6 +18,7 @@ from group_llm_agent.model import (
     ModelRole,
     OpenAICompatibleStructuredModelClient,
     StructuredModelPort,
+    StructuredModelResult,
     WriterDecision,
     WriterDecisionKind,
     parse_writer_decision,
@@ -69,6 +70,7 @@ _DEFAULT_GENERATION_SETTINGS = {
     "candidate_temperature": 0.7,
     "judge_max_output_tokens": 800,
     "judge_temperature": 0.0,
+    "maximum_attempts_per_call": 2,
 }
 _SNAPSHOT_RUNTIME_CONTRACT = (
     "Trigger, Recognition and Effector receive views compiled from one immutable "
@@ -141,11 +143,12 @@ def evaluate_persona(
     candidates: dict[str, tuple[dict[str, Any], WriterDecision]] = {}
     for completed, case_id in enumerate(ordered_case_ids, start=1):
         try:
-            candidate_result = model.complete(
+            candidate_result = _complete_with_retry(
+                model,
                 model_role=ModelRole.WRITER,
                 messages=_candidate_messages(bundle, examples[case_id]),
                 response_schema=WRITER_RESPONSE_SCHEMA,
-                deadline=now() + timedelta(seconds=call_timeout_seconds),
+                deadline_factory=lambda: now() + timedelta(seconds=call_timeout_seconds),
                 max_output_tokens=int(_DEFAULT_GENERATION_SETTINGS["candidate_max_output_tokens"]),
                 temperature=float(_DEFAULT_GENERATION_SETTINGS["candidate_temperature"]),
             )
@@ -169,7 +172,8 @@ def evaluate_persona(
         candidate_payload, candidate = candidates[case_id]
         evidence = _case_evidence(case_id, bundle=bundle, candidates=candidates)
         try:
-            judge_result = model.complete(
+            judge_result = _complete_with_retry(
+                model,
                 model_role=ModelRole.WRITER,
                 messages=_judge_messages(
                     evaluation,
@@ -178,7 +182,7 @@ def evaluate_persona(
                     evidence=evidence,
                 ),
                 response_schema=_JUDGE_RESPONSE_SCHEMA,
-                deadline=now() + timedelta(seconds=call_timeout_seconds),
+                deadline_factory=lambda: now() + timedelta(seconds=call_timeout_seconds),
                 max_output_tokens=int(_DEFAULT_GENERATION_SETTINGS["judge_max_output_tokens"]),
                 temperature=float(_DEFAULT_GENERATION_SETTINGS["judge_temperature"]),
             )
@@ -338,6 +342,36 @@ def _candidate_messages(
             content=f"EVALUATION_SCENE={example['scene']}",
         ),
     )
+
+
+def _complete_with_retry(
+    model: StructuredModelPort,
+    *,
+    model_role: ModelRole,
+    messages: Sequence[ModelMessage],
+    response_schema: Mapping[str, Any],
+    deadline_factory: Callable[[], datetime],
+    max_output_tokens: int,
+    temperature: float,
+) -> StructuredModelResult:
+    attempts = int(_DEFAULT_GENERATION_SETTINGS["maximum_attempts_per_call"])
+    last_error: ModelApiError | None = None
+    for _attempt in range(attempts):
+        try:
+            return model.complete(
+                model_role=model_role,
+                messages=messages,
+                response_schema=response_schema,
+                deadline=deadline_factory(),
+                max_output_tokens=max_output_tokens,
+                temperature=temperature,
+            )
+        except ModelApiError as error:
+            last_error = error
+            if error.category.value in {"authentication", "budget_exhausted"}:
+                raise
+    assert last_error is not None
+    raise last_error
 
 
 def _case_evidence(

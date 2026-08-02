@@ -8,7 +8,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
+from group_llm_agent.events import ModelErrorCode
 from group_llm_agent.model import (
+    ModelApiError,
     ModelMessage,
     ModelRole,
     StructuredModelResult,
@@ -30,6 +32,7 @@ _SETTINGS = {
     "candidate_temperature": 0.7,
     "judge_max_output_tokens": 800,
     "judge_temperature": 0.0,
+    "maximum_attempts_per_call": 2,
 }
 
 
@@ -208,6 +211,47 @@ class PersonaEvaluationTests(unittest.TestCase):
                 identity=self.identity,
                 clock=self.clock,
             )
+
+    def test_transient_provider_failure_retries_once_but_authentication_does_not(self) -> None:
+        class TimeoutOnceModel(GeneratedEvaluationModel):
+            def __init__(self) -> None:
+                super().__init__()
+                self.provider_attempts = 0
+
+            def complete(self, **kwargs: Any) -> StructuredModelResult:
+                self.provider_attempts += 1
+                if self.provider_attempts == 1:
+                    raise ModelApiError(ModelRole.WRITER, ModelErrorCode.TIMEOUT)
+                return super().complete(**kwargs)
+
+        transient = TimeoutOnceModel()
+        report = evaluate_persona(
+            bundle=self.bundle,
+            model=transient,
+            identity=self.identity,
+            clock=self.clock,
+        )
+        self.assertTrue(report["passed"])
+        self.assertEqual(75, transient.provider_attempts)
+
+        class AuthenticationModel(GeneratedEvaluationModel):
+            def __init__(self) -> None:
+                super().__init__()
+                self.provider_attempts = 0
+
+            def complete(self, **_kwargs: Any) -> StructuredModelResult:
+                self.provider_attempts += 1
+                raise ModelApiError(ModelRole.WRITER, ModelErrorCode.AUTHENTICATION)
+
+        authentication = AuthenticationModel()
+        with self.assertRaisesRegex(PersonaEvaluationError, "provider_authentication"):
+            evaluate_persona(
+                bundle=self.bundle,
+                model=authentication,
+                identity=self.identity,
+                clock=self.clock,
+            )
+        self.assertEqual(1, authentication.provider_attempts)
 
 
 if __name__ == "__main__":

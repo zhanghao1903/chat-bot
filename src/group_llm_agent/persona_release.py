@@ -41,6 +41,7 @@ _EVALUATION_SETTINGS = {
     "candidate_temperature": 0.7,
     "judge_max_output_tokens": 800,
     "judge_temperature": 0.0,
+    "maximum_attempts_per_call": 2,
 }
 
 

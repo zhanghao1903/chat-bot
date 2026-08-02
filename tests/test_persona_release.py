@@ -309,6 +309,7 @@ def _passing_report() -> dict[str, object]:
             "candidate_temperature": 0.7,
             "judge_max_output_tokens": 800,
             "judge_temperature": 0.0,
+            "maximum_attempts_per_call": 2,
         },
         "generated_at": datetime(2026, 8, 2, tzinfo=UTC).isoformat(),
         "reviewer": "provider-model-judge:gpt-test",
