@@ -125,6 +125,10 @@ class PersonaEvaluationTests(unittest.TestCase):
             clock=self.clock,
         )
         self.assertFalse(report["passed"])
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "failed-evaluation.json"
+            write_evaluation_report(path, report)
+            self.assertFalse(load_evaluation_report(path)["passed"])
         with self.assertRaisesRegex(PersonaEvaluationError, "evaluation_failed"):
             verify_evaluation_report(
                 report,

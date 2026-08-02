@@ -84,7 +84,7 @@ class EvaluationIdentity:
 
 
 Clock = Callable[[], datetime]
-Progress = Callable[[str, int], None]
+Progress = Callable[[str, int, int, bool], None]
 
 
 def evaluate_persona(
@@ -163,7 +163,7 @@ def evaluate_persona(
             }
         )
         if progress is not None:
-            progress(case_id, len(case_results))
+            progress(case_id, len(case_results), score, passed)
 
     report = {
         "schema_version": 1,
@@ -435,19 +435,20 @@ def main(
             bundle=bundle,
             model=model,
             identity=identity,
-            progress=lambda case_id, completed: print(
+            progress=lambda case_id, completed, score, passed: print(
                 "persona_evaluation_progress "
-                f"completed={completed} total=37 case_id={case_id}",
+                f"completed={completed} total=37 case_id={case_id} "
+                f"score={score} passed={str(passed).lower()}",
                 flush=True,
             ),
         )
+        write_evaluation_report(args.report, report)
         verify_evaluation_report(
             report,
             bundle=bundle,
             expected_model_id=model_id,
             expected_generation_settings=_DEFAULT_GENERATION_SETTINGS,
         )
-        write_evaluation_report(args.report, report)
     except (PersonaEvaluationError, ModelApiError, ModelResultError) as error:
         category = getattr(error, "category", "failed")
         print(f"persona_evaluation_failed category={category}")
