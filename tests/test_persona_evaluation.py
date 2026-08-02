@@ -183,6 +183,21 @@ class PersonaEvaluationTests(unittest.TestCase):
                 expected_generation_settings=_SETTINGS,
             )
 
+        for field, value in (("dimension", "fabricated"), ("critical", True)):
+            with self.subTest(case_contract_field=field):
+                changed = copy.deepcopy(report)
+                changed["cases"][1][field] = value
+                with self.assertRaisesRegex(
+                    PersonaEvaluationError,
+                    "report_case_contract_mismatch",
+                ):
+                    verify_evaluation_report(
+                        changed,
+                        bundle=self.bundle,
+                        expected_model_id="gpt-test",
+                        expected_generation_settings=_SETTINGS,
+                    )
+
     def test_report_write_is_canonical_and_replaces_only_after_complete_write(self) -> None:
         report = evaluate_persona(
             bundle=self.bundle,

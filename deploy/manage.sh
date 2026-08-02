@@ -83,15 +83,58 @@ wait_for_persona_identity() {
 }
 
 persona_restore() {
-  release_python restore-pins --env-file "${ENV_FILE}" --state-file "${STATE_FILE}"
-  compose down
-  compose up --detach --build
+  release_python restore-pins --env-file "${ENV_FILE}" --state-file "${STATE_FILE}" || return 1
+  compose down || return 1
+  compose up --detach --build || return 1
   if ! wait_for_persona_identity \
     lezhi-v1.0 25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a; then
     echo "Persona rollback failed: v1 startup identity was not observed." >&2
     return 2
   fi
   echo "Persona rollback completed: lezhi-v1.0 is running."
+}
+
+record_release_failure() {
+  stage=$1
+  rollback_status=$2
+  release_python record-failure --state-file "${STATE_FILE}" \
+    --stage "${stage}" --rollback-status "${rollback_status}" || true
+}
+
+rollback_after_failure() {
+  stage=$1
+  echo "Persona release failed at ${stage}; restoring v1." >&2
+  record_release_failure "${stage}" attempted
+  if persona_restore; then
+    record_release_failure "${stage}" succeeded
+  else
+    record_release_failure "${stage}" failed
+    echo "Persona rollback failed after ${stage}." >&2
+  fi
+  return 2
+}
+
+activate_candidate() {
+  candidate_digest=$1
+  RELEASE_FAILURE_STAGE=compose_down
+  compose down || return 1
+  RELEASE_FAILURE_STAGE=compose_up
+  compose up --detach --build || return 1
+  RELEASE_FAILURE_STAGE=running_state
+  running_services=$(compose ps --services --filter status=running) || return 1
+  [ "${running_services}" = "telegram-bot" ] || return 1
+  RELEASE_FAILURE_STAGE=identity
+  wait_for_persona_identity lezhi-v2.0 "${candidate_digest}" || return 1
+  RELEASE_FAILURE_STAGE=chat_id
+  chat_id=$(release_python environment-chat-id --env-file "${ENV_FILE}") || return 1
+  RELEASE_FAILURE_STAGE=database_path
+  database_path=$(release_python environment-database-path --env-file "${ENV_FILE}") || return 1
+  RELEASE_FAILURE_STAGE=smoke_baseline
+  baseline=$(compose exec -T telegram-bot python -m group_llm_agent.persona_release \
+    smoke-baseline --database "${database_path}" --chat-id "${chat_id}") || return 1
+  RELEASE_FAILURE_STAGE=record_baseline
+  release_python record-baseline --state-file "${STATE_FILE}" \
+    --trigger-evaluation-id "${baseline}" || return 1
 }
 
 persona_release() {
@@ -109,37 +152,39 @@ persona_release() {
     --env-file "${ENV_FILE}" \
     --bundle-path "${candidate_path}" \
     --digest "${candidate_digest}"
-  if ! compose down || ! compose up --detach --build; then
-    echo "Persona activation failed; restoring the recorded v1 selectors." >&2
-    persona_restore
+  RELEASE_FAILURE_STAGE=compose_down
+  if ! activate_candidate "${candidate_digest}"; then
+    rollback_after_failure "${RELEASE_FAILURE_STAGE}"
     return 2
   fi
-  if ! wait_for_persona_identity lezhi-v2.0 "${candidate_digest}"; then
-    echo "Persona activation identity was not observed; restoring v1." >&2
-    persona_restore
-    return 2
-  fi
-  chat_id=$(release_python environment-chat-id --env-file "${ENV_FILE}")
-  database_path=$(release_python environment-database-path --env-file "${ENV_FILE}")
-  baseline=$(compose exec -T telegram-bot python -m group_llm_agent.persona_release \
-    smoke-baseline --database "${database_path}" --chat-id "${chat_id}")
-  release_python record-baseline --state-file "${STATE_FILE}" \
-    --trigger-evaluation-id "${baseline}"
   echo "Persona release is running with lezhi-v2.0; send one direct Telegram message, then run persona-smoke."
 }
 
-persona_smoke() {
-  chat_id=$(release_python environment-chat-id --env-file "${ENV_FILE}")
-  database_path=$(release_python environment-database-path --env-file "${ENV_FILE}")
-  set -- $(release_python state-smoke-arguments --state-file "${STATE_FILE}")
+verify_persona_smoke() {
+  RELEASE_FAILURE_STAGE=chat_id
+  chat_id=$(release_python environment-chat-id --env-file "${ENV_FILE}") || return 1
+  RELEASE_FAILURE_STAGE=database_path
+  database_path=$(release_python environment-database-path --env-file "${ENV_FILE}") || return 1
+  RELEASE_FAILURE_STAGE=smoke_state
+  smoke_arguments=$(release_python state-smoke-arguments --state-file "${STATE_FILE}") || return 1
+  set -- ${smoke_arguments}
+  [ "$#" -eq 2 ] || return 1
   baseline=$1
   candidate_digest=$2
-  if ! compose exec -T telegram-bot python -m group_llm_agent.persona_release \
+  RELEASE_FAILURE_STAGE=running_state
+  running_services=$(compose ps --services --filter status=running) || return 1
+  [ "${running_services}" = "telegram-bot" ] || return 1
+  RELEASE_FAILURE_STAGE=smoke_verify
+  compose exec -T telegram-bot python -m group_llm_agent.persona_release \
     smoke-verify --database "${database_path}" \
     --chat-id "${chat_id}" --baseline-id "${baseline}" \
-    --persona-version lezhi-v2.0 --persona-digest "${candidate_digest}"; then
-    echo "Persona Telegram smoke failed; restoring v1." >&2
-    persona_restore
+    --persona-version lezhi-v2.0 --persona-digest "${candidate_digest}"
+}
+
+persona_smoke() {
+  RELEASE_FAILURE_STAGE=smoke_state
+  if ! verify_persona_smoke; then
+    rollback_after_failure "${RELEASE_FAILURE_STAGE}"
     return 2
   fi
 }

@@ -266,7 +266,11 @@ def verify_evaluation_report(
         cases = report["cases"]
         if not isinstance(cases, list) or len(cases) != 37:
             raise PersonaEvaluationError("incomplete_report")
-        expected = {f"CB-EVAL-{index:03d}" for index in range(1, 38)}
+        expected_cases = {
+            item["case_id"]: item
+            for item in (json.loads(line) for line in bundle.evaluation_cases_jsonl)
+        }
+        expected = set(expected_cases)
         seen: set[str] = set()
         calculated_pass = True
         for item in cases:
@@ -277,6 +281,13 @@ def verify_evaluation_report(
                 raise PersonaEvaluationError("invalid_report_case")
             seen.add(case_id)
             _validate_report_case(item, bundle=bundle)
+            contract = expected_cases.get(case_id)
+            if (
+                contract is None
+                or item["dimension"] != contract["dimension"]
+                or item["critical"] is not contract["critical"]
+            ):
+                raise PersonaEvaluationError("report_case_contract_mismatch")
             calculated_pass = calculated_pass and bool(item["passed"])
         if seen != expected:
             raise PersonaEvaluationError("incomplete_report")

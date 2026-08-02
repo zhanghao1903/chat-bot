@@ -10,19 +10,21 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from group_llm_agent.database import SQLiteDatabase
-from group_llm_agent.persona import CharacterBundle, load_character_bundle
 from group_llm_agent.persona_evaluation import write_evaluation_report
 from group_llm_agent.persona_release import (
     PersonaImportSpec,
     PersonaPins,
     PersonaReleaseError,
     import_persona_bundle,
+    load_release_state,
     preflight_release,
     read_persona_pins,
     read_runtime_database_path,
+    record_release_failure,
     replace_persona_pins,
     smoke_trigger_baseline,
     verify_smoke,
+    write_release_state,
 )
 
 _ROOT = Path(__file__).parents[1]
@@ -138,6 +140,43 @@ class PersonaImportTests(unittest.TestCase):
 
 
 class PersonaDeploymentGateTests(unittest.TestCase):
+    def test_release_failure_and_rollback_result_are_persisted_without_secrets(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "persona-release.json"
+            write_release_state(
+                state_path,
+                {
+                    "schema_version": 1,
+                    "candidate": {"digest": "candidate"},
+                },
+            )
+
+            record_release_failure(
+                state_path,
+                stage="smoke_baseline",
+                rollback_status="attempted",
+            )
+            record_release_failure(
+                state_path,
+                stage="smoke_baseline",
+                rollback_status="succeeded",
+            )
+
+            state = load_release_state(state_path)
+            failure = state["failure"]
+            self.assertIsInstance(failure, dict)
+            self.assertEqual(
+                {
+                    "stage": "smoke_baseline",
+                    "rollback_status": "succeeded",
+                },
+                {
+                    "stage": failure["stage"],
+                    "rollback_status": failure["rollback_status"],
+                },
+            )
+            self.assertNotIn("token", state_path.read_text(encoding="utf-8").lower())
+
     def test_database_path_preserves_the_existing_volume_file(self) -> None:
         with TemporaryDirectory() as tmpdir:
             environment = Path(tmpdir) / ".env"
@@ -204,11 +243,10 @@ class PersonaDeploymentGateTests(unittest.TestCase):
                 "PERSONA_BUNDLE_PATH=/app/src/group_llm_agent/persona_bundles/lezhi/lezhi-v1.0\n"
                 "PERSONA_EXPECTED_SHA256="
                 "25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a\n"
-                "WRITER_MODEL=gpt-test\nMODEL_API_KEY=secret\n",
+                "WRITER_MODEL=gpt-5.6-sol\nMODEL_API_KEY=secret\n",
                 encoding="utf-8",
             )
-            report_path = root / "report.json"
-            write_evaluation_report(report_path, _passing_report())
+            report_path = _ROOT / "docs/feature/lezhi-persona-v2-release/provider-evaluation.json"
 
             state = preflight_release(
                 repository_root=repository,
@@ -218,8 +256,31 @@ class PersonaDeploymentGateTests(unittest.TestCase):
                 report_path=report_path,
             )
 
-            self.assertEqual("gpt-test", state["model_id"])
+            self.assertEqual("gpt-5.6-sol", state["model_id"])
             self.assertNotIn("secret", json.dumps(state))
+
+            fabricated = json.loads(report_path.read_text(encoding="utf-8"))
+            fabricated["provider_label"] = "synthetic-provider"
+            fabricated["reviewer"] = "synthetic-reviewer"
+            for case in fabricated["cases"]:
+                case["output_text"] = "fabricated"
+                case["reason_code"] = "fabricated"
+                case["rationale"] = "fabricated"
+                case["score"] = 10
+                case["critical_violations"] = []
+                case["passed"] = True
+            synthetic_path = root / "synthetic-report.json"
+            write_evaluation_report(synthetic_path, fabricated)
+            with self.assertRaisesRegex(PersonaReleaseError, "unapproved_evaluation_report"):
+                preflight_release(
+                    repository_root=repository,
+                    environment_path=environment,
+                    candidate_path="/app/src/group_llm_agent/persona_bundles/lezhi/lezhi-v2.0",
+                    candidate_digest=(
+                        "0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603"
+                    ),
+                    report_path=synthetic_path,
+                )
 
             environment.write_text(
                 environment.read_text(encoding="utf-8").replace("lezhi-v1.0", "lezhi-v2.0"),
@@ -317,93 +378,6 @@ class PersonaDeploymentGateTests(unittest.TestCase):
             )
             self.assertEqual("sent", evidence["outcome"])
             self.assertEqual(1, evidence["external_effect_count"])
-
-
-def _passing_report() -> dict[str, object]:
-    bundle = load_character_bundle(_V2_PATH)
-    evaluations = [json.loads(line) for line in bundle.evaluation_cases_jsonl]
-    return {
-        "schema_version": 1,
-        "persona_id": "lezhi",
-        "persona_version": "lezhi-v2.0",
-        "persona_digest": bundle.snapshot.persona_digest,
-        "provider_label": "test-provider",
-        "model_id": "gpt-test",
-        "generation_settings": {
-            "candidate_max_output_tokens": 1200,
-            "candidate_temperature": 0.7,
-            "judge_max_output_tokens": 800,
-            "judge_temperature": 0.0,
-            "maximum_attempts_per_call": 2,
-        },
-        "generated_at": datetime(2026, 8, 2, tzinfo=UTC).isoformat(),
-        "reviewer": "provider-model-judge:gpt-test",
-        "cases": [
-            {
-                "case_id": item["case_id"],
-                "dimension": item["dimension"],
-                "critical": item["critical"],
-                "output_kind": "reply",
-                "output_text": "测试回答",
-                "reason_code": "test",
-                "evaluation_evidence": _evaluation_evidence(item["case_id"], bundle),
-                "score": 9,
-                "rationale": "满足要求",
-                "critical_violations": [],
-                "passed": True,
-            }
-            for item in evaluations
-        ],
-        "passed": True,
-    }
-
-
-def _evaluation_evidence(case_id: str, bundle: CharacterBundle) -> dict[str, object] | None:
-    if case_id == "CB-EVAL-018":
-        snapshot = bundle.snapshot
-        identity = {
-            "persona_id": snapshot.persona_id,
-            "persona_version": snapshot.persona_version,
-            "persona_digest": snapshot.persona_digest,
-        }
-        return {
-            "kind": "application_owned_snapshot_consistency",
-            "views": {name: dict(identity) for name in ("trigger", "recognition", "effector")},
-            "all_views_equal": True,
-            "runtime_contract": (
-                "Trigger, Recognition and Effector receive views compiled from one immutable "
-                "CharacterBundle snapshot; startup rejects any path or digest mismatch."
-            ),
-        }
-    if case_id == "CB-EVAL-022":
-        source_ids = [
-            "CB-EVAL-002",
-            "CB-EVAL-003",
-            "CB-EVAL-008",
-            "CB-EVAL-010",
-            "CB-EVAL-019",
-            "CB-EVAL-021",
-            "CB-EVAL-023",
-            "CB-EVAL-025",
-            "CB-EVAL-029",
-            "CB-EVAL-031",
-            "CB-EVAL-034",
-            "CB-EVAL-035",
-            "CB-EVAL-037",
-        ]
-        return {
-            "kind": "application_owned_name_masked_output_corpus",
-            "source_case_ids": source_ids,
-            "outputs": [
-                {
-                    "case_id": source_id,
-                    "output_kind": "reply",
-                    "output_text": "测试回答",
-                }
-                for source_id in source_ids
-            ],
-        }
-    return None
 
 
 if __name__ == "__main__":

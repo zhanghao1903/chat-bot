@@ -36,12 +36,32 @@ _MAX_MEMBER_BYTES = 128_000
 _SHA256_ZERO = "0" * 64
 _PIN_NAMES = ("PERSONA_BUNDLE_PATH", "PERSONA_EXPECTED_SHA256")
 _V1_DIGEST = "25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a"
+_RELEASE_FAILURE_STAGES = {
+    "compose_down",
+    "compose_up",
+    "running_state",
+    "identity",
+    "chat_id",
+    "database_path",
+    "smoke_state",
+    "smoke_baseline",
+    "record_baseline",
+    "smoke_verify",
+}
+_ROLLBACK_STATUSES = {"attempted", "succeeded", "failed"}
 _EVALUATION_SETTINGS = {
     "candidate_max_output_tokens": 1200,
     "candidate_temperature": 0.7,
     "judge_max_output_tokens": 800,
     "judge_temperature": 0.0,
     "maximum_attempts_per_call": 2,
+}
+_APPROVED_EVALUATION_REPORTS = {
+    "0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603": {
+        "report_sha256": "b8d83f99777d360fcfecff2cb3e585c5b6b5eb173d157544ae6ee02f8eb39fcb",
+        "provider_label": "configured-openai-compatible",
+        "reviewer": "provider-model-judge:gpt-5.6-sol",
+    }
 }
 
 
@@ -151,7 +171,21 @@ def preflight_release(
     model_id = values.get("WRITER_MODEL", "")
     if not model_id or any(character.isspace() for character in model_id):
         raise PersonaReleaseError("invalid_writer_model")
+    approval = _APPROVED_EVALUATION_REPORTS.get(candidate_bundle.snapshot.persona_digest)
+    if approval is None:
+        raise PersonaReleaseError("unapproved_evaluation_report")
+    try:
+        report_sha256 = hashlib.sha256(report_path.read_bytes()).hexdigest()
+    except OSError:
+        raise PersonaReleaseError("invalid_evaluation_report") from None
+    if report_sha256 != approval["report_sha256"]:
+        raise PersonaReleaseError("unapproved_evaluation_report")
     report = load_evaluation_report(report_path)
+    if (
+        report.get("provider_label") != approval["provider_label"]
+        or report.get("reviewer") != approval["reviewer"]
+    ):
+        raise PersonaReleaseError("unapproved_evaluation_report")
     try:
         verify_evaluation_report(
             report,
@@ -206,6 +240,18 @@ def record_smoke_baseline(path: Path, trigger_evaluation_id: int) -> None:
         raise PersonaReleaseError("invalid_smoke_baseline")
     state = load_release_state(path)
     state["smoke_baseline_trigger_evaluation_id"] = trigger_evaluation_id
+    write_release_state(path, state)
+
+
+def record_release_failure(path: Path, *, stage: str, rollback_status: str) -> None:
+    if stage not in _RELEASE_FAILURE_STAGES or rollback_status not in _ROLLBACK_STATUSES:
+        raise PersonaReleaseError("invalid_release_failure")
+    state = load_release_state(path)
+    state["failure"] = {
+        "stage": stage,
+        "recorded_at": datetime.now(UTC).isoformat(),
+        "rollback_status": rollback_status,
+    }
     write_release_state(path, state)
 
 
@@ -566,6 +612,13 @@ def _parser() -> argparse.ArgumentParser:
     record_baseline.add_argument("--state-file", required=True, type=Path)
     record_baseline.add_argument("--trigger-evaluation-id", required=True, type=int)
 
+    failure = commands.add_parser(
+        "record-failure", help="Record a redacted release failure and rollback status"
+    )
+    failure.add_argument("--state-file", required=True, type=Path)
+    failure.add_argument("--stage", required=True)
+    failure.add_argument("--rollback-status", required=True)
+
     smoke = commands.add_parser("smoke-verify", help="Verify one bounded Telegram message")
     smoke.add_argument("--database", required=True, type=Path)
     smoke.add_argument("--chat-id", required=True)
@@ -646,6 +699,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "record-baseline":
             record_smoke_baseline(args.state_file, args.trigger_evaluation_id)
             print("persona_smoke_baseline_recorded")
+        elif args.command == "record-failure":
+            record_release_failure(
+                args.state_file,
+                stage=args.stage,
+                rollback_status=args.rollback_status,
+            )
+            print(
+                "persona_release_failure_recorded "
+                f"stage={args.stage} rollback_status={args.rollback_status}"
+            )
         elif args.command == "smoke-verify":
             evidence = verify_smoke(
                 database_path=args.database,
