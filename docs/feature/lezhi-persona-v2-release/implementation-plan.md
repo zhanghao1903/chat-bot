@@ -1,6 +1,6 @@
 # Implementation Plan: 乐枝人格 v2 发布与低频版本管理
 
-- Status: Ready for implementation
+- Status: Implemented; production Telegram smoke pending
 - Requirements: `requirements.md` at `25eacf0c81fb903f131ffa5b113b1740d0cf4512`
 - Design: `design.md` at `1e6912b611c8e5ae0cc0103b98aa47e222bf307f`
 - Branch: `codex/lezhi-persona-v2-release`
