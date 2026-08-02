@@ -1,9 +1,9 @@
 # Verification: 乐枝人格 v2 发布与低频版本管理
 
-- Status: Deployment active; Telegram smoke pending
+- Status: Verified and deployed
 - Requirements: `25eacf0c81fb903f131ffa5b113b1740d0cf4512`
 - RequirementsHandoff: `48d7910e4afefc7854dcfaab227e3880bacac102f24ac23877df8c07856ef820`
-- Implementation snapshot: `27ba98346df882dd397900a27d4d8c68ccfd5ca1`
+- Implementation snapshot: `7f3d0d54069e2aad6e6f3ee20d66307de0c77a7a`
 - Verified: 2026-08-02
 
 ## Immutable artifacts
@@ -26,7 +26,7 @@ unchanged.
 
 ## Deterministic verification
 
-The exact implementation snapshot passed:
+The implementation and final smoke-fix snapshots passed:
 
 - `python3 -m compileall -q src tests`;
 - `PYTHONPATH=src python3 -m unittest discover -s tests -q`: 163 tests;
@@ -34,10 +34,10 @@ The exact implementation snapshot passed:
 - Mypy: 27 source files, no issues;
 - `uv build`, shell syntax, Compose rendering and `git diff --check`;
 - strict source/import, schema, content-digest, view coverage, memory transition, provider-report,
-  release-state, database-path preservation and smoke-boundary regressions.
+  release-state, database-path preservation and durable trigger-audit smoke regressions.
 
 The built exact candidate image is
-`sha256:d056aee6d5e0fb70854d67bad0d4ab379c049e88398c4c051848e288aa32e42f`.
+`sha256:5a79c6312eb2248136f1751e25cdb409494fab867ae2a384da3c248fe9746dc1`.
 
 ## Real-provider gate
 
@@ -72,8 +72,20 @@ telegram_polling_started
 ```
 
 The v2 container is running against `telegram-bot-persona-uat-data-v1`; the database quick check
-still returns `ok`. The release state retains the exact v1 rollback pin. The final bounded Telegram
-message check is pending one operator-owned direct group message.
+still returns `ok`. The release state retains the exact v1 rollback pin. A release-tool defect was
+found before formal smoke: with member memory disabled, privacy-preserving inbound messages are
+transient and therefore cannot be counted in `group_messages`. The smoke boundary was corrected to
+use the always-durable, content-free `trigger_evaluations` audit. The regression suite proves this
+works without enabling message persistence.
+
+After the corrected trigger-evaluation baseline `31`, the operator sent one direct
+`@YaoshiMaomaoBot` message in the configured group. Formal smoke recorded exactly one new
+`direct_platform` trigger, decision `effect_requested`, one external effect with status `sent`, and
+persona `lezhi-v2.0` at the exact production digest. `deploy/manage.sh persona-smoke` returned:
+
+```text
+persona_smoke_passed outcome=sent external_effects=1
+```
 
 ## Acceptance matrix
 
@@ -84,7 +96,7 @@ message check is pending one operator-owned direct group message.
 | AC-004–006 | Pass | Strict startup pin, schema and exact-ID negative regressions |
 | AC-007 | Pass | Canonical real-provider report and independent report verification |
 | AC-008–009 | Pass | Fail-closed preflight, same named volume/database, Compose v1 then v2 startup |
-| AC-010 | Pending | Requires one operator-owned Telegram direct message |
+| AC-010 | Pass | One direct-platform trigger, one sent effect, exact v2 snapshot |
 | AC-011 | Pass | Exact v1 state, automatic rollback path and retained stopped v1 container |
 | AC-012–013 | Pass | Local Docker target only; exact selector persisted in external environment |
 | AC-014 | Pass | v1→v2→v1 neutral/subjective memory transition regressions |
@@ -92,9 +104,7 @@ message check is pending one operator-owned direct group message.
 
 ## Operational limitations
 
-- The bounded Telegram smoke remains pending the operator message recorded above.
 - No remote host or inbound network listener was used; Telegram and model access remain outbound
   HTTPS connections.
 - The stopped pre-Compose v1 container is intentionally retained until v2 smoke and review are
   complete. It is not running and does not poll Telegram.
-
