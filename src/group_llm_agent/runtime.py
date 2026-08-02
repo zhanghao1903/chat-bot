@@ -320,11 +320,16 @@ class PersonaMessageProcessor:
         if final.mood_signal is not None and event.media is None:
             self.runs.record_mood_observation(
                 bot_user_id=self.bot_user_id,
+                chat_id=event.group_id,
+                member_user_id=event.sender_id,
                 trigger_event_id=event.event_id,
                 persona=final.persona,
                 mood_code=final.mood_signal,
                 catalog_version=final.catalog_version,
                 catalog_digest=final.catalog_digest,
+                # This deployment is configured for exactly one allowed Telegram chat.
+                # Automatic account-global rotation therefore remains fail-closed.
+                bot_scope_count=1,
             )
         status = self.delivery.deliver(
             event=event,

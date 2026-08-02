@@ -271,7 +271,8 @@
 - `uploadStickerFile`、create/update set 和 mapping carrier；
 - 真实抽样发送完成后才允许 `telegram_ready`；
 - 头像 apply 前保存当前头像或 none，JPG multipart 更新后读取验证；
-- 默认头像、冷却、滚动 7 天、稳定心情、全局作用域和 auto-disabled；
+- 默认头像先行、写后下载摘要校验、冷却、滚动 7 天、稳定心情、跨群/跨成员全局作用域和
+  auto-disabled；
 - deployment lock 覆盖 apply/verify/rollback，HUP/INT/TERM 走同一回滚；
 - Writer 和群消息没有任何调用这些命令的 capability。
 

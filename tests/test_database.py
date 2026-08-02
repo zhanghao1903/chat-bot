@@ -89,6 +89,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     (1, "persona_runtime"),
                     (2, "conversation_triggers_v0_2"),
                     (3, "visual_expression_v0_3"),
+                    (4, "avatar_global_provenance"),
                 ],
                 [tuple(row) for row in migrations],
             )

@@ -466,6 +466,19 @@ _MIGRATIONS: tuple[tuple[int, str, str], ...] = (
             ON avatar_change_audit(bot_user_id, created_at DESC);
         """,
     ),
+    (
+        4,
+        "avatar_global_provenance",
+        """
+        ALTER TABLE persona_mood_observations ADD COLUMN chat_id TEXT;
+        ALTER TABLE persona_mood_observations ADD COLUMN member_user_id TEXT;
+        ALTER TABLE avatar_change_audit ADD COLUMN requested_image_sha256 TEXT;
+        CREATE INDEX idx_persona_mood_provenance
+            ON persona_mood_observations(
+                bot_user_id, mood_code, chat_id, member_user_id, created_at DESC
+            );
+        """,
+    ),
 )
 
 

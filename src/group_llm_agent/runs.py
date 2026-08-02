@@ -501,27 +501,33 @@ class RunRepository:
         self,
         *,
         bot_user_id: str,
+        chat_id: str,
+        member_user_id: str,
         trigger_event_id: str,
         persona: PersonaSnapshot,
         mood_code: str,
         catalog_version: str | None = None,
         catalog_digest: str | None = None,
-        bot_scope_count: int = 1,
+        bot_scope_count: int,
     ) -> int | None:
+        if not chat_id or not member_user_id:
+            raise ValueError("mood provenance must be non-empty")
         if bot_scope_count < 1:
             raise ValueError("bot_scope_count must be positive")
         with self.database.transaction() as connection:
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO persona_mood_observations (
-                    bot_user_id, trigger_event_id, persona_version,
+                    bot_user_id, chat_id, member_user_id, trigger_event_id, persona_version,
                     persona_digest, catalog_version, catalog_digest,
                     mood_code, bot_scope_count, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     bot_user_id,
+                    chat_id,
+                    member_user_id,
                     trigger_event_id,
                     persona.persona_version,
                     persona.persona_digest,

@@ -177,10 +177,17 @@ Writer 可输出一个 allowlist `mood_signal` 作为低权重证据，但不能
 - 至少三个不同入站事件提供相同方向证据；
 - 证据跨越至少两小时；
 - 最近窗口中该心情占比至少 70%；
-- 当前部署只配置一个 bot 身份作用域；无法判定全局作用域时保持默认头像。
+- 每条证据持久化 chat/member 来源及应用提供的 bot 全局群作用域计数；
+- 同一心情的合格证据必须跨至少两个群和两个成员，且全局群作用域计数一致并至少为 2；
+- 当前部署只配置一个允许群，因此不能证明 bot 级全局心情，自动轮换保持失败关闭。
 
 头像控制器仍强制最短 72 小时冷却和滚动 7 天最多两次。自动开关默认关闭。即时消息、
 单个成员、图片文字、tool result 和 Writer 输出中的头像 ID 均不能绕过控制器。
+
+首次受管头像写入只能选择目录的 `default_avatar_id`。平台写入后，控制器重新读取资料照、
+下载最大尺寸并将内容 SHA-256 与已批准默认/心情候选摘要比较；空、旧、错误或不可验证的读回
+都记为失败并尝试恢复原资料照。只有同一目录版本、同一默认头像内容摘要已 verified 后，心情
+头像的人工写入或自动轮换才可能继续。
 
 ## 4. Telegram Platform Contract
 
@@ -245,6 +252,10 @@ flowchart TD
     B --> A
 ```
 
+Sticker-only 终检不只检查 caption/文本，也由应用把已验证视觉证据中的 safety flags、摘要、
+可见事实与推断纳入严肃场景分类。伤害、流血、药物/医疗、自伤、自杀、违法、暴力或紧急
+情况一律要求文字或静默；模型遗漏、未知或不一致时不允许 sticker-only。
+
 触发在下载之前，避免普通群图片消耗带宽/模型。入站持久化先于 effect claim，以保留现有
 重放恢复；重放时仍需从 Telegram update 重新取得短期 `file_id`，数据库不充当媒体缓存。
 
@@ -302,6 +313,10 @@ deadline、只读 capability allowlist 不变。全局 effect deadline 仍为 30
 
 SQLite CHECK 约束随枚举扩展。迁移只增列/表，不改已有正文或 memory 内容。旧数据库迁移后
 目录和视觉默认 disabled；现有文本功能继续运行。
+
+审查整改新增 migration 4：为 `persona_mood_observations` 增加 `chat_id` 与
+`member_user_id` 来源，为 `avatar_change_audit` 增加请求图片 SHA-256。旧记录没有全局来源或
+精确图片摘要，不能作为自动轮换或默认头像基线证据。
 
 ## 9. Asset Pipeline
 

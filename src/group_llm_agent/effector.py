@@ -692,9 +692,29 @@ def _catalog_prompt_entries(catalog: ExpressionCatalog | None) -> list[dict[str,
 
 
 _SERIOUS_CONTEXT = re.compile(
-    r"(?:医疗|自伤|自杀|违法|报警|合同|法律|病|药|诊断|步骤|怎么做|为什么|"
-    r"medical|self[- ]?harm|suicide|illegal|legal|diagnos|steps?|how (?:do|to)|why)",
+    r"(?:医疗|受伤|伤口|流血|出血|血迹|自伤|自杀|违法|报警|合同|法律|病|药|"
+    r"药物|诊断|急救|步骤|怎么做|为什么|medical|medication|medicine|pills?|"
+    r"injur|wounds?|bleed|blood|self[- ]?harm|suicide|illegal|legal|diagnos|"
+    r"emergency|steps?|how (?:do|to)|why)",
     re.IGNORECASE,
+)
+
+_SERIOUS_VISION_FLAGS = frozenset(
+    {
+        "injury",
+        "medical",
+        "self_harm",
+        "suicide",
+        "illegal",
+        "violence",
+        "emergency",
+        "药物",
+        "医疗",
+        "受伤",
+        "自伤",
+        "自杀",
+        "违法",
+    }
 )
 
 
@@ -703,7 +723,7 @@ def _sticker_selection_error(
     context: EffectContext,
     entry: ExpressionEntry,
 ) -> str | None:
-    if _SERIOUS_CONTEXT.search(context.current_message.text):
+    if _context_requires_text(context):
         return "necessary_text_required"
     relationship_rank = 1 if any(member.items for member in context.member_memory) else 0
     required_rank = {"public": 0, "familiar": 1, "close": 2}[entry.minimum_relationship]
@@ -716,6 +736,26 @@ def _sticker_selection_error(
     if last_outbound is not None and last_outbound.text == f"[sticker:{entry.semantic_id}]":
         return "consecutive_repeat"
     return None
+
+
+def _context_requires_text(context: EffectContext) -> bool:
+    if _SERIOUS_CONTEXT.search(context.current_message.text):
+        return True
+    evidence = context.vision_evidence
+    if evidence is None:
+        return False
+    if any(flag.strip().lower() in _SERIOUS_VISION_FLAGS for flag in evidence.safety_flags):
+        return True
+    visual_text = "\n".join(
+        (
+            evidence.summary,
+            *evidence.visible_text,
+            *evidence.observations,
+            *evidence.inferences,
+            *evidence.uncertainties,
+        )
+    )
+    return _SERIOUS_CONTEXT.search(visual_text) is not None
 
 
 def _bounded_scene(context: EffectContext) -> list[dict[str, str]]:

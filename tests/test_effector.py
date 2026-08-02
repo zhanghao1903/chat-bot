@@ -31,6 +31,7 @@ from group_llm_agent.model import (
 from group_llm_agent.persona import CharacterBundle, load_character_bundle
 from group_llm_agent.runs import RunRepository
 from group_llm_agent.tools import ReadOnlyToolRegistry
+from group_llm_agent.vision import VisionEvidence
 
 
 class WriterEffectorTests(unittest.TestCase):
@@ -332,6 +333,69 @@ class WriterEffectorTests(unittest.TestCase):
             self.assertEqual(FinalEffectKind.STICKER, final.kind)
             self.assertEqual(selected.semantic_id, final.sticker_id)
             self.assertEqual("joyful", final.mood_signal)
+
+    def test_serious_visual_evidence_cannot_become_sticker_only_effect(self) -> None:
+        catalog_path = (
+            Path(__file__).parents[1]
+            / "src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/catalog.json"
+        )
+        candidate = load_expression_catalog(
+            catalog_path,
+            expected_sha256=file_sha256(catalog_path),
+            allowed_statuses=frozenset({"candidate"}),
+        )
+        selected = next(
+            entry for entry in candidate.entries if entry.minimum_relationship == "public"
+        )
+        with EffectorFixtureContext(
+            StructuredModelResult(
+                {
+                    "kind": "sticker",
+                    "reason_code": "light_reaction",
+                    "sticker_id": selected.semantic_id,
+                    "catalog_version": candidate.catalog_version,
+                    "catalog_digest": candidate.digest,
+                    "fallback_text": "我看到了。",
+                    "mood_signal": "gentle",
+                }
+            )
+        ) as fixture:
+            fixture.effector.expression_catalog_provider = lambda: replace(
+                candidate,
+                status="enabled",
+                persona_id=fixture.bundle.snapshot.persona_id,
+                persona_version=fixture.bundle.snapshot.persona_version,
+                persona_digest=fixture.bundle.snapshot.persona_digest,
+                entries=tuple(
+                    replace(
+                        entry,
+                        status="enabled",
+                        telegram_file_id=f"file-{entry.semantic_id}",
+                        telegram_file_unique_id=f"unique-{entry.semantic_id}",
+                    )
+                    for entry in candidate.entries
+                ),
+            )
+            evidence = VisionEvidence(
+                summary="A visibly bleeding wound beside medication.",
+                visible_text=(),
+                observations=("Blood is visible on an open wound.",),
+                inferences=("The person may need medical care.",),
+                uncertainties=(),
+                safety_flags=("injury", "medical"),
+                media_sha256="a" * 64,
+                model_id="vision-test",
+            )
+
+            final = fixture.effector.execute(
+                request=fixture.request,
+                bundle=fixture.bundle,
+                vision_evidence=evidence,
+            )
+
+            self.assertEqual(FinalEffectKind.FAILURE_REPLY, final.kind)
+            self.assertIsNone(final.sticker_id)
+            self.assertEqual("sticker_necessary_text_required", final.reason_code)
 
 
 class EffectorFixture:

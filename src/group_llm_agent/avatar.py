@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections import Counter
@@ -198,14 +199,24 @@ class AvatarController:
         current = now or datetime.now(UTC)
         if not catalog.automatic_rotation_enabled or catalog.status != "enabled":
             return None
+        if not self._has_verified_default_baseline(catalog):
+            return None
         observations = self._recent_moods(current - timedelta(days=7))
-        if len(observations) < 3 or any(scope_count != 1 for _, _, scope_count in observations):
+        if len(observations) < 3:
             return None
         latest_window = observations[-8:]
-        counts = Counter(mood for mood, _, _ in latest_window)
+        scope_counts = {scope_count for _, _, _, _, scope_count in latest_window}
+        if len(scope_counts) != 1 or next(iter(scope_counts)) < 2:
+            return None
+        counts = Counter(mood for mood, _, _, _, _ in latest_window)
         mood, count = counts.most_common(1)[0]
-        matching_times = [created for item, created, _ in latest_window if item == mood]
+        matching = [item for item in latest_window if item[0] == mood]
+        matching_times = [created for _, created, _, _, _ in matching]
         if count < 3 or count / len(latest_window) < 0.7:
+            return None
+        if len({chat_id for _, _, chat_id, _, _ in matching}) < 2:
+            return None
+        if len({member_user_id for _, _, _, member_user_id, _ in matching}) < 2:
             return None
         if max(matching_times) - min(matching_times) < timedelta(hours=2):
             return None
@@ -231,6 +242,10 @@ class AvatarController:
         candidate = catalog.candidate(avatar_id)
         if candidate is None or candidate.status not in {"approved", "enabled"}:
             raise ExpressionCatalogError("avatar_not_approved")
+        if avatar_id != catalog.default_avatar_id and not self._has_verified_default_baseline(
+            catalog
+        ):
+            raise ExpressionCatalogError("default_avatar_baseline_required")
         image_path = (catalog.path.parent / candidate.image_path).resolve()
         if file_sha256(image_path) != candidate.image_sha256:
             raise ExpressionCatalogError("avatar_asset_digest_mismatch")
@@ -247,6 +262,13 @@ class AvatarController:
             readback = self.telegram.get_user_profile_photo(user_id=self.bot_user_id)
             if readback is None:
                 raise TelegramApiError("setMyProfilePhoto", "verification_failed")
+            remote = self.telegram.get_file(file_id=readback.file_id)
+            readback_content = self.telegram.download_file(
+                file_path=remote.file_path,
+                maximum_bytes=8 * 1024 * 1024,
+            )
+            if hashlib.sha256(readback_content).hexdigest() != candidate.image_sha256:
+                raise TelegramApiError("setMyProfilePhoto", "verification_mismatch")
         except BaseException as error:
             rollback = self._rollback(previous)
             self._finish_audit(
@@ -288,14 +310,15 @@ class AvatarController:
         except (OSError, TelegramApiError, RuntimeError):
             return "failed"
 
-    def _recent_moods(self, since: datetime) -> list[tuple[str, datetime, int]]:
+    def _recent_moods(self, since: datetime) -> list[tuple[str, datetime, str, str, int]]:
         connection = self.database.connect()
         try:
             rows = connection.execute(
                 """
-                SELECT mood_code, created_at, bot_scope_count
+                SELECT mood_code, created_at, chat_id, member_user_id, bot_scope_count
                 FROM persona_mood_observations
                 WHERE bot_user_id = ? AND created_at >= ?
+                    AND chat_id IS NOT NULL AND member_user_id IS NOT NULL
                 ORDER BY created_at
                 """,
                 (self.bot_user_id, since.isoformat()),
@@ -306,10 +329,39 @@ class AvatarController:
             (
                 str(row["mood_code"]),
                 datetime.fromisoformat(row["created_at"]),
+                str(row["chat_id"]),
+                str(row["member_user_id"]),
                 int(row["bot_scope_count"]),
             )
             for row in rows
         ]
+
+    def _has_verified_default_baseline(self, catalog: AvatarCatalog) -> bool:
+        default = catalog.candidate(catalog.default_avatar_id)
+        if default is None:
+            return False
+        connection = self.database.connect()
+        try:
+            row = connection.execute(
+                """
+                SELECT 1 FROM avatar_change_audit
+                WHERE bot_user_id = ?
+                    AND avatar_catalog_version = ?
+                    AND requested_avatar_id = ?
+                    AND requested_image_sha256 = ?
+                    AND platform_status = 'verified'
+                LIMIT 1
+                """,
+                (
+                    self.bot_user_id,
+                    catalog.catalog_version,
+                    catalog.default_avatar_id,
+                    default.image_sha256,
+                ),
+            ).fetchone()
+        finally:
+            connection.close()
+        return row is not None
 
     def _cooldown_allows(self, catalog: AvatarCatalog, now: datetime) -> bool:
         connection = self.database.connect()
@@ -339,15 +391,19 @@ class AvatarController:
         requested_by: str,
     ) -> int:
         now = datetime.now(UTC).isoformat()
+        requested = catalog.candidate(requested_avatar_id)
+        if requested is None:
+            raise ExpressionCatalogError("avatar_not_approved")
         with self.database.transaction() as connection:
             cursor = connection.execute(
                 """
                 INSERT INTO avatar_change_audit (
                     bot_user_id, avatar_catalog_version, avatar_catalog_digest,
-                    previous_avatar_id, requested_avatar_id, reason_code,
+                    previous_avatar_id, requested_avatar_id, requested_image_sha256,
+                    reason_code,
                     cooldown_status, requested_by, platform_status,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, 'eligible', ?, 'applying', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'eligible', ?, 'applying', ?, ?)
                 """,
                 (
                     self.bot_user_id,
@@ -355,6 +411,7 @@ class AvatarController:
                     catalog.digest,
                     previous_avatar_id,
                     requested_avatar_id,
+                    requested.image_sha256,
                     reason_code,
                     requested_by,
                     now,
