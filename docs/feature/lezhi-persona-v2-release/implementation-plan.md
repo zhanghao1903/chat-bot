@@ -150,13 +150,16 @@ Included with Slice 1 because loader, startup and migration compatibility form o
    incomplete, any score is below 8, or any critical violation is present.
 7. Add a report verifier reusable by release preflight. It requires exact bundle digest, all 37
    IDs, the intended model ID/settings and a passing result.
+8. Bind activation to the independently approved canonical report SHA-256, provider label and
+   reviewer identity, and compare every case's dimension/critical contract with bundle-owned data.
 
 ### Checks
 
 - Scripted protocol tests cover pass, low score, critical violation, timeout, invalid provider
   result, wrong digest/model/config, interrupted write and secret redaction.
 - A real configured provider run produces all 37 outputs and judge decisions.
-- The verifier independently accepts the exact report and rejects any modified field.
+- The verifier independently accepts the exact report and rejects any modified field, synthetic
+  identity, fabricated canonical replacement or case-contract substitution.
 
 ### Commit intent
 
@@ -183,15 +186,18 @@ Included with Slice 1 because loader, startup and migration compatibility form o
 3. Keep Telegram smoke as a second explicit `persona-smoke` step so the operator controls the one
    inbound message. It inspects only post-release SQLite audit counters/snapshot and never sends a
    synthetic group message itself.
-4. Add automatic `persona-rollback` invocation when restart/startup/smoke validation fails.
+4. Route every failure after candidate pinning through one automatic rollback path, including
+   restart, running state, startup identity, environment reads, baseline access/recording and smoke
+   validation; persist both the redacted failure stage and final rollback result.
 5. Never use `down --volumes`, remove the named volume, expose secret env values, connect to another
    host, or infer a `latest` version.
 6. Store redacted state/evidence under ignored `deploy/state/` with strict permissions.
 
 ### Checks
 
-- Unit tests use a fake Compose runner and temporary environment to prove byte-preserving secret
-  handling, exact pin changes, rollback, lock exclusion and no volume deletion.
+- Unit tests use a fake Compose/Python runner and temporary environment to prove byte-preserving
+  secret handling, exact pin changes, rollback at every post-pin boundary, failed-rollback
+  reporting, lock exclusion and no volume deletion.
 - Shell syntax and Compose rendering pass.
 - Real preflight records the current v1 path/digest/image/service/volume before activation.
 

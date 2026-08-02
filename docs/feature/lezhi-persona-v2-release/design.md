@@ -208,8 +208,12 @@ any invalid result leaves no passing report. The command exits nonzero unless ev
 least 8 and every critical case has zero violations.
 
 The activation preflight independently reloads the evidence, confirms all 37 IDs once, matches the
-candidate persona/model/generation configuration, and checks the pass condition. Scripted unit
-models prove protocol behavior only and cannot create a passing release report.
+candidate persona/model/generation configuration, and checks the pass condition. The application
+also binds each releasable bundle digest to an independently approved canonical report SHA-256,
+provider label and reviewer identity. Each report case must retain the bundle-owned dimension and
+critical flag. A structurally valid but substituted, re-scored or synthetically authored report
+therefore fails before activation; scripted unit models prove protocol behavior only and cannot
+create a passing release report.
 
 ## 8. Release State, Restart and Rollback
 
@@ -235,10 +239,13 @@ message in the configured group. The verifier waits for one newly ingested event
 most one matching external effect (`sent` or intentional silence). A duplicate effect, wrong
 snapshot, startup failure, timeout, or missing ingestion fails the release.
 
-On failure, the command restores the exact recorded v1 path/digest in the same environment,
-restarts the same Compose service, validates v1 startup and records the failure/rollback result.
-If rollback fails, it stops further mutation and reports the existing container state and manual
-recovery entry without touching the data volume.
+Every failure after the atomic candidate pin update enters one rollback path, including Compose
+stop/start, running-state and identity checks, environment reads, durable smoke-baseline access,
+baseline recording and smoke completion. The command first records the redacted failure stage,
+then restores the exact recorded v1 path/digest in the same environment, restarts the same Compose
+service, validates v1 startup and records the final rollback result. If rollback fails, it stops
+further mutation and reports the existing container state and manual recovery entry without
+touching the data volume.
 
 ## 9. Failure, Retry and Concurrency
 

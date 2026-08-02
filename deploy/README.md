@@ -104,15 +104,19 @@ deploy/manage.sh persona-release \
 ```
 
 第二条命令只会在 v1 回滚点、v2 包、37 条真实模型评测和 Compose 状态全部通过时改写
-两个人格选择行。启动成功后，在目标群只发送一条明确直接呼叫，再执行：
+两个人格选择行。评测门禁还要求报告字节的已批准 SHA-256、provider/reviewer 身份及每条
+case 的 dimension/critical 契约完全一致；仅保持 JSON 结构和高分的替代报告不能发布。
+启动成功后，在目标群只发送一条明确直接呼叫，再执行：
 
 ```bash
 deploy/manage.sh persona-smoke
 ```
 
-冒烟要求精确新增一条入站，并且产生零或一条绑定 v2 摘要的外部效果。失败会自动恢复
-v1；也可以人工执行 `deploy/manage.sh persona-rollback`。发布状态只保存非敏感摘要、路径和
-冒烟边界，位于被 Git 忽略的 `deploy/state/`。
+冒烟要求精确新增一条入站，并且产生零或一条绑定 v2 摘要的外部效果。从候选 pin 写入
+之后，Compose 停启、运行状态、人格身份、环境读取、基线访问/记录和冒烟中的任一失败都
+进入同一自动 v1 回滚路径；也可以人工执行 `deploy/manage.sh persona-rollback`。发布状态只
+保存非敏感摘要、路径、冒烟边界、失败阶段与回滚结果，位于被 Git 忽略的
+`deploy/state/`。
 
 ## 启用成员认识
 

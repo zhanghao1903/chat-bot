@@ -3,7 +3,7 @@
 - Status: Verified and deployed
 - Requirements: `25eacf0c81fb903f131ffa5b113b1740d0cf4512`
 - RequirementsHandoff: `48d7910e4afefc7854dcfaab227e3880bacac102f24ac23877df8c07856ef820`
-- Implementation snapshot: `7f3d0d54069e2aad6e6f3ee20d66307de0c77a7a`
+- Implementation snapshot: `7c9f4cdacc6a993d2d45fb432f11f4035c270e5c`
 - Verified: 2026-08-02
 
 ## Immutable artifacts
@@ -29,15 +29,16 @@ unchanged.
 The implementation and final smoke-fix snapshots passed:
 
 - `python3 -m compileall -q src tests`;
-- `PYTHONPATH=src python3 -m unittest discover -s tests -q`: 163 tests;
-- Ruff check and format check: 53 source/test files;
+- `PYTHONPATH=src python3 -m unittest discover -s tests -q`: 167 tests;
+- Ruff check and format check: 54 source/test files;
 - Mypy: 27 source files, no issues;
 - `uv build`, shell syntax, Compose rendering and `git diff --check`;
-- strict source/import, schema, content-digest, view coverage, memory transition, provider-report,
-  release-state, database-path preservation and durable trigger-audit smoke regressions.
+- strict source/import, schema, content-digest, view coverage, memory transition, approved
+  provider-report provenance, release-state, post-pin rollback boundary, database-path
+  preservation and durable trigger-audit smoke regressions.
 
 The built exact candidate image is
-`sha256:5a79c6312eb2248136f1751e25cdb409494fab867ae2a384da3c248fe9746dc1`.
+`sha256:304eb30086c99a5a949031ddc5b6c2424ece02290daba5ce6752e2cb02165659`.
 
 ## Real-provider gate
 
@@ -46,6 +47,13 @@ judge calls with model `gpt-5.6-sol`. The canonical report contains all 37 cases
 four scored 9, minimum score 9, and zero critical violations. Calls were bounded to two attempts
 for retry-safe transport failures. The report excludes credentials, Base URL, full prompts and
 provider envelopes.
+
+Activation is bound to the exact report SHA-256
+`b8d83f99777d360fcfecff2cb3e585c5b6b5eb173d157544ae6ee02f8eb39fcb`, provider label
+`configured-openai-compatible` and reviewer `provider-model-judge:gpt-5.6-sol`. The verifier also
+compares every case's dimension and critical flag with the immutable bundle. A canonical synthetic
+replacement with fabricated identities, replies, rationales and consistently passing 10/10 scores
+was rejected with `unapproved_evaluation_report` before activation.
 
 ## Deployment and rollback evidence
 
@@ -87,6 +95,24 @@ persona `lezhi-v2.0` at the exact production digest. `deploy/manage.sh persona-s
 persona_smoke_passed outcome=sent external_effects=1
 ```
 
+## Review remediation
+
+Independent review requested changes at snapshot
+`371acef4440c8f98234391750b79923d42e34d7a`. FINDING-001 is closed by the immutable approved-report
+binding and bundle-owned case-contract checks described above. FINDING-002 is closed by a single
+post-pin rollback path covering eight activation boundaries and five smoke boundaries. Shell-level
+fake-Compose regressions prove every boundary restores v1 and records `attempted` then `succeeded`;
+a separate regression proves a failed restore is recorded as `failed` and never as success. A real
+state-file regression proves the final redacted failure stage/result is persisted canonically.
+
+The repaired path was also exercised against the local deployment. Reusing the completed old smoke
+window correctly failed at `smoke_verify` with no new inbound; the script recorded the failure,
+restored the exact v1 pin, restarted v1 and recorded rollback `succeeded`. The formal release command
+then revalidated the exact approved report, rebuilt the candidate and activated v2 again on the same
+named volume. Current startup reports the exact v2 identity, Telegram polling is active, SQLite
+`PRAGMA quick_check` is `ok`, and a fresh optional operator-smoke baseline is recorded at trigger
+evaluation `48`.
+
 ## Acceptance matrix
 
 | Acceptance | Result | Evidence |
@@ -94,10 +120,10 @@ persona_smoke_passed outcome=sent external_effects=1
 | AC-001–002 | Pass | Exact source hashes, immutable v1/v2 bundles, nineteen-field view coverage |
 | AC-003 | Pass | 37-case real-provider report, minimum 9/10, zero critical violations |
 | AC-004–006 | Pass | Strict startup pin, schema and exact-ID negative regressions |
-| AC-007 | Pass | Canonical real-provider report and independent report verification |
+| AC-007 | Pass | Exact approved report SHA/provider/reviewer plus bundle-owned case contracts |
 | AC-008–009 | Pass | Fail-closed preflight, same named volume/database, Compose v1 then v2 startup |
 | AC-010 | Pass | One direct-platform trigger, one sent effect, exact v2 snapshot |
-| AC-011 | Pass | Exact v1 state, automatic rollback path and retained stopped v1 container |
+| AC-011 | Pass | Every post-pin boundary matrix plus successful real v2→v1 rollback drill |
 | AC-012–013 | Pass | Local Docker target only; exact selector persisted in external environment |
 | AC-014 | Pass | v1→v2→v1 neutral/subjective memory transition regressions |
 | AC-015–016 | Pass | Immutable overwrite rejection and documented release/rollback runbook |
@@ -108,3 +134,5 @@ persona_smoke_passed outcome=sent external_effects=1
   HTTPS connections.
 - The stopped pre-Compose v1 container is intentionally retained until v2 smoke and review are
   complete. It is not running and does not poll Telegram.
+- The already completed operator smoke proves the unchanged Telegram/Writer runtime. Baseline `48`
+  is retained for an optional fresh post-remediation message; it is not an unimplemented code gate.
