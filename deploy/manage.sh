@@ -123,7 +123,8 @@ persona_release() {
   database_path=$(release_python environment-database-path --env-file "${ENV_FILE}")
   baseline=$(compose exec -T telegram-bot python -m group_llm_agent.persona_release \
     smoke-baseline --database "${database_path}" --chat-id "${chat_id}")
-  release_python record-baseline --state-file "${STATE_FILE}" --inbound-id "${baseline}"
+  release_python record-baseline --state-file "${STATE_FILE}" \
+    --trigger-evaluation-id "${baseline}"
   echo "Persona release is running with lezhi-v2.0; send one direct Telegram message, then run persona-smoke."
 }
 

@@ -174,7 +174,7 @@ def preflight_release(
         },
         "model_id": model_id,
         "evaluation_report": str(report_path),
-        "smoke_baseline_inbound_id": None,
+        "smoke_baseline_trigger_evaluation_id": None,
     }
 
 
@@ -201,20 +201,20 @@ def load_release_state(path: Path) -> dict[str, object]:
     return value
 
 
-def record_smoke_baseline(path: Path, inbound_id: int) -> None:
-    if inbound_id < 0:
+def record_smoke_baseline(path: Path, trigger_evaluation_id: int) -> None:
+    if trigger_evaluation_id < 0:
         raise PersonaReleaseError("invalid_smoke_baseline")
     state = load_release_state(path)
-    state["smoke_baseline_inbound_id"] = inbound_id
+    state["smoke_baseline_trigger_evaluation_id"] = trigger_evaluation_id
     write_release_state(path, state)
 
 
-def smoke_inbound_baseline(database_path: Path, chat_id: str) -> int:
+def smoke_trigger_baseline(database_path: Path, chat_id: str) -> int:
     connection: sqlite3.Connection | None = None
     try:
         connection = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
         row = connection.execute(
-            "SELECT coalesce(max(id), 0) FROM group_messages WHERE chat_id = ? AND direction = 'inbound'",
+            "SELECT coalesce(max(id), 0) FROM trigger_evaluations WHERE chat_id = ?",
             (chat_id,),
         ).fetchone()
     except sqlite3.Error:
@@ -229,7 +229,7 @@ def verify_smoke(
     *,
     database_path: Path,
     chat_id: str,
-    baseline_inbound_id: int,
+    baseline_trigger_evaluation_id: int,
     persona_version: str,
     persona_digest: str,
 ) -> dict[str, object]:
@@ -239,17 +239,27 @@ def verify_smoke(
         connection.row_factory = sqlite3.Row
         inbound = connection.execute(
             """
-            SELECT id, event_id FROM group_messages
-            WHERE chat_id = ? AND direction = 'inbound' AND id > ?
+            SELECT id, trigger_event_id, trigger_category, decision_kind,
+                   persona_version, persona_digest
+            FROM trigger_evaluations
+            WHERE chat_id = ? AND id > ?
             ORDER BY id
             """,
-            (chat_id, baseline_inbound_id),
+            (chat_id, baseline_trigger_evaluation_id),
         ).fetchall()
         if not inbound:
             raise PersonaReleaseError("smoke_pending")
         if len(inbound) != 1:
             raise PersonaReleaseError("smoke_inbound_count")
-        event_id = str(inbound[0]["event_id"])
+        evaluation = inbound[0]
+        if (
+            evaluation["trigger_category"] not in {"direct_platform", "direct_persona_name"}
+            or evaluation["decision_kind"] != "effect_requested"
+            or evaluation["persona_version"] != persona_version
+            or evaluation["persona_digest"] != persona_digest
+        ):
+            raise PersonaReleaseError("smoke_trigger_mismatch")
+        event_id = str(evaluation["trigger_event_id"])
         effects = connection.execute(
             """
             SELECT status, persona_version, persona_digest FROM external_effects
@@ -546,13 +556,15 @@ def _parser() -> argparse.ArgumentParser:
     restore.add_argument("--env-file", required=True, type=Path)
     restore.add_argument("--state-file", required=True, type=Path)
 
-    baseline = commands.add_parser("smoke-baseline", help="Read the current inbound ID")
+    baseline = commands.add_parser(
+        "smoke-baseline", help="Read the current trigger-evaluation boundary"
+    )
     baseline.add_argument("--database", required=True, type=Path)
     baseline.add_argument("--chat-id", required=True)
 
     record_baseline = commands.add_parser("record-baseline", help="Record the smoke boundary")
     record_baseline.add_argument("--state-file", required=True, type=Path)
-    record_baseline.add_argument("--inbound-id", required=True, type=int)
+    record_baseline.add_argument("--trigger-evaluation-id", required=True, type=int)
 
     smoke = commands.add_parser("smoke-verify", help="Verify one bounded Telegram message")
     smoke.add_argument("--database", required=True, type=Path)
@@ -630,15 +642,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             print("persona_pins_restored version=lezhi-v1.0")
         elif args.command == "smoke-baseline":
-            print(smoke_inbound_baseline(args.database, args.chat_id))
+            print(smoke_trigger_baseline(args.database, args.chat_id))
         elif args.command == "record-baseline":
-            record_smoke_baseline(args.state_file, args.inbound_id)
+            record_smoke_baseline(args.state_file, args.trigger_evaluation_id)
             print("persona_smoke_baseline_recorded")
         elif args.command == "smoke-verify":
             evidence = verify_smoke(
                 database_path=args.database,
                 chat_id=args.chat_id,
-                baseline_inbound_id=args.baseline_id,
+                baseline_trigger_evaluation_id=args.baseline_id,
                 persona_version=args.persona_version,
                 persona_digest=args.persona_digest,
             )
@@ -656,7 +668,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         elif args.command == "state-smoke-arguments":
             state = load_release_state(args.state_file)
             candidate = state.get("candidate")
-            baseline_id = state.get("smoke_baseline_inbound_id")
+            baseline_id = state.get("smoke_baseline_trigger_evaluation_id")
             if not isinstance(candidate, dict) or not isinstance(baseline_id, int):
                 raise PersonaReleaseError("invalid_release_state")
             digest = str(candidate.get("digest", ""))

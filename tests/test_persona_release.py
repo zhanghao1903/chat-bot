@@ -21,7 +21,7 @@ from group_llm_agent.persona_release import (
     read_persona_pins,
     read_runtime_database_path,
     replace_persona_pins,
-    smoke_inbound_baseline,
+    smoke_trigger_baseline,
     verify_smoke,
 )
 
@@ -243,42 +243,46 @@ class PersonaDeploymentGateTests(unittest.TestCase):
             try:
                 connection.execute(
                     """
-                    INSERT INTO group_messages (
-                        chat_id, telegram_message_id, event_id, sender_user_id,
-                        sender_display_name, direction, text, text_sha256, sent_at,
-                        ingested_at
-                    ) VALUES (?, ?, ?, ?, ?, 'inbound', ?, ?, ?, ?)
+                    INSERT INTO trigger_evaluations (
+                        request_id, chat_id, trigger_event_id, trigger_message_id,
+                        trigger_category, persona_name_hit,
+                        continuity_anchor_message_id, decision_kind, reason_code,
+                        model_status, persona_id, persona_version, persona_digest,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 'direct_platform', 1, NULL,
+                              'effect_requested', 'explicit_mention', 'not_called',
+                              'lezhi', 'lezhi-v1.0', ?, ?, ?)
                     """,
                     (
+                        "trigger:event-1",
                         "-1001",
-                        "1",
                         "event-1",
-                        "member-1",
-                        "Member",
-                        "乐枝，在吗？",
-                        "digest",
+                        "1",
+                        "25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a",
                         datetime.now(UTC).isoformat(),
                         datetime.now(UTC).isoformat(),
                     ),
                 )
                 connection.commit()
-                baseline = smoke_inbound_baseline(database_path, "-1001")
+                baseline = smoke_trigger_baseline(database_path, "-1001")
                 connection.execute(
                     """
-                    INSERT INTO group_messages (
-                        chat_id, telegram_message_id, event_id, sender_user_id,
-                        sender_display_name, direction, text, text_sha256, sent_at,
-                        ingested_at
-                    ) VALUES (?, ?, ?, ?, ?, 'inbound', ?, ?, ?, ?)
+                    INSERT INTO trigger_evaluations (
+                        request_id, chat_id, trigger_event_id, trigger_message_id,
+                        trigger_category, persona_name_hit,
+                        continuity_anchor_message_id, decision_kind, reason_code,
+                        model_status, persona_id, persona_version, persona_digest,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 'direct_platform', 1, NULL,
+                              'effect_requested', 'explicit_mention', 'not_called',
+                              'lezhi', 'lezhi-v2.0', ?, ?, ?)
                     """,
                     (
+                        "trigger:event-2",
                         "-1001",
-                        "2",
                         "event-2",
-                        "member-1",
-                        "Member",
-                        "乐枝，你怎么看？",
-                        "digest",
+                        "2",
+                        "0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603",
                         datetime.now(UTC).isoformat(),
                         datetime.now(UTC).isoformat(),
                     ),
@@ -307,7 +311,7 @@ class PersonaDeploymentGateTests(unittest.TestCase):
             evidence = verify_smoke(
                 database_path=database_path,
                 chat_id="-1001",
-                baseline_inbound_id=baseline,
+                baseline_trigger_evaluation_id=baseline,
                 persona_version="lezhi-v2.0",
                 persona_digest="0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603",
             )
