@@ -85,6 +85,38 @@ class AppTests(unittest.TestCase):
 
         self.assertEqual(result, 3)
 
+    def test_persona_startup_audit_contains_only_immutable_identity(self) -> None:
+        root = Path(__file__).parents[1]
+        bundle_path = root / "src/group_llm_agent/persona_bundles/lezhi/lezhi-v2.0"
+        digest = "0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603"
+        stderr = io.StringIO()
+        with TemporaryDirectory() as tmpdir, redirect_stderr(stderr):
+            environment = {
+                **_environment(Path(tmpdir) / "runtime.sqlite3"),
+                "BOT_MODE": "persona_direct",
+                "PERSONA_BUNDLE_PATH": str(bundle_path),
+                "PERSONA_EXPECTED_SHA256": digest,
+                "MODEL_PROVIDER": "openai_compatible",
+                "MODEL_BASE_URL": "https://provider.example.invalid/v1",
+                "MODEL_API_KEY": "never-log-this-secret",
+                "WRITER_MODEL": "writer-model",
+            }
+            result = run(
+                environment,
+                client_factory=_StopAfterIdentityClient,
+                model_factory=lambda _settings: object(),  # type: ignore[return-value]
+            )
+
+        output = stderr.getvalue()
+        self.assertEqual(0, result)
+        self.assertIn(
+            "persona_bundle_loaded persona_id=lezhi persona_version=lezhi-v2.0 "
+            f"persona_digest={digest}",
+            output,
+        )
+        self.assertNotIn("never-log-this-secret", output)
+        self.assertNotIn("provider.example.invalid", output)
+
 
 def _environment(database_path: Path) -> dict[str, str]:
     return {

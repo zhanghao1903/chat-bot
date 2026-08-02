@@ -37,6 +37,8 @@ cp deploy/.env.example deploy/.env
 ```text
 TELEGRAM_BOT_TOKEN=<BotFather token>
 TELEGRAM_CHAT_ID=<signed numeric group id>
+DATABASE_PATH=/app/data/telegram_bot.sqlite3
+TELEGRAM_BOT_DATA_VOLUME=telegram-bot-data
 BOT_MODE=fixed
 ```
 
@@ -78,6 +80,46 @@ MEMBER_MEMORY_CAPABILITY=disabled
 同秒或更早、对象不明、无关内容和模型失败回到原普通规则或静默。
 此功能继续使用出站 Telegram/model HTTPS，不新增 webhook、监听端口或环境变量。
 
+## 低频发布乐枝 v2
+
+`lezhi-v1.0` 是固定回滚点；`lezhi-v2.0` 的生产摘要为：
+
+```text
+0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603
+```
+
+发布前必须让 `deploy/.env` 明确保留当前 `DATABASE_PATH` 和
+`TELEGRAM_BOT_DATA_VOLUME`，不得通过换文件名或新建卷切换人格。依次执行：
+
+```bash
+deploy/manage.sh persona-preflight \
+  /app/src/group_llm_agent/persona_bundles/lezhi/lezhi-v2.0 \
+  0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603 \
+  docs/feature/lezhi-persona-v2-release/provider-evaluation.json
+
+deploy/manage.sh persona-release \
+  /app/src/group_llm_agent/persona_bundles/lezhi/lezhi-v2.0 \
+  0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603 \
+  docs/feature/lezhi-persona-v2-release/provider-evaluation.json
+```
+
+第二条命令只会在 v1 回滚点、v2 包、37 条真实模型评测和 Compose 状态全部通过时改写
+两个人格选择行。评测门禁还要求报告字节的已批准 SHA-256、provider/reviewer 身份及每条
+case 的 dimension/critical 契约完全一致；仅保持 JSON 结构和高分的替代报告不能发布。
+启动成功后，在目标群只发送一条明确直接呼叫，再执行：
+
+```bash
+deploy/manage.sh persona-smoke
+```
+
+冒烟要求精确新增一条入站，并且产生零或一条绑定 v2 摘要的外部效果。从候选 pin 写入
+之后，Compose 停启、运行状态、人格身份、环境读取、基线访问/记录和冒烟中的任一失败都
+进入同一自动 v1 回滚路径；候选 pin 生效后的 HUP/INT/TERM 也会在锁内完成非递归回滚后
+再非零退出。发布、冒烟和人工回滚各自持有同一部署锁直到操作或回滚终态，避免并发流程
+同时改写 Compose 与环境。也可以人工执行 `deploy/manage.sh persona-rollback`。发布状态只
+保存非敏感摘要、路径、冒烟边界、失败阶段与回滚结果，位于被 Git 忽略的
+`deploy/state/`。
+
 ## 启用成员认识
 
 1. 把 `MEMBER_MEMORY_CAPABILITY` 改成 `available` 并重启。
@@ -115,7 +157,7 @@ deploy/manage.sh logs
 deploy/manage.sh stop
 ```
 
-`stop` 删除容器和 Compose 网络，但保留命名 volume `telegram-bot-data`。
+`stop` 删除容器和 Compose 网络，但保留 `TELEGRAM_BOT_DATA_VOLUME` 指定的命名 volume。
 
 外部环境文件可显式指定：
 
@@ -139,9 +181,10 @@ TELEGRAM_BOT_ENV_FILE=/secure/path/telegram-bot.env deploy/manage.sh start
 
 ## 回滚
 
-把 `BOT_MODE` 改为 `fixed` 后执行 `deploy/manage.sh restart`。不要删除
-`telegram-bot-data`，否则会丢失投递去重、审计、认识重置代次和可能仍需保留的数据清除
-证据。若必须删除数据，应先按群内透明控制流程清除，并明确接受恢复影响。
+人格版本回滚执行 `deploy/manage.sh persona-rollback`，恢复记录的 v1 精确路径和摘要并重启
+同一 Compose 服务。不要删除 `TELEGRAM_BOT_DATA_VOLUME` 指定的数据卷，否则会丢失投递
+去重、审计、认识重置代次和可能仍需保留的数据清除证据。若必须删除数据，应先按群内
+透明控制流程清除，并明确接受恢复影响。
 
 ## 安全说明
 

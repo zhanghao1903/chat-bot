@@ -50,6 +50,72 @@ def _enable_and_ingest(
 
 
 class MemoryRepositoryTests(unittest.TestCase):
+    def test_v1_v2_v1_transition_preserves_neutral_and_isolates_subjective_memory(
+        self,
+    ) -> None:
+        with temporary_database() as database:
+            messages = MessageRepository(database)
+            source = _enable_and_ingest(
+                messages,
+                chat_id="group-a",
+                message_id="1",
+            )
+            memory = MemoryRepository(database)
+            now = datetime(2026, 7, 29, tzinfo=UTC)
+            for memory_id, category, persona in (
+                ("neutral-fact", MemoryCategory.FACT, None),
+                ("neutral-observation", MemoryCategory.OBSERVATION, None),
+                ("subjective-v1", MemoryCategory.IMPRESSION, _PERSONA_V1),
+                ("subjective-v2", MemoryCategory.PREFERENCE, _PERSONA_V2),
+            ):
+                memory.add(
+                    memory_id=memory_id,
+                    chat_id="group-a",
+                    member_user_id="member-1",
+                    category=category,
+                    statement=f"Canonical statement for {memory_id}.",
+                    confidence=1,
+                    source_message_ids=(source,),
+                    recognition_policy_version="policy-v1",
+                    persona=persona,
+                    observed_at=now,
+                )
+
+            def active(persona: PersonaSnapshot) -> set[str]:
+                messages.policies.activate_persona(chat_id="group-a", persona=persona)
+                return {
+                    item.memory_id
+                    for item in memory.list_active(
+                        chat_id="group-a",
+                        member_user_id="member-1",
+                        persona=persona,
+                        recognition_policy_version="policy-v1",
+                        at=now,
+                    )
+                }
+
+            self.assertEqual(
+                {"neutral-fact", "neutral-observation", "subjective-v1"},
+                active(_PERSONA_V1),
+            )
+            self.assertEqual(
+                {"neutral-fact", "neutral-observation", "subjective-v2"},
+                active(_PERSONA_V2),
+            )
+            self.assertEqual(
+                {"neutral-fact", "neutral-observation", "subjective-v1"},
+                active(_PERSONA_V1),
+            )
+
+            connection = database.connect()
+            try:
+                counts = connection.execute(
+                    "SELECT count(*), count(DISTINCT memory_id) FROM member_memory_items"
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertEqual((4, 4), tuple(counts))
+
     def test_confidence_decay_persona_compatibility_and_group_scope(self) -> None:
         with temporary_database() as database:
             messages = MessageRepository(database)

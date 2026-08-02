@@ -7,9 +7,12 @@ ENV_FILE="${TELEGRAM_BOT_ENV_FILE:-${SCRIPT_DIR}/.env}"
 
 usage() {
   echo "Usage: $0 {build|start|stop|restart|status|logs}"
+  echo "       $0 persona-preflight <candidate-container-path> <digest> <report>"
+  echo "       $0 persona-release <candidate-container-path> <digest> <report>"
+  echo "       $0 {persona-smoke|persona-rollback}"
 }
 
-if [ "$#" -ne 1 ]; then
+if [ "$#" -lt 1 ]; then
   usage
   exit 2
 fi
@@ -21,30 +24,291 @@ if [ ! -f "${ENV_FILE}" ]; then
 fi
 
 export TELEGRAM_BOT_ENV_FILE="${ENV_FILE}"
+REPOSITORY_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
+STATE_DIR="${SCRIPT_DIR}/state"
+STATE_FILE="${STATE_DIR}/persona-release.json"
+LOCK_DIR="${STATE_DIR}/persona-release.lock"
+LOCK_HELD=0
+RELEASE_PINS_SET=0
+RELEASE_TERMINAL=1
+RELEASE_FAILURE_STAGE=pre_pin
 
 compose() {
-  docker compose --project-directory "${SCRIPT_DIR}" -f "${COMPOSE_FILE}" "$@"
+  docker compose --env-file "${ENV_FILE}" --project-directory "${SCRIPT_DIR}" \
+    -f "${COMPOSE_FILE}" "$@"
+}
+
+release_python() {
+  PYTHONPATH="${REPOSITORY_ROOT}/src" python3 -m group_llm_agent.persona_release "$@"
+}
+
+require_release_arguments() {
+  if [ "$#" -ne 3 ]; then
+    usage
+    exit 2
+  fi
+}
+
+cleanup_release_lock() {
+  if [ "${LOCK_HELD}" -eq 1 ]; then
+    rmdir "${LOCK_DIR}" 2>/dev/null || true
+    LOCK_HELD=0
+  fi
+}
+
+acquire_release_lock() {
+  mkdir -p "${STATE_DIR}"
+  if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+    echo "Another persona release already owns the deployment lock." >&2
+    return 2
+  fi
+  LOCK_HELD=1
+  trap cleanup_release_lock EXIT
+}
+
+disable_release_signals() {
+  trap '' HUP INT TERM
+}
+
+handle_release_signal() {
+  signal_name=$1
+  disable_release_signals
+  if [ "${RELEASE_PINS_SET}" -eq 1 ] && [ "${RELEASE_TERMINAL}" -eq 0 ]; then
+    if rollback_after_failure "signal_${signal_name}"; then
+      :
+    fi
+  fi
+  RELEASE_TERMINAL=1
+  exit 2
+}
+
+install_release_signal_handlers() {
+  trap 'handle_release_signal hup' HUP
+  trap 'handle_release_signal int' INT
+  trap 'handle_release_signal term' TERM
+}
+
+persona_preflight() {
+  candidate_path=$1
+  candidate_digest=$2
+  report_path=$3
+  mkdir -p "${STATE_DIR}"
+  compose config >/dev/null
+  running_services=$(compose ps --services --filter status=running)
+  if [ "${running_services}" != "telegram-bot" ]; then
+    echo "Persona preflight failed: the current Compose service is not running." >&2
+    return 2
+  fi
+  release_python preflight \
+    --repository-root "${REPOSITORY_ROOT}" \
+    --env-file "${ENV_FILE}" \
+    --candidate-path "${candidate_path}" \
+    --candidate-digest "${candidate_digest}" \
+    --report "${report_path}" \
+    --state-file "${STATE_FILE}"
+}
+
+wait_for_persona_identity() {
+  expected_version=$1
+  expected_digest=$2
+  attempt=0
+  while [ "${attempt}" -lt 15 ]; do
+    identity_logs=$(compose logs --no-color --tail=200 telegram-bot)
+    case "${identity_logs}" in
+      *"persona_bundle_loaded persona_id=lezhi persona_version=${expected_version} persona_digest=${expected_digest}"*)
+        return 0
+        ;;
+    esac
+    attempt=$((attempt + 1))
+    sleep 2
+  done
+  return 2
+}
+
+persona_restore() {
+  release_python restore-pins --env-file "${ENV_FILE}" --state-file "${STATE_FILE}" || return 1
+  compose down || return 1
+  compose up --detach --build || return 1
+  if ! wait_for_persona_identity \
+    lezhi-v1.0 25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a; then
+    echo "Persona rollback failed: v1 startup identity was not observed." >&2
+    return 2
+  fi
+  echo "Persona rollback completed: lezhi-v1.0 is running."
+}
+
+record_release_failure() {
+  stage=$1
+  rollback_status=$2
+  release_python record-failure --state-file "${STATE_FILE}" \
+    --stage "${stage}" --rollback-status "${rollback_status}" || true
+}
+
+rollback_after_failure() {
+  stage=$1
+  disable_release_signals
+  echo "Persona release failed at ${stage}; restoring v1." >&2
+  record_release_failure "${stage}" attempted
+  if persona_restore; then
+    record_release_failure "${stage}" succeeded
+  else
+    record_release_failure "${stage}" failed
+    echo "Persona rollback failed after ${stage}." >&2
+  fi
+  return 2
+}
+
+activate_candidate() {
+  candidate_digest=$1
+  RELEASE_FAILURE_STAGE=compose_down
+  compose down || return 1
+  RELEASE_FAILURE_STAGE=compose_up
+  compose up --detach --build || return 1
+  RELEASE_FAILURE_STAGE=running_state
+  running_services=$(compose ps --services --filter status=running) || return 1
+  [ "${running_services}" = "telegram-bot" ] || return 1
+  RELEASE_FAILURE_STAGE=identity
+  wait_for_persona_identity lezhi-v2.0 "${candidate_digest}" || return 1
+  RELEASE_FAILURE_STAGE=chat_id
+  chat_id=$(release_python environment-chat-id --env-file "${ENV_FILE}") || return 1
+  RELEASE_FAILURE_STAGE=database_path
+  database_path=$(release_python environment-database-path --env-file "${ENV_FILE}") || return 1
+  RELEASE_FAILURE_STAGE=smoke_baseline
+  baseline=$(compose exec -T telegram-bot python -m group_llm_agent.persona_release \
+    smoke-baseline --database "${database_path}" --chat-id "${chat_id}") || return 1
+  RELEASE_FAILURE_STAGE=record_baseline
+  release_python record-baseline --state-file "${STATE_FILE}" \
+    --trigger-evaluation-id "${baseline}" || return 1
+}
+
+persona_release() {
+  candidate_path=$1
+  candidate_digest=$2
+  report_path=$3
+  acquire_release_lock || return 2
+  RELEASE_PINS_SET=0
+  RELEASE_TERMINAL=0
+  install_release_signal_handlers
+  if ! persona_preflight "${candidate_path}" "${candidate_digest}" "${report_path}"; then
+    RELEASE_TERMINAL=1
+    return 2
+  fi
+  RELEASE_FAILURE_STAGE=set_pins
+  RELEASE_PINS_SET=1
+  if ! release_python set-pins \
+    --env-file "${ENV_FILE}" \
+    --bundle-path "${candidate_path}" \
+    --digest "${candidate_digest}"; then
+    if rollback_after_failure "${RELEASE_FAILURE_STAGE}"; then
+      :
+    fi
+    RELEASE_TERMINAL=1
+    return 2
+  fi
+  RELEASE_FAILURE_STAGE=compose_down
+  if ! activate_candidate "${candidate_digest}"; then
+    if rollback_after_failure "${RELEASE_FAILURE_STAGE}"; then
+      :
+    fi
+    RELEASE_TERMINAL=1
+    return 2
+  fi
+  RELEASE_TERMINAL=1
+  echo "Persona release is running with lezhi-v2.0; send one direct Telegram message, then run persona-smoke."
+}
+
+verify_persona_smoke() {
+  RELEASE_FAILURE_STAGE=chat_id
+  chat_id=$(release_python environment-chat-id --env-file "${ENV_FILE}") || return 1
+  RELEASE_FAILURE_STAGE=database_path
+  database_path=$(release_python environment-database-path --env-file "${ENV_FILE}") || return 1
+  RELEASE_FAILURE_STAGE=smoke_state
+  smoke_arguments=$(release_python state-smoke-arguments --state-file "${STATE_FILE}") || return 1
+  set -- ${smoke_arguments}
+  [ "$#" -eq 2 ] || return 1
+  baseline=$1
+  candidate_digest=$2
+  RELEASE_FAILURE_STAGE=running_state
+  running_services=$(compose ps --services --filter status=running) || return 1
+  [ "${running_services}" = "telegram-bot" ] || return 1
+  RELEASE_FAILURE_STAGE=smoke_verify
+  compose exec -T telegram-bot python -m group_llm_agent.persona_release \
+    smoke-verify --database "${database_path}" \
+    --chat-id "${chat_id}" --baseline-id "${baseline}" \
+    --persona-version lezhi-v2.0 --persona-digest "${candidate_digest}"
+}
+
+persona_smoke() {
+  acquire_release_lock || return 2
+  RELEASE_PINS_SET=1
+  RELEASE_TERMINAL=0
+  install_release_signal_handlers
+  RELEASE_FAILURE_STAGE=smoke_state
+  if ! verify_persona_smoke; then
+    if rollback_after_failure "${RELEASE_FAILURE_STAGE}"; then
+      :
+    fi
+    RELEASE_TERMINAL=1
+    return 2
+  fi
+  RELEASE_TERMINAL=1
+}
+
+persona_rollback() {
+  acquire_release_lock || return 2
+  RELEASE_PINS_SET=1
+  RELEASE_TERMINAL=0
+  disable_release_signals
+  if ! persona_restore; then
+    RELEASE_TERMINAL=1
+    return 2
+  fi
+  RELEASE_TERMINAL=1
 }
 
 case "$1" in
   build)
+    [ "$#" -eq 1 ] || { usage; exit 2; }
     compose build
     ;;
   start)
+    [ "$#" -eq 1 ] || { usage; exit 2; }
     compose up --detach --build
     ;;
   stop)
+    [ "$#" -eq 1 ] || { usage; exit 2; }
     compose down
     ;;
   restart)
+    [ "$#" -eq 1 ] || { usage; exit 2; }
     compose down
     compose up --detach --build
     ;;
   status)
+    [ "$#" -eq 1 ] || { usage; exit 2; }
     compose ps
     ;;
   logs)
+    [ "$#" -eq 1 ] || { usage; exit 2; }
     compose logs --follow --tail=200
+    ;;
+  persona-preflight)
+    shift
+    require_release_arguments "$@"
+    persona_preflight "$@"
+    ;;
+  persona-release)
+    shift
+    require_release_arguments "$@"
+    persona_release "$@"
+    ;;
+  persona-smoke)
+    [ "$#" -eq 1 ] || { usage; exit 2; }
+    persona_smoke
+    ;;
+  persona-rollback)
+    [ "$#" -eq 1 ] || { usage; exit 2; }
+    persona_rollback
     ;;
   *)
     usage

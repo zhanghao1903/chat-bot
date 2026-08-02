@@ -90,6 +90,12 @@ def run(
                 settings.persona_bundle_path,
                 expected_sha256=settings.persona_expected_sha256,
             )
+            logger.info(
+                "persona_bundle_loaded persona_id=%s persona_version=%s persona_digest=%s",
+                bundle.snapshot.persona_id,
+                bundle.snapshot.persona_version,
+                bundle.snapshot.persona_digest,
+            )
             model = (
                 model_factory(settings)
                 if model_factory is not None

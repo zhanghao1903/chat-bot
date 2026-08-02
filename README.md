@@ -38,12 +38,17 @@ Telegram 事件最多产生一个外部效果。
 
 ## 人格与作家效应器
 
-生产人格包位于
-`src/group_llm_agent/persona_bundles/lezhi/lezhi-v1.0`，内容摘要为：
+当前生产人格 v2 位于
+`src/group_llm_agent/persona_bundles/lezhi/lezhi-v2.0`，内容摘要为：
 
 ```text
-25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a
+0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603
 ```
+
+`lezhi-v1.0` 及其摘要
+`25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a`
+保持不变，作为精确回滚点。人格版本不能原地覆盖；每次低频更新都必须使用新目录、新摘要
+和独立评测证据。
 
 Trigger、Recognition 和 Effector 都从同一不可变人格快照编译。作家效应器默认最多
 调用模型 3 次、只读工具 2 次，工具仅包括：
@@ -55,9 +60,9 @@ Trigger、Recognition 和 Effector 都从同一不可变人格快照编译。作
 消息；模型失败时 Telegram 显式直接触发和正式名称呼会给出一次安全失败回复，连续性
 判断/回复和选择性群聊触发则安全降级或保持静默。
 
-人格包的静态一致性证据见
-[persona-evaluation.md](docs/feature/maomao-persona-chat/persona-evaluation.md)。选定生产模型后，
-仍必须完成 22 个固定案例的 `8/10` 行为评测，才可以进入真实群。
+v2 的 37 条真实模型评测证据见
+[provider-evaluation.json](docs/feature/lezhi-persona-v2-release/provider-evaluation.json)，发布与
+回滚证据见 [verification.md](docs/feature/lezhi-persona-v2-release/verification.md)。
 
 ## 成员认识与透明控制
 
@@ -114,8 +119,8 @@ BOT_MODE=fixed
 
 ```text
 BOT_MODE=persona_direct
-PERSONA_BUNDLE_PATH=src/group_llm_agent/persona_bundles/lezhi/lezhi-v1.0
-PERSONA_EXPECTED_SHA256=25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a
+PERSONA_BUNDLE_PATH=src/group_llm_agent/persona_bundles/lezhi/lezhi-v2.0
+PERSONA_EXPECTED_SHA256=0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603
 MODEL_PROVIDER=openai_compatible
 MODEL_BASE_URL=https://api.openai.com/v1
 MODEL_API_KEY=<runtime secret>
@@ -189,7 +194,8 @@ PYTHONPATH=src python3 -m group_llm_agent
 - 发送结果不确定时记为 `uncertain`，不会盲目重发造成重复外部效果。
 - 日志不记录 token、模型密钥、完整 prompt、工具结果或原始 provider body。
 - 所有持久数据按单一公开群隔离；模型参数不能扩大范围。
-- 回滚只需把 `BOT_MODE` 改回 `fixed` 并重启；不要删除数据库，否则会丢失去重证据。
+- 人格发布失败使用 `deploy/manage.sh persona-rollback` 恢复精确 v1 路径与摘要；不要删除
+  数据库或命名卷，否则会丢失去重和认识证据。
 
 ## 验证与部署
 
@@ -220,3 +226,8 @@ docker compose -f deploy/compose.yaml config
 - [Conversation trigger v0.2 design](docs/feature/lezhi-conversation-triggers-v0-2/design.md)
 - [Conversation trigger v0.2 implementation plan](docs/feature/lezhi-conversation-triggers-v0-2/implementation-plan.md)
 - [Conversation trigger v0.2 verification](docs/feature/lezhi-conversation-triggers-v0-2/verification.md)
+- [Lezhi persona v2 requirements](docs/feature/lezhi-persona-v2-release/requirements.md)
+- [Lezhi persona v2 design](docs/feature/lezhi-persona-v2-release/design.md)
+- [Lezhi persona v2 implementation plan](docs/feature/lezhi-persona-v2-release/implementation-plan.md)
+- [Lezhi persona v2 provider evaluation](docs/feature/lezhi-persona-v2-release/provider-evaluation.json)
+- [Lezhi persona v2 verification](docs/feature/lezhi-persona-v2-release/verification.md)
