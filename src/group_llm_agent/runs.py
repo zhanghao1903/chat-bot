@@ -42,6 +42,9 @@ class ExternalEffectRecord:
     trigger_event_id: str
     trigger_message_id: str
     effect_kind: ExternalEffectKind
+    requested_effect_kind: ExternalEffectKind
+    delivered_effect_kind: ExternalEffectKind | None
+    asset_semantic_id: str | None
     status: ExternalEffectStatus
     persona_version: str | None
     persona_digest: str | None
@@ -374,8 +377,11 @@ class RunRepository:
         latency_ms: int,
         result_count: int,
         result_char_count: int,
+        budget_ordinal: int = 0,
+        extension_reason_code: str | None = None,
+        result_novel: bool = False,
     ) -> int:
-        if min(latency_ms, result_count, result_char_count) < 0:
+        if min(latency_ms, result_count, result_char_count, budget_ordinal) < 0:
             raise ValueError("Audit counts must be non-negative")
         with self.database.transaction() as connection:
             cursor = connection.execute(
@@ -383,9 +389,10 @@ class RunRepository:
                 INSERT INTO tool_call_audit (
                     owner_kind, owner_id, chat_id, capability, purpose_code,
                     source_scope, status, latency_ms, result_count,
-                    result_char_count, created_at
+                    result_char_count, budget_ordinal, extension_reason_code,
+                    result_novel, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     owner_kind,
@@ -398,6 +405,9 @@ class RunRepository:
                     latency_ms,
                     result_count,
                     result_char_count,
+                    budget_ordinal,
+                    extension_reason_code,
+                    int(result_novel),
                     _utc_now(),
                 ),
             )
@@ -442,6 +452,7 @@ class RunRepository:
         message: TelegramTextMessage,
         effect_kind: ExternalEffectKind,
         persona: PersonaSnapshot | None,
+        asset_semantic_id: str | None = None,
     ) -> int | None:
         now = _utc_now()
         with self.database.transaction() as connection:
@@ -449,15 +460,18 @@ class RunRepository:
                 """
                 INSERT OR IGNORE INTO external_effects (
                     chat_id, trigger_event_id, trigger_message_id, effect_kind,
-                    status, persona_version, persona_digest, created_at, updated_at
+                    requested_effect_kind, asset_semantic_id, status,
+                    persona_version, persona_digest, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, 'sending', ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, 'sending', ?, ?, ?, ?)
                 """,
                 (
                     message.group_id,
                     message.event_id,
                     message.message_id,
                     effect_kind.value,
+                    effect_kind.value,
+                    asset_semantic_id,
                     persona.persona_version if persona is not None else None,
                     persona.persona_digest if persona is not None else None,
                     now,
@@ -468,12 +482,19 @@ class RunRepository:
                 return None
             return _lastrowid(cursor)
 
-    def mark_external_sent(self, effect_id: int, *, platform_message_id: str) -> None:
+    def mark_external_sent(
+        self,
+        effect_id: int,
+        *,
+        platform_message_id: str,
+        delivered_effect_kind: ExternalEffectKind | None = None,
+    ) -> None:
         self._set_external_status(
             effect_id,
             status=ExternalEffectStatus.SENT,
             platform_message_id=platform_message_id,
             error_code=None,
+            delivered_effect_kind=delivered_effect_kind,
         )
 
     def mark_external_failed(self, effect_id: int, *, error_code: str) -> None:
@@ -482,6 +503,7 @@ class RunRepository:
             status=ExternalEffectStatus.FAILED,
             platform_message_id=None,
             error_code=error_code,
+            delivered_effect_kind=None,
         )
 
     def mark_external_uncertain(self, effect_id: int, *, error_code: str) -> None:
@@ -490,6 +512,7 @@ class RunRepository:
             status=ExternalEffectStatus.UNCERTAIN,
             platform_message_id=None,
             error_code=error_code,
+            delivered_effect_kind=None,
         )
 
     def get_external_effect(
@@ -503,7 +526,8 @@ class RunRepository:
             row = connection.execute(
                 """
                 SELECT id, chat_id, trigger_event_id, trigger_message_id,
-                       effect_kind, status, persona_version, persona_digest,
+                       effect_kind, requested_effect_kind, delivered_effect_kind,
+                       asset_semantic_id, status, persona_version, persona_digest,
                        platform_message_id, error_code
                 FROM external_effects
                 WHERE chat_id = ? AND trigger_event_id = ?
@@ -520,6 +544,15 @@ class RunRepository:
             trigger_event_id=str(row["trigger_event_id"]),
             trigger_message_id=str(row["trigger_message_id"]),
             effect_kind=ExternalEffectKind(str(row["effect_kind"])),
+            requested_effect_kind=ExternalEffectKind(str(row["requested_effect_kind"])),
+            delivered_effect_kind=(
+                ExternalEffectKind(str(row["delivered_effect_kind"]))
+                if row["delivered_effect_kind"] is not None
+                else None
+            ),
+            asset_semantic_id=(
+                str(row["asset_semantic_id"]) if row["asset_semantic_id"] is not None else None
+            ),
             status=ExternalEffectStatus(str(row["status"])),
             persona_version=(
                 str(row["persona_version"]) if row["persona_version"] is not None else None
@@ -573,15 +606,31 @@ class RunRepository:
         status: ExternalEffectStatus,
         platform_message_id: str | None,
         error_code: str | None,
+        delivered_effect_kind: ExternalEffectKind | None,
     ) -> None:
         with self.database.transaction() as connection:
             cursor = connection.execute(
                 """
                 UPDATE external_effects
-                SET status = ?, platform_message_id = ?, error_code = ?, updated_at = ?
+                SET status = ?, platform_message_id = ?, error_code = ?,
+                    delivered_effect_kind = CASE
+                        WHEN ? IS NOT NULL THEN ?
+                        WHEN ? = 'sent' THEN requested_effect_kind
+                        ELSE delivered_effect_kind
+                    END,
+                    updated_at = ?
                 WHERE id = ? AND status = 'sending'
                 """,
-                (status.value, platform_message_id, error_code, _utc_now(), effect_id),
+                (
+                    status.value,
+                    platform_message_id,
+                    error_code,
+                    delivered_effect_kind.value if delivered_effect_kind is not None else None,
+                    delivered_effect_kind.value if delivered_effect_kind is not None else None,
+                    status.value,
+                    _utc_now(),
+                    effect_id,
+                ),
             )
             if cursor.rowcount != 1:
                 raise ValueError(f"Unknown or completed external effect id: {effect_id}")

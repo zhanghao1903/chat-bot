@@ -48,14 +48,28 @@ class TriggerEvaluationDecisionKind(StrEnum):
 
 class FinalEffectKind(StrEnum):
     REPLY = "reply"
+    STICKER = "sticker"
     SILENCE = "silence"
     FAILURE_REPLY = "failure_reply"
 
 
 class ExternalEffectKind(StrEnum):
     REPLY = "reply"
+    STICKER = "sticker"
     FAILURE_REPLY = "failure_reply"
     CONTROL_ACK = "control_ack"
+
+
+class MediaKind(StrEnum):
+    PHOTO = "photo"
+    STATIC_DOCUMENT = "static_document"
+    STATIC_STICKER = "static_sticker"
+
+
+class VisionStatus(StrEnum):
+    NOT_CALLED = "not_called"
+    COMPLETED = "completed"
+    FAILED = "failed"
 
 
 class MemoryCategory(StrEnum):
@@ -75,6 +89,7 @@ class TriggerModelStatus(StrEnum):
 class EffectRunStatus(StrEnum):
     PROCESSING = "processing"
     REPLY = "reply"
+    STICKER = "sticker"
     SILENCE = "silence"
     FAILURE_REPLY = "failure_reply"
     FAILED = "failed"
@@ -103,7 +118,21 @@ class ModelErrorCode(StrEnum):
 
 
 @dataclass(frozen=True)
-class TelegramTextMessage:
+class InboundMedia:
+    kind: MediaKind
+    file_id: str
+    file_unique_id: str
+    mime_type: str | None = None
+    file_size: int | None = None
+    width: int | None = None
+    height: int | None = None
+    sticker_set_name: str | None = None
+    is_animated: bool = False
+    is_video: bool = False
+
+
+@dataclass(frozen=True)
+class TelegramMessage:
     event_id: str
     group_id: str
     message_id: str
@@ -118,6 +147,11 @@ class TelegramTextMessage:
     is_bot_command: bool = False
     bot_command_target: str | None = None
     raw_event_ref: str | None = None
+    media: InboundMedia | None = None
+
+
+# Compatibility alias for callers written before media messages were supported.
+TelegramTextMessage = TelegramMessage
 
 
 @dataclass(frozen=True)
@@ -167,5 +201,10 @@ class FinalEffect:
     reason_code: str
     persona: PersonaSnapshot
     text: str | None = None
+    sticker_id: str | None = None
+    catalog_version: str | None = None
+    catalog_digest: str | None = None
+    fallback_text: str | None = None
+    mood_signal: str | None = None
     used_memory_ids: tuple[str, ...] = ()
     used_tool_call_ids: tuple[int, ...] = ()

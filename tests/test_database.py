@@ -26,6 +26,7 @@ from group_llm_agent.events import (
 from group_llm_agent.runs import RunRepository
 
 _EXPECTED_RUNTIME_TABLES = {
+    "avatar_change_audit",
     "control_action_audit",
     "effect_runs",
     "external_effects",
@@ -34,6 +35,8 @@ _EXPECTED_RUNTIME_TABLES = {
     "member_memory_items",
     "member_memory_sources",
     "memory_reset_barriers",
+    "media_effect_audit",
+    "persona_mood_observations",
     "recognition_change_audit",
     "recognition_jobs",
     "schema_migrations",
@@ -82,7 +85,11 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             self.assertTrue(_EXPECTED_RUNTIME_TABLES.issubset(tables))
             self.assertEqual(
-                [(1, "persona_runtime"), (2, "conversation_triggers_v0_2")],
+                [
+                    (1, "persona_runtime"),
+                    (2, "conversation_triggers_v0_2"),
+                    (3, "visual_expression_v0_3"),
+                ],
                 [tuple(row) for row in migrations],
             )
             self.assertEqual(1, foreign_keys)
@@ -194,6 +201,35 @@ class DatabaseMigrationTests(unittest.TestCase):
 
 
 class RunRepositoryTests(unittest.TestCase):
+    def test_sticker_effect_records_requested_and_fallback_delivery_kinds(self) -> None:
+        with temporary_database() as database:
+            repository = RunRepository(database)
+            message = _message()
+            persona = PersonaSnapshot("original", "v1", "digest-1")
+
+            effect_id = repository.claim_external_effect(
+                message=message,
+                effect_kind=ExternalEffectKind.STICKER,
+                persona=persona,
+                asset_semantic_id="reaction.delighted.v1",
+            )
+            assert effect_id is not None
+            repository.mark_external_sent(
+                effect_id,
+                platform_message_id="telegram-fallback-99",
+                delivered_effect_kind=ExternalEffectKind.REPLY,
+            )
+
+            record = repository.get_external_effect(
+                chat_id=message.group_id,
+                trigger_event_id=message.event_id,
+            )
+            assert record is not None
+            self.assertEqual(ExternalEffectKind.STICKER, record.effect_kind)
+            self.assertEqual(ExternalEffectKind.STICKER, record.requested_effect_kind)
+            self.assertEqual(ExternalEffectKind.REPLY, record.delivered_effect_kind)
+            self.assertEqual("reaction.delighted.v1", record.asset_semantic_id)
+
     def test_external_effect_is_unique_across_kind_and_persona_version(self) -> None:
         with temporary_database() as database:
             repository = RunRepository(database)

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from group_llm_agent.database import SQLiteDatabase
-from group_llm_agent.events import PersonaSnapshot, TelegramTextMessage
+from group_llm_agent.events import PersonaSnapshot, TelegramMessage
 
 _RECENT_LIMIT = 20
 _SEEN_EVENT_LIMIT = 256
@@ -52,6 +52,9 @@ class StoredGroupMessage:
     sent_at: datetime
     replied_to_message_id: str | None
     replied_to_user_id: str | None
+    media_kind: str | None = None
+    media_unique_id: str | None = None
+    media_catalog_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -190,7 +193,7 @@ class MessageRepository:
 
     def ingest_inbound(
         self,
-        message: TelegramTextMessage,
+        message: TelegramMessage,
         *,
         persona: PersonaSnapshot,
         recognition_policy_version: str,
@@ -216,9 +219,9 @@ class MessageRepository:
                     chat_id, telegram_message_id, event_id, sender_user_id,
                     sender_display_name, direction, text, text_sha256, sent_at,
                     ingested_at, text_expires_at, replied_to_message_id,
-                    replied_to_user_id
+                    replied_to_user_id, media_kind, media_unique_id
                 )
-                VALUES (?, ?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, 'inbound', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     message.group_id,
@@ -233,6 +236,8 @@ class MessageRepository:
                     expires_at.isoformat(),
                     message.replied_to_message_id,
                     message.replied_to_user_id,
+                    message.media.kind.value if message.media is not None else None,
+                    message.media.file_unique_id if message.media is not None else None,
                 ),
             )
             if cursor.rowcount == 0:
@@ -251,6 +256,13 @@ class MessageRepository:
                 )
 
             message_id = _lastrowid(cursor)
+            if not message.text.strip():
+                return MessageIngestResult(
+                    message_id=message_id,
+                    recognition_job_id=None,
+                    duplicate=False,
+                    persisted=True,
+                )
             job_cursor = connection.execute(
                 """
                 INSERT INTO recognition_jobs (
@@ -354,7 +366,8 @@ class MessageRepository:
                 """
                 SELECT id, chat_id, telegram_message_id, event_id,
                        sender_user_id, sender_display_name, direction, text,
-                       sent_at, replied_to_message_id, replied_to_user_id
+                       sent_at, replied_to_message_id, replied_to_user_id,
+                       media_kind, media_unique_id, media_catalog_id
                 FROM group_messages
                 WHERE chat_id = ?
                   AND text IS NOT NULL
@@ -388,7 +401,8 @@ class MessageRepository:
                 """
                 SELECT id, chat_id, telegram_message_id, event_id,
                        sender_user_id, sender_display_name, direction, text,
-                       sent_at, replied_to_message_id, replied_to_user_id
+                       sent_at, replied_to_message_id, replied_to_user_id,
+                       media_kind, media_unique_id, media_catalog_id
                 FROM group_messages
                 WHERE chat_id = ?
                   AND text IS NOT NULL
@@ -464,7 +478,7 @@ class MessageRepository:
         return True
 
 
-def _from_telegram(message: TelegramTextMessage) -> StoredGroupMessage:
+def _from_telegram(message: TelegramMessage) -> StoredGroupMessage:
     return StoredGroupMessage(
         id=None,
         chat_id=message.group_id,
@@ -477,6 +491,8 @@ def _from_telegram(message: TelegramTextMessage) -> StoredGroupMessage:
         sent_at=message.timestamp,
         replied_to_message_id=message.replied_to_message_id,
         replied_to_user_id=message.replied_to_user_id,
+        media_kind=message.media.kind.value if message.media is not None else None,
+        media_unique_id=message.media.file_unique_id if message.media is not None else None,
     )
 
 
@@ -496,6 +512,13 @@ def _stored_from_row(row: sqlite3.Row) -> StoredGroupMessage:
         ),
         replied_to_user_id=(
             str(row["replied_to_user_id"]) if row["replied_to_user_id"] is not None else None
+        ),
+        media_kind=str(row["media_kind"]) if row["media_kind"] is not None else None,
+        media_unique_id=(
+            str(row["media_unique_id"]) if row["media_unique_id"] is not None else None
+        ),
+        media_catalog_id=(
+            str(row["media_catalog_id"]) if row["media_catalog_id"] is not None else None
         ),
     )
 
