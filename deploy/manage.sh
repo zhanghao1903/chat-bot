@@ -30,7 +30,8 @@ STATE_FILE="${STATE_DIR}/persona-release.json"
 LOCK_DIR="${STATE_DIR}/persona-release.lock"
 
 compose() {
-  docker compose --project-directory "${SCRIPT_DIR}" -f "${COMPOSE_FILE}" "$@"
+  docker compose --env-file "${ENV_FILE}" --project-directory "${SCRIPT_DIR}" \
+    -f "${COMPOSE_FILE}" "$@"
 }
 
 release_python() {

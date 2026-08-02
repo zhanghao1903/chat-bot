@@ -19,3 +19,4 @@ services:
 
 volumes:
   telegram-bot-data:
+    name: ${TELEGRAM_BOT_DATA_VOLUME:-telegram-bot-data}

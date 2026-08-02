@@ -84,6 +84,7 @@ class EvaluationIdentity:
 
 
 Clock = Callable[[], datetime]
+Progress = Callable[[str, int], None]
 
 
 def evaluate_persona(
@@ -93,6 +94,7 @@ def evaluate_persona(
     identity: EvaluationIdentity,
     clock: Clock | None = None,
     call_timeout_seconds: int = 60,
+    progress: Progress | None = None,
 ) -> dict[str, Any]:
     """Run one candidate and one judge call for each immutable v2 case."""
 
@@ -160,6 +162,8 @@ def evaluate_persona(
                 "passed": passed,
             }
         )
+        if progress is not None:
+            progress(case_id, len(case_results))
 
     report = {
         "schema_version": 1,
@@ -427,7 +431,16 @@ def main(
             model_id=model_id,
             reviewer=f"{args.reviewer}:{model_id}",
         )
-        report = evaluate_persona(bundle=bundle, model=model, identity=identity)
+        report = evaluate_persona(
+            bundle=bundle,
+            model=model,
+            identity=identity,
+            progress=lambda case_id, completed: print(
+                "persona_evaluation_progress "
+                f"completed={completed} total=37 case_id={case_id}",
+                flush=True,
+            ),
+        )
         verify_evaluation_report(
             report,
             bundle=bundle,
