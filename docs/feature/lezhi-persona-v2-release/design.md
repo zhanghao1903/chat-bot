@@ -241,11 +241,13 @@ snapshot, startup failure, timeout, or missing ingestion fails the release.
 
 Every failure after the atomic candidate pin update enters one rollback path, including Compose
 stop/start, running-state and identity checks, environment reads, durable smoke-baseline access,
-baseline recording and smoke completion. The command first records the redacted failure stage,
-then restores the exact recorded v1 path/digest in the same environment, restarts the same Compose
-service, validates v1 startup and records the final rollback result. If rollback fails, it stops
-further mutation and reports the existing container state and manual recovery entry without
-touching the data volume.
+baseline recording, smoke completion and HUP/INT/TERM. Release, smoke and manual rollback each own
+the deployment lock until the operation or its rollback reaches a terminal state. Signal handling
+first blocks recursive signals, then records the redacted failure stage, restores the exact
+recorded v1 path/digest in the same environment, restarts the same Compose service, validates v1
+startup and records the final rollback result. Only then does the nonzero process exit release the
+lock. If rollback fails, it stops further mutation and reports the existing container state and
+manual recovery entry without touching the data volume.
 
 ## 9. Failure, Retry and Concurrency
 

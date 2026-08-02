@@ -188,7 +188,9 @@ Included with Slice 1 because loader, startup and migration compatibility form o
    synthetic group message itself.
 4. Route every failure after candidate pinning through one automatic rollback path, including
    restart, running state, startup identity, environment reads, baseline access/recording and smoke
-   validation; persist both the redacted failure stage and final rollback result.
+   validation, plus HUP/INT/TERM during activation or smoke; retain the deployment lock until the
+   operation or non-recursive rollback is terminal, then persist both the redacted failure stage
+   and final rollback result.
 5. Never use `down --volumes`, remove the named volume, expose secret env values, connect to another
    host, or infer a `latest` version.
 6. Store redacted state/evidence under ignored `deploy/state/` with strict permissions.
@@ -197,7 +199,7 @@ Included with Slice 1 because loader, startup and migration compatibility form o
 
 - Unit tests use a fake Compose/Python runner and temporary environment to prove byte-preserving
   secret handling, exact pin changes, rollback at every post-pin boundary, failed-rollback
-  reporting, lock exclusion and no volume deletion.
+  reporting, HUP/INT/TERM behavior in activation and smoke, lock exclusion and no volume deletion.
 - Shell syntax and Compose rendering pass.
 - Real preflight records the current v1 path/digest/image/service/volume before activation.
 

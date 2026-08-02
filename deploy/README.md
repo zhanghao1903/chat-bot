@@ -114,7 +114,9 @@ deploy/manage.sh persona-smoke
 
 冒烟要求精确新增一条入站，并且产生零或一条绑定 v2 摘要的外部效果。从候选 pin 写入
 之后，Compose 停启、运行状态、人格身份、环境读取、基线访问/记录和冒烟中的任一失败都
-进入同一自动 v1 回滚路径；也可以人工执行 `deploy/manage.sh persona-rollback`。发布状态只
+进入同一自动 v1 回滚路径；候选 pin 生效后的 HUP/INT/TERM 也会在锁内完成非递归回滚后
+再非零退出。发布、冒烟和人工回滚各自持有同一部署锁直到操作或回滚终态，避免并发流程
+同时改写 Compose 与环境。也可以人工执行 `deploy/manage.sh persona-rollback`。发布状态只
 保存非敏感摘要、路径、冒烟边界、失败阶段与回滚结果，位于被 Git 忽略的
 `deploy/state/`。
 

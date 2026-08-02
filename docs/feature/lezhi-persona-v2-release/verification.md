@@ -3,7 +3,7 @@
 - Status: Verified and deployed
 - Requirements: `25eacf0c81fb903f131ffa5b113b1740d0cf4512`
 - RequirementsHandoff: `48d7910e4afefc7854dcfaab227e3880bacac102f24ac23877df8c07856ef820`
-- Implementation snapshot: `7c9f4cdacc6a993d2d45fb432f11f4035c270e5c`
+- Implementation snapshot: `12b750b209fdb061f53e50f8d0dbd8162b28e8c2`
 - Verified: 2026-08-02
 
 ## Immutable artifacts
@@ -29,7 +29,7 @@ unchanged.
 The implementation and final smoke-fix snapshots passed:
 
 - `python3 -m compileall -q src tests`;
-- `PYTHONPATH=src python3 -m unittest discover -s tests -q`: 167 tests;
+- `PYTHONPATH=src python3 -m unittest discover -s tests -q`: 168 tests;
 - Ruff check and format check: 54 source/test files;
 - Mypy: 27 source files, no issues;
 - `uv build`, shell syntax, Compose rendering and `git diff --check`;
@@ -38,7 +38,7 @@ The implementation and final smoke-fix snapshots passed:
   preservation and durable trigger-audit smoke regressions.
 
 The built exact candidate image is
-`sha256:304eb30086c99a5a949031ddc5b6c2424ece02290daba5ce6752e2cb02165659`.
+`sha256:75a5db686ae0cb8baa88b042280466edb5b8031b68ac24c2a627e40a414e8f50`.
 
 ## Real-provider gate
 
@@ -97,21 +97,28 @@ persona_smoke_passed outcome=sent external_effects=1
 
 ## Review remediation
 
-Independent review requested changes at snapshot
-`371acef4440c8f98234391750b79923d42e34d7a`. FINDING-001 is closed by the immutable approved-report
+Independent review requested changes at snapshots
+`371acef4440c8f98234391750b79923d42e34d7a` and
+`1bfe866879a52043e217052650af47bba43d8e52`. FINDING-001 is closed by the immutable approved-report
 binding and bundle-owned case-contract checks described above. FINDING-002 is closed by a single
-post-pin rollback path covering eight activation boundaries and five smoke boundaries. Shell-level
-fake-Compose regressions prove every boundary restores v1 and records `attempted` then `succeeded`;
-a separate regression proves a failed restore is recorded as `failed` and never as success. A real
-state-file regression proves the final redacted failure stage/result is persisted canonically.
+post-pin rollback path covering eight activation boundaries, five smoke boundaries and HUP/INT/TERM
+in both activation and smoke. Shell-level fake-Compose regressions prove every ordinary boundary
+restores v1 and records `attempted` then `succeeded`; signal regressions prove six signal/operation
+combinations cannot report success or reacquire the lock while child work continues, restore exact
+v1 selectors, record the final result and release the lock only after terminal exit. A separate
+regression proves a failed restore is recorded as `failed` and never as success. A real state-file
+regression proves the final redacted failure stage/result is persisted canonically.
 
-The repaired path was also exercised against the local deployment. Reusing the completed old smoke
+The command-exit repair was also exercised against the local deployment. Reusing the completed old smoke
 window correctly failed at `smoke_verify` with no new inbound; the script recorded the failure,
 restored the exact v1 pin, restarted v1 and recorded rollback `succeeded`. The formal release command
 then revalidated the exact approved report, rebuilt the candidate and activated v2 again on the same
 named volume. Current startup reports the exact v2 identity, Telegram polling is active, SQLite
 `PRAGMA quick_check` is `ok`, and a fresh optional operator-smoke baseline is recorded at trigger
-evaluation `48`.
+evaluation `48`. The signal-safe source was then packaged and image
+`sha256:75a5db686ae0cb8baa88b042280466edb5b8031b68ac24c2a627e40a414e8f50` was built; Compose reported
+the existing service recreated and started on the unchanged v2 selector and volume. No stale smoke
+window was invoked after that rebuild.
 
 ## Acceptance matrix
 
