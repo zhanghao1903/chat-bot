@@ -152,7 +152,7 @@ approval | null
 telegram_mapping | null
 ```
 
-每个条目包含稳定 ID、A/B/C 与一基行列、可见文案、动作/情绪/互动意图、适用与禁用
+每个条目包含稳定 ID、A/B/C 与一基行列、可见文案、独立内容摘要、动作/情绪/互动意图、适用与禁用
 场景、关系强度、推荐 emoji、母版/Telegram-ready 摘要和可选 `file_id` /
 `file_unique_id`。重复“好耶”“贴贴”保留不同 ID 和不同语义。
 
