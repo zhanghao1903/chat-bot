@@ -120,19 +120,21 @@ persona_release() {
     return 2
   fi
   chat_id=$(release_python environment-chat-id --env-file "${ENV_FILE}")
+  database_path=$(release_python environment-database-path --env-file "${ENV_FILE}")
   baseline=$(compose exec -T telegram-bot python -m group_llm_agent.persona_release \
-    smoke-baseline --database /app/data/telegram_bot.sqlite3 --chat-id "${chat_id}")
+    smoke-baseline --database "${database_path}" --chat-id "${chat_id}")
   release_python record-baseline --state-file "${STATE_FILE}" --inbound-id "${baseline}"
   echo "Persona release is running with lezhi-v2.0; send one direct Telegram message, then run persona-smoke."
 }
 
 persona_smoke() {
   chat_id=$(release_python environment-chat-id --env-file "${ENV_FILE}")
+  database_path=$(release_python environment-database-path --env-file "${ENV_FILE}")
   set -- $(release_python state-smoke-arguments --state-file "${STATE_FILE}")
   baseline=$1
   candidate_digest=$2
   if ! compose exec -T telegram-bot python -m group_llm_agent.persona_release \
-    smoke-verify --database /app/data/telegram_bot.sqlite3 \
+    smoke-verify --database "${database_path}" \
     --chat-id "${chat_id}" --baseline-id "${baseline}" \
     --persona-version lezhi-v2.0 --persona-digest "${candidate_digest}"; then
     echo "Persona Telegram smoke failed; restoring v1." >&2

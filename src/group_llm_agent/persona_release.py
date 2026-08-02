@@ -12,7 +12,7 @@ import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from group_llm_agent.persona import (
     CharacterBundle,
@@ -79,6 +79,20 @@ def read_persona_pins(environment_path: Path) -> PersonaPins:
         raise PersonaReleaseError("missing_persona_pins") from None
     _validate_pins(pins)
     return pins
+
+
+def read_runtime_database_path(environment_path: Path) -> str:
+    values = _read_environment_values(environment_path)
+    configured = values.get("DATABASE_PATH", "/app/data/telegram_bot.sqlite3")
+    path = PurePosixPath(configured)
+    if (
+        not path.is_absolute()
+        or path.parent != PurePosixPath("/app/data")
+        or path.name in {"", ".", ".."}
+        or any(ord(character) < 32 for character in configured)
+    ):
+        raise PersonaReleaseError("unsafe_database_path")
+    return configured
 
 
 def replace_persona_pins(environment_path: Path, pins: PersonaPins) -> None:
@@ -550,6 +564,11 @@ def _parser() -> argparse.ArgumentParser:
     chat_id = commands.add_parser("environment-chat-id", help="Read the non-secret chat ID")
     chat_id.add_argument("--env-file", required=True, type=Path)
 
+    database_path = commands.add_parser(
+        "environment-database-path", help="Read the persistent container database path"
+    )
+    database_path.add_argument("--env-file", required=True, type=Path)
+
     smoke_arguments = commands.add_parser(
         "state-smoke-arguments", help="Read the non-secret smoke boundary"
     )
@@ -632,6 +651,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not chat_id.startswith("-") or not chat_id[1:].isdigit():
                 raise PersonaReleaseError("invalid_chat_id")
             print(chat_id)
+        elif args.command == "environment-database-path":
+            print(read_runtime_database_path(args.env_file))
         elif args.command == "state-smoke-arguments":
             state = load_release_state(args.state_file)
             candidate = state.get("candidate")

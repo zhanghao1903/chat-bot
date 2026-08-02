@@ -19,6 +19,7 @@ from group_llm_agent.persona_release import (
     import_persona_bundle,
     preflight_release,
     read_persona_pins,
+    read_runtime_database_path,
     replace_persona_pins,
     smoke_inbound_baseline,
     verify_smoke,
@@ -137,6 +138,26 @@ class PersonaImportTests(unittest.TestCase):
 
 
 class PersonaDeploymentGateTests(unittest.TestCase):
+    def test_database_path_preserves_the_existing_volume_file(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            environment = Path(tmpdir) / ".env"
+            environment.write_text(
+                "DATABASE_PATH=/app/data/telegram-bot.sqlite3\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                "/app/data/telegram-bot.sqlite3",
+                read_runtime_database_path(environment),
+            )
+
+            environment.write_text(
+                "DATABASE_PATH=/app/data/../other.sqlite3\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(PersonaReleaseError, "unsafe_database_path"):
+                read_runtime_database_path(environment)
+
     def test_pin_replacement_preserves_every_other_environment_byte(self) -> None:
         with TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / ".env"
