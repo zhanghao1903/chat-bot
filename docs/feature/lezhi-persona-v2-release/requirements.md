@@ -6,7 +6,8 @@
 - Created: 2026-08-02
 - Last updated: 2026-08-02
 - Confirmed by: User in Requirements task
-- Confirmed at: 2026-08-01T23:44:40Z
+- Confirmed at: 2026-08-02T00:34:24Z
+- Supersedes: RequirementsHandoff `7ca86de3a3557f76ebba5727ea5d1238a73221c2f4aad6d7c2c0e7a89a7f45f0` after source-digest correction
 - Baseline: `origin/main` at `4f50c14e748afd00c097393c0fa481184c006e12`
 
 ## Source Request
@@ -18,7 +19,7 @@
 | Artifact | SHA-256 | Notes |
 | --- | --- | --- |
 | `lezhi-persona-v2-bundle.zip` | `c78c3be1835d1ad5d25c1bb41ea9ccaa60f8d90a365f59e7cf563d10a6c2ac06` | 用户提供的完整源包 |
-| `lezhi-persona-v2.json` | `600fed847d362f272739d6613874aac857e339c02bc76c18619d104280dbbfcce` | 人格源数据，声明 `id=lezhi`、`version=2.0` |
+| `lezhi-persona-v2.json` | `600fed847d362f272739d6613874aac857e339c02bc76c18619d104280dbbfcc` | 人格源数据，声明 `id=lezhi`、`version=2.0` |
 | `evaluation-cases.jsonl` | `676d03a5f2e5bf4b2c822ab507abe4516c133a4d6ad754dd265dbfdabb7cb08d` | 37 条固定评测用例，`CB-EVAL-001` 至 `CB-EVAL-037` |
 | `examples.jsonl` | `7172725c8e1aed81470b8c9257b54ba8f93fa87fcf4e5d99e5df906f0382b420` | 与 37 条评测用例对应的角色行为样例 |
 
@@ -210,8 +211,8 @@
 | DEC-009 | 用户源制品如何进入生产包？ | 生成新的规范四件套或与现有运行时等价的不可变包，记录源 ZIP/文件摘要及需求来源；不直接从 Downloads 路径运行。 | 确保可复现和可审计。 | Confirmed |
 | DEC-010 | 本次是否实际重启服务？ | 是；Main Work 在实现、评测和预检全部通过后重启当前 Compose 容器并冒烟，失败则自动按既定点回滚。 | 将交付从代码更新扩展到当前服务状态变更。 | Confirmed |
 
-## Confirmation Record
+## Revision Confirmation Record
 
-用户已在配置的 Requirements 任务中明确确认当前 `requirements.md` 快照，并接受 `ASM-001` 至 `ASM-008` 以及 `DEC-001` 至 `DEC-010` 的推荐默认方案。
+上一份确认快照把 ZIP 内 `lezhi-persona-v2.json` 的实际 64 位 SHA-256 `600fed847d362f272739d6613874aac857e339c02bc76c18619d104280dbbfcc` 错写成末尾多一个 `e` 的 65 位值。ZIP 总摘要、另外两个内部文件摘要、全部需求、验收标准、假设和决策均未改变。
 
-该确认授权 Main Work 在验证 RequirementsHandoff 后进入技术设计和实现，并在所有发布门限通过后执行本文限定的有界模型评测、当前 Compose 容器重启、Telegram 冒烟和必要回滚。它不授权连接或修改未在仓库中识别的远程环境。
+用户已在配置的 Requirements 任务中明确确认本修订快照和正确的 64 位摘要，并确认 `ASM-001` 至 `ASM-008`、`DEC-001` 至 `DEC-010` 保持不变。旧 RequirementsHandoff `7ca86de3a3557f76ebba5727ea5d1238a73221c2f4aad6d7c2c0e7a89a7f45f0` 被本修订取代；Main Work 可以保留既有 F2 设计和 F3 计划，但必须验证并接受新的 versioned RequirementsHandoff 后才能继续 F4、模型调用或部署。
