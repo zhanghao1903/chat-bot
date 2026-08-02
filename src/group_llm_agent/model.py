@@ -42,6 +42,7 @@ class ModelRole(StrEnum):
 class WriterDecisionKind(StrEnum):
     CALL_TOOL = "call_tool"
     REPLY = "reply"
+    STICKER = "sticker"
     SILENCE = "silence"
 
 
@@ -91,9 +92,15 @@ class WriterDecision:
     kind: WriterDecisionKind
     reason_code: str
     text: str | None = None
+    sticker_id: str | None = None
+    catalog_version: str | None = None
+    catalog_digest: str | None = None
+    fallback_text: str | None = None
+    mood_signal: str | None = None
     tool_name: str | None = None
     tool_arguments: dict[str, Any] | None = None
     tool_purpose_code: str | None = None
+    tool_extension_reason_code: str | None = None
 
 
 @dataclass(frozen=True)
@@ -311,24 +318,62 @@ def parse_writer_decision(
         raise ModelResultError("invalid_writer_kind") from None
 
     if kind is WriterDecisionKind.REPLY:
-        _require_fields(payload, {"kind", "reason_code", "text"})
+        _require_optional_mood_fields(payload, {"kind", "reason_code", "text"})
         text = _parse_text(payload["text"], maximum=4_096, category="invalid_reply_text")
         return WriterDecision(
             kind=kind,
             reason_code=_parse_reason_code(payload["reason_code"]),
             text=text,
+            mood_signal=_parse_mood_signal(payload.get("mood_signal")),
         )
-    if kind is WriterDecisionKind.SILENCE:
-        _require_fields(payload, {"kind", "reason_code"})
+    if kind is WriterDecisionKind.STICKER:
+        required_sticker = {
+            "kind",
+            "reason_code",
+            "sticker_id",
+            "catalog_version",
+            "catalog_digest",
+            "fallback_text",
+        }
+        _require_optional_mood_fields(payload, required_sticker)
+        fallback = payload["fallback_text"]
+        if fallback is not None:
+            fallback = _parse_text(fallback, maximum=4_096, category="invalid_fallback_text")
+        digest = payload["catalog_digest"]
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)
+        ):
+            raise ModelResultError("invalid_catalog_digest")
         return WriterDecision(
             kind=kind,
             reason_code=_parse_reason_code(payload["reason_code"]),
+            sticker_id=_parse_identifier(
+                payload["sticker_id"], maximum=128, category="invalid_sticker_id"
+            ),
+            catalog_version=_parse_identifier(
+                payload["catalog_version"], maximum=128, category="invalid_catalog_version"
+            ),
+            catalog_digest=digest,
+            fallback_text=fallback,
+            mood_signal=_parse_mood_signal(payload.get("mood_signal")),
+        )
+    if kind is WriterDecisionKind.SILENCE:
+        _require_optional_mood_fields(payload, {"kind", "reason_code"})
+        return WriterDecision(
+            kind=kind,
+            reason_code=_parse_reason_code(payload["reason_code"]),
+            mood_signal=_parse_mood_signal(payload.get("mood_signal")),
         )
 
-    _require_fields(
-        payload,
-        {"kind", "reason_code", "tool_name", "tool_arguments", "tool_purpose_code"},
-    )
+    required = {"kind", "reason_code", "tool_name", "tool_arguments", "tool_purpose_code"}
+    actual_fields = frozenset(payload)
+    if actual_fields not in {
+        frozenset(required),
+        frozenset((*required, "extension_reason_code")),
+    }:
+        raise ModelResultError("unexpected_fields")
     tool_name = payload["tool_name"]
     if not isinstance(tool_name, str) or tool_name not in allowed_tools:
         raise ModelResultError("unknown_tool")
@@ -346,6 +391,11 @@ def parse_writer_decision(
         tool_name=tool_name,
         tool_arguments=arguments,
         tool_purpose_code=_parse_reason_code(payload["tool_purpose_code"]),
+        tool_extension_reason_code=(
+            _parse_reason_code(payload["extension_reason_code"])
+            if "extension_reason_code" in payload
+            else None
+        ),
     )
 
 
@@ -501,6 +551,20 @@ def _http_error_category(status_code: int) -> ModelErrorCode:
 def _require_fields(payload: dict[str, Any], expected: set[str]) -> None:
     if set(payload) != expected:
         raise ModelResultError("unexpected_fields")
+
+
+def _require_optional_mood_fields(payload: dict[str, Any], expected: set[str]) -> None:
+    actual = set(payload)
+    if actual != expected and actual != {*expected, "mood_signal"}:
+        raise ModelResultError("unexpected_fields")
+
+
+def _parse_mood_signal(value: object) -> str | None:
+    if value is None:
+        return None
+    if value not in {"neutral", "joyful", "playful", "gentle", "pouty"}:
+        raise ModelResultError("invalid_mood_signal")
+    return str(value)
 
 
 def _parse_reason_code(value: Any) -> str:

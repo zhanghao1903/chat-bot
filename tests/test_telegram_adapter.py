@@ -80,6 +80,80 @@ class TelegramAdapterTests(unittest.TestCase):
 
         self.assertEqual(adapter.normalize_update(update), [])
 
+    def test_normalizes_photo_caption_and_media_only_static_sticker(self) -> None:
+        adapter = TelegramAdapter(bot_username="agent")
+        photo_update = {
+            "update_id": 130,
+            "message": {
+                "message_id": 14,
+                "date": 1781769600,
+                "chat": {"id": -100123, "type": "supergroup"},
+                "from": {"id": 42, "first_name": "Alice"},
+                "caption": "乐枝，看看这个",
+                "photo": [
+                    {"file_id": "small", "file_unique_id": "u1", "width": 90, "height": 90},
+                    {
+                        "file_id": "large",
+                        "file_unique_id": "u2",
+                        "width": 1280,
+                        "height": 960,
+                        "file_size": 1234,
+                    },
+                ],
+            },
+        }
+        sticker_update = {
+            "update_id": 131,
+            "message": {
+                "message_id": 15,
+                "date": 1781769600,
+                "chat": {"id": -100123, "type": "supergroup"},
+                "from": {"id": 42, "first_name": "Alice"},
+                "sticker": {
+                    "file_id": "sticker-file",
+                    "file_unique_id": "sticker-unique",
+                    "width": 512,
+                    "height": 512,
+                    "is_animated": False,
+                    "is_video": False,
+                    "set_name": "sample",
+                },
+            },
+        }
+
+        photo = adapter.normalize_update(photo_update)[0]
+        sticker = adapter.normalize_update(sticker_update)[0]
+
+        self.assertEqual("乐枝，看看这个", photo.text)
+        self.assertIsNotNone(photo.media)
+        self.assertEqual("large", photo.media.file_id)
+        self.assertEqual("photo", photo.media.kind.value)
+        self.assertEqual("", sticker.text)
+        self.assertIsNotNone(sticker.media)
+        self.assertEqual("static_sticker", sticker.media.kind.value)
+
+    def test_rejects_unsupported_document_and_dynamic_sticker(self) -> None:
+        adapter = TelegramAdapter()
+        base = {
+            "message_id": 16,
+            "date": 1781769600,
+            "chat": {"id": -100123, "type": "supergroup"},
+            "from": {"id": 42, "first_name": "Alice"},
+        }
+        for media in (
+            {"document": {"file_id": "x", "file_unique_id": "u", "mime_type": "text/plain"}},
+            {
+                "sticker": {
+                    "file_id": "x",
+                    "file_unique_id": "u",
+                    "is_animated": True,
+                }
+            },
+        ):
+            with self.subTest(media=media):
+                update = {"update_id": 132, "message": {**base, **media}}
+                self.assertEqual([], adapter.normalize_update(update))
+
     def test_normalizes_reply_command_and_stable_text_mentions(self) -> None:
         adapter = TelegramAdapter(bot_username="agent")
         update = {

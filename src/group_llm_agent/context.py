@@ -7,6 +7,7 @@ from group_llm_agent.events import PersonaSnapshot, TelegramTextMessage, Trigger
 from group_llm_agent.memory import MemberMemoryItem, MemoryRepository
 from group_llm_agent.messages import MessageRepository, StoredGroupMessage
 from group_llm_agent.persona import CharacterBundle, CompiledCharacterView
+from group_llm_agent.vision import VisionEvidence
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,8 @@ class EffectContext:
     model_calls_remaining: int
     tool_calls_remaining: int
     deadline_at: datetime
+    vision_evidence: VisionEvidence | None = None
+    vision_error_code: str | None = None
 
     @property
     def remaining_seconds(self) -> float:
@@ -99,12 +102,14 @@ class ContextAssembler:
         model_calls_remaining: int,
         tool_calls_remaining: int,
         deadline_at: datetime,
+        vision_evidence: VisionEvidence | None = None,
+        vision_error_code: str | None = None,
         at: datetime | None = None,
     ) -> EffectContext:
-        if not 1 <= model_calls_remaining <= 3:
-            raise ValueError("model_calls_remaining must be in [1, 3]")
-        if not 0 <= tool_calls_remaining <= 2:
-            raise ValueError("tool_calls_remaining must be in [0, 2]")
+        if not 1 <= model_calls_remaining <= 6:
+            raise ValueError("model_calls_remaining must be in [1, 6]")
+        if not 0 <= tool_calls_remaining <= 5:
+            raise ValueError("tool_calls_remaining must be in [0, 5]")
         if deadline_at.tzinfo is None:
             raise ValueError("deadline_at must be timezone-aware")
         return EffectContext(
@@ -121,6 +126,8 @@ class ContextAssembler:
             model_calls_remaining=model_calls_remaining,
             tool_calls_remaining=tool_calls_remaining,
             deadline_at=deadline_at,
+            vision_evidence=vision_evidence,
+            vision_error_code=vision_error_code,
         )
 
     def _member_context(

@@ -328,6 +328,7 @@ def _build_cell(
         "source": {"sheet": spec.sheet, "row": spec.row, "column": spec.column},
         "visible_text": spec.visible_text,
         "semantics": {
+            "content_summary": f"{spec.action}，以{spec.emotion}表达“{spec.visible_text}”",
             "action": spec.action,
             "emotion": spec.emotion,
             "interaction_intent": spec.interaction_intent,

@@ -3,20 +3,20 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from threading import Event, Thread
 from time import sleep as default_sleep
 from typing import Protocol
 
 from group_llm_agent.control import MemoryControlService
 from group_llm_agent.delivery import SQLiteDeliveryLedger
+from group_llm_agent.effect_delivery import ExternalEffectDelivery
 from group_llm_agent.effector import WriterEffector
 from group_llm_agent.events import (
-    ExternalEffectKind,
-    FinalEffectKind,
     PlatformTriggerKind,
     TelegramTextMessage,
 )
+from group_llm_agent.expression import ExpressionCatalog
+from group_llm_agent.media import TelegramMediaLoader
 from group_llm_agent.messages import MessageRepository
 from group_llm_agent.persona import CharacterBundle
 from group_llm_agent.platforms.telegram import (
@@ -26,6 +26,8 @@ from group_llm_agent.platforms.telegram import (
 )
 from group_llm_agent.runs import RunRepository
 from group_llm_agent.trigger import TriggerCoordinator
+from group_llm_agent.vision import VisionModelPort
+from group_llm_agent.visual_orchestrator import VisualEvidenceService
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +212,9 @@ class PersonaMessageProcessor:
         controls: MemoryControlService,
         triggers: TriggerCoordinator,
         effector: WriterEffector,
+        media_loader: TelegramMediaLoader | None = None,
+        vision: VisionModelPort | None = None,
+        expression_catalog_provider: Callable[[], ExpressionCatalog] | None = None,
         recognition_policy_version: str = "recognition-v1",
     ) -> None:
         if mode not in {"persona_direct", "persona_full"}:
@@ -225,6 +230,22 @@ class PersonaMessageProcessor:
         self.controls = controls
         self.triggers = triggers
         self.effector = effector
+        self.visuals = VisualEvidenceService(
+            messages=messages,
+            runs=runs,
+            media_loader=media_loader,
+            vision=vision,
+            persona=bundle.snapshot,
+            expression_catalog_provider=expression_catalog_provider,
+        )
+        self.delivery = ExternalEffectDelivery(
+            client=client,
+            messages=messages,
+            runs=runs,
+            bot_user_id=bot_user_id,
+            bot_display_name=bot_display_name,
+            expression_catalog_provider=expression_catalog_provider,
+        )
         self.recognition_policy_version = recognition_policy_version
 
     def handle_message(self, event: TelegramTextMessage) -> ProcessingOutcome:
@@ -285,59 +306,32 @@ class PersonaMessageProcessor:
                 event.group_id,
                 event.message_id,
             )
+        visual = self.visuals.resolve(
+            event=event,
+            deadline=evaluation.effect_request.deadline_at,
+        )
         final = self.effector.execute(
             request=evaluation.effect_request,
             bundle=self.bundle,
+            vision_evidence=visual.evidence,
+            vision_error_code=visual.error_code,
         )
-        if final.kind is FinalEffectKind.SILENCE:
-            return ProcessingOutcome("silence", event.group_id, event.message_id)
-        assert final.text is not None
-        effect_kind = (
-            ExternalEffectKind.REPLY
-            if final.kind is FinalEffectKind.REPLY
-            else ExternalEffectKind.FAILURE_REPLY
-        )
-        effect_id = self.runs.claim_external_effect(
-            message=event,
-            effect_kind=effect_kind,
-            persona=self.bundle.snapshot,
-        )
-        if effect_id is None:
-            return ProcessingOutcome("duplicate", event.group_id, event.message_id)
-        try:
-            sent = self.client.send_message(
-                chat_id=event.group_id,
-                text=final.text,
-                reply_to_message_id=event.message_id,
+        # Media and image-contained instructions never contribute to global profile state.
+        if final.mood_signal is not None and event.media is None:
+            self.runs.record_mood_observation(
+                bot_user_id=self.bot_user_id,
+                trigger_event_id=event.event_id,
+                persona=final.persona,
+                mood_code=final.mood_signal,
+                catalog_version=final.catalog_version,
+                catalog_digest=final.catalog_digest,
             )
-        except TelegramApiError as error:
-            if error.category in {
-                "timeout",
-                "transport_error",
-                "invalid_json",
-                "invalid_response",
-                "invalid_result",
-            }:
-                self.runs.mark_external_uncertain(effect_id, error_code=error.category)
-            else:
-                self.runs.mark_external_failed(effect_id, error_code=error.category)
-            return ProcessingOutcome("send_failed", event.group_id, event.message_id)
-
-        self.runs.mark_external_sent(
-            effect_id,
-            platform_message_id=sent.message_id,
+        status = self.delivery.deliver(
+            event=event,
+            final=final,
+            active_persona=self.bundle.snapshot,
         )
-        self.messages.record_outbound(
-            chat_id=event.group_id,
-            telegram_message_id=sent.message_id,
-            event_id=f"outbound:{event.event_id}",
-            bot_user_id=self.bot_user_id,
-            bot_display_name=self.bot_display_name,
-            text=final.text,
-            sent_at=datetime.now(UTC),
-            replied_to_message_id=event.message_id,
-        )
-        return ProcessingOutcome("sent", event.group_id, event.message_id)
+        return ProcessingOutcome(status, event.group_id, event.message_id)
 
 
 class RecognitionBackgroundWorker:

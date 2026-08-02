@@ -305,6 +305,41 @@ class ModelResultParserTests(unittest.TestCase):
         )
         self.assertEqual(WriterDecisionKind.REPLY, valid.kind)
 
+    def test_writer_sticker_parser_accepts_only_application_semantic_identity(self) -> None:
+        decision = parse_writer_decision(
+            StructuredModelResult(
+                {
+                    "kind": "sticker",
+                    "reason_code": "lightweight_celebration",
+                    "sticker_id": "lezhi-a13-good-news",
+                    "catalog_version": "lezhi-expression-v0.3",
+                    "catalog_digest": "a" * 64,
+                    "fallback_text": "好耶！",
+                    "mood_signal": "joyful",
+                }
+            ),
+            allowed_tools=frozenset(),
+        )
+
+        self.assertEqual(WriterDecisionKind.STICKER, decision.kind)
+        self.assertEqual("lezhi-a13-good-news", decision.sticker_id)
+        self.assertEqual("joyful", decision.mood_signal)
+        with self.assertRaisesRegex(ModelResultError, "unexpected_fields"):
+            parse_writer_decision(
+                StructuredModelResult(
+                    {
+                        "kind": "sticker",
+                        "reason_code": "unsafe",
+                        "sticker_id": "safe-id",
+                        "catalog_version": "v1",
+                        "catalog_digest": "a" * 64,
+                        "fallback_text": None,
+                        "telegram_file_id": "provider-controlled",
+                    }
+                ),
+                allowed_tools=frozenset(),
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

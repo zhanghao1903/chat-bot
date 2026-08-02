@@ -14,6 +14,8 @@ from group_llm_agent.control import MemoryControlService
 from group_llm_agent.database import SQLiteDatabase
 from group_llm_agent.delivery import SQLiteDeliveryLedger
 from group_llm_agent.effector import EffectorBudgets, WriterEffector
+from group_llm_agent.expression import ExpressionCatalog, load_expression_catalog
+from group_llm_agent.media import MediaLimits, TelegramMediaLoader
 from group_llm_agent.memory import MemoryRepository
 from group_llm_agent.messages import MessageRepository
 from group_llm_agent.model import (
@@ -47,11 +49,13 @@ from group_llm_agent.trigger import (
     PlatformTriggerGate,
     TriggerCoordinator,
 )
+from group_llm_agent.vision import OpenAICompatibleVisionClient, VisionModelPort
 
 logger = logging.getLogger(__name__)
 
 ClientFactory = Callable[..., TelegramBotApiClient]
 ModelFactory = Callable[[Settings], StructuredModelPort]
+VisionFactory = Callable[[Settings], VisionModelPort]
 
 
 def run(
@@ -59,6 +63,7 @@ def run(
     *,
     client_factory: ClientFactory = TelegramBotApiClient,
     model_factory: ModelFactory | None = None,
+    vision_factory: VisionFactory | None = None,
     sleep: Callable[[float], None] = default_sleep,
 ) -> int:
     try:
@@ -134,6 +139,7 @@ def run(
                 bundle=bundle,
                 model=model,
                 database=database,
+                vision_factory=vision_factory,
             )
         service = TelegramPollingService(
             client=client,
@@ -221,6 +227,7 @@ def _persona_runtime(
     bundle: CharacterBundle,
     model: StructuredModelPort,
     database: SQLiteDatabase,
+    vision_factory: VisionFactory | None = None,
 ) -> tuple[PersonaMessageProcessor, RecognitionBackgroundWorker | None]:
     messages = MessageRepository(database)
     messages.policies.ensure(
@@ -239,6 +246,22 @@ def _persona_runtime(
         recognition_policy_version="recognition-v1",
     )
     tools = ReadOnlyToolRegistry(messages=messages, memory=memory, runs=runs)
+    catalog_provider: Callable[[], ExpressionCatalog] | None = None
+    if settings.expression_capability == "enabled":
+        assert settings.expression_catalog_path is not None
+        assert settings.expression_catalog_sha256 is not None
+        catalog_path = settings.expression_catalog_path
+        catalog_sha256 = settings.expression_catalog_sha256
+
+        def _load_runtime_catalog() -> ExpressionCatalog:
+            return load_expression_catalog(
+                catalog_path,
+                expected_sha256=catalog_sha256,
+                allowed_statuses=frozenset({"enabled"}),
+            )
+
+        _load_runtime_catalog()
+        catalog_provider = _load_runtime_catalog
     effector = WriterEffector(
         model=model,
         contexts=contexts,
@@ -246,8 +269,10 @@ def _persona_runtime(
         runs=runs,
         budgets=EffectorBudgets(
             maximum_model_calls=settings.effect_max_model_calls,
+            ordinary_tool_calls=settings.effect_ordinary_tool_calls,
             maximum_tool_calls=settings.effect_max_tool_calls,
         ),
+        expression_catalog_provider=catalog_provider,
     )
     platform_gate = PlatformTriggerGate(
         allowed_chat_id=settings.telegram_chat_id,
@@ -294,6 +319,33 @@ def _persona_runtime(
         controls=controls,
         triggers=triggers,
         effector=effector,
+        media_loader=(
+            TelegramMediaLoader(
+                client=client,
+                limits=MediaLimits(
+                    maximum_download_bytes=settings.media_max_download_bytes,
+                    maximum_pixels=settings.media_max_pixels,
+                ),
+                timeout_seconds=settings.vision_timeout_seconds,
+            )
+            if settings.vision_capability == "available"
+            else None
+        ),
+        vision=(
+            (
+                vision_factory(settings)
+                if vision_factory is not None
+                else OpenAICompatibleVisionClient(
+                    base_url=str(settings.model_base_url),
+                    api_key=str(settings.model_api_key),
+                    model=str(settings.vision_model),
+                    timeout_seconds=settings.vision_timeout_seconds,
+                )
+            )
+            if settings.vision_capability == "available"
+            else None
+        ),
+        expression_catalog_provider=catalog_provider,
     )
     if settings.member_memory_capability != "available":
         return processor, None

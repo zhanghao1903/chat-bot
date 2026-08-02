@@ -297,6 +297,48 @@ class RunRepositoryTests(unittest.TestCase):
                 assert record is not None
                 self.assertEqual(expected, record.status.value)
 
+    def test_expression_usage_metrics_are_aggregate_only(self) -> None:
+        with temporary_database() as database:
+            repository = RunRepository(database)
+            persona = PersonaSnapshot("original", "v1", "digest-1")
+            effects = (
+                ("sticker", "a", "sticker", "sent"),
+                ("sticker", "a", "sticker", "sent"),
+                ("sticker", "b", "sticker", "sent"),
+                ("sticker", "c", "failure_reply", "sent"),
+                ("sticker", "d", None, "uncertain"),
+                ("reply", None, "reply", "sent"),
+            )
+            for index, (requested, semantic_id, delivered, status) in enumerate(effects, start=1):
+                effect_id = repository.claim_external_effect(
+                    message=_message(event_id=f"metric-{index}", message_id=str(index)),
+                    effect_kind=ExternalEffectKind(requested),
+                    persona=persona,
+                    asset_semantic_id=semantic_id,
+                )
+                assert effect_id is not None
+                if status == "sent":
+                    repository.mark_external_sent(
+                        effect_id,
+                        platform_message_id=f"out-{index}",
+                        delivered_effect_kind=ExternalEffectKind(delivered),
+                    )
+                else:
+                    repository.mark_external_uncertain(effect_id, error_code="timeout")
+
+            metrics = repository.expression_usage_metrics(
+                chat_id="-1001",
+                since=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            self.assertEqual(5, metrics.visible_effect_count)
+            self.assertEqual(5, metrics.sticker_requested_count)
+            self.assertEqual(3, metrics.sticker_sent_count)
+            self.assertEqual(1, metrics.repeated_sticker_count)
+            self.assertEqual(2, metrics.degraded_sticker_count)
+            self.assertEqual(0.6, metrics.sticker_visible_rate)
+            self.assertEqual(0.4, metrics.sticker_degradation_rate)
+
     def test_effect_run_records_metadata_but_not_response_text(self) -> None:
         with temporary_database() as database:
             repository = RunRepository(database)

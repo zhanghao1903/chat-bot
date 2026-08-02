@@ -11,6 +11,8 @@ _TELEGRAM_TOKEN_RE = re.compile(r"^[0-9]+:[A-Za-z0-9_-]+$")
 _LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 _BOT_MODES = {"fixed", "persona_direct", "persona_full"}
 _MEMORY_CAPABILITIES = {"disabled", "available"}
+_VISION_CAPABILITIES = {"disabled", "available"}
+_EXPRESSION_CAPABILITIES = {"disabled", "enabled"}
 _MODEL_PROVIDERS = {"openai_compatible"}
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -103,11 +105,20 @@ class Settings:
     member_memory_capability: str
     raw_message_retention_days: int
     effect_max_model_calls: int
+    effect_ordinary_tool_calls: int
     effect_max_tool_calls: int
     effect_deadline_seconds: int
     trigger_decision_timeout_seconds: int
     recognition_timeout_seconds: int
     recognition_max_attempts: int
+    vision_capability: str
+    vision_model: str | None
+    vision_timeout_seconds: int
+    media_max_download_bytes: int
+    media_max_pixels: int
+    expression_capability: str
+    expression_catalog_path: Path | None
+    expression_catalog_sha256: str | None
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -148,6 +159,21 @@ class Settings:
         writer_model: str | None = None
         trigger_model: str | None = None
         recognition_model: str | None = None
+        vision_model: str | None = None
+        vision_capability = _choice(
+            env,
+            "VISION_CAPABILITY",
+            default="disabled",
+            choices=_VISION_CAPABILITIES,
+        )
+        expression_capability = _choice(
+            env,
+            "EXPRESSION_CAPABILITY",
+            default="disabled",
+            choices=_EXPRESSION_CAPABILITIES,
+        )
+        expression_catalog_path: Path | None = None
+        expression_catalog_sha256: str | None = None
         if bot_mode != "fixed":
             persona_bundle_path = Path(_required(env, "PERSONA_BUNDLE_PATH"))
             persona_expected_sha256 = _required(env, "PERSONA_EXPECTED_SHA256").lower()
@@ -167,21 +193,43 @@ class Settings:
             writer_model = _required(env, "WRITER_MODEL")
             trigger_model = env.get("TRIGGER_MODEL", "").strip() or writer_model
             recognition_model = env.get("RECOGNITION_MODEL", "").strip() or writer_model
+            if vision_capability == "available":
+                vision_model = _required(env, "VISION_MODEL")
+            if expression_capability == "enabled":
+                expression_catalog_path = Path(_required(env, "EXPRESSION_CATALOG_PATH"))
+                expression_catalog_sha256 = _required(env, "EXPRESSION_CATALOG_SHA256").lower()
+                if _SHA256_RE.fullmatch(expression_catalog_sha256) is None:
+                    raise ConfigError(
+                        "EXPRESSION_CATALOG_SHA256",
+                        "must be a lowercase SHA-256 digest",
+                    )
 
         effect_max_model_calls = _integer(
             env,
             "EFFECT_MAX_MODEL_CALLS",
-            default=3,
+            default=6,
             minimum=1,
-            maximum=3,
+            maximum=6,
         )
         effect_max_tool_calls = _integer(
             env,
             "EFFECT_MAX_TOOL_CALLS",
-            default=2,
+            default=5,
             minimum=0,
-            maximum=2,
+            maximum=5,
         )
+        effect_ordinary_tool_calls = _integer(
+            env,
+            "EFFECT_ORDINARY_TOOL_CALLS",
+            default=min(3, effect_max_tool_calls),
+            minimum=0,
+            maximum=3,
+        )
+        if effect_ordinary_tool_calls > effect_max_tool_calls:
+            raise ConfigError(
+                "EFFECT_ORDINARY_TOOL_CALLS",
+                "must not exceed EFFECT_MAX_TOOL_CALLS",
+            )
         if effect_max_tool_calls >= effect_max_model_calls:
             raise ConfigError(
                 "EFFECT_MAX_TOOL_CALLS",
@@ -225,6 +273,7 @@ class Settings:
                 maximum=7,
             ),
             effect_max_model_calls=effect_max_model_calls,
+            effect_ordinary_tool_calls=effect_ordinary_tool_calls,
             effect_max_tool_calls=effect_max_tool_calls,
             effect_deadline_seconds=_integer(
                 env,
@@ -254,4 +303,30 @@ class Settings:
                 minimum=1,
                 maximum=3,
             ),
+            vision_capability=vision_capability,
+            vision_model=vision_model,
+            vision_timeout_seconds=_integer(
+                env,
+                "VISION_TIMEOUT_SECONDS",
+                default=15,
+                minimum=3,
+                maximum=30,
+            ),
+            media_max_download_bytes=_integer(
+                env,
+                "MEDIA_MAX_DOWNLOAD_BYTES",
+                default=8 * 1024 * 1024,
+                minimum=64 * 1024,
+                maximum=20 * 1024 * 1024,
+            ),
+            media_max_pixels=_integer(
+                env,
+                "MEDIA_MAX_PIXELS",
+                default=12_000_000,
+                minimum=1_000_000,
+                maximum=20_000_000,
+            ),
+            expression_capability=expression_capability,
+            expression_catalog_path=expression_catalog_path,
+            expression_catalog_sha256=expression_catalog_sha256,
         )

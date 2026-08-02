@@ -8,6 +8,7 @@ dependencies = ["Pillow==11.3.0"]
 
 [project.scripts]
 group-llm-agent = "group_llm_agent.__main__:main"
+group-llm-agent-operator = "group_llm_agent.operator_cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]

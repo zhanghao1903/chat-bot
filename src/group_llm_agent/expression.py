@@ -25,6 +25,7 @@ class ExpressionEntry:
     source_row: int
     source_column: int
     visible_text: str
+    content_summary: str
     action: str
     emotion: str
     interaction_intent: str
@@ -187,6 +188,7 @@ def _parse_entry(raw: object) -> ExpressionEntry:
         source_row=row,
         source_column=column,
         visible_text=_required_string(raw, "visible_text"),
+        content_summary=_required_string(semantics, "content_summary"),
         action=_required_string(semantics, "action"),
         emotion=_required_string(semantics, "emotion"),
         interaction_intent=_required_string(semantics, "interaction_intent"),

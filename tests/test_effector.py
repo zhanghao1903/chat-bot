@@ -10,7 +10,7 @@ from helpers import ScriptedModelClient, temporary_database
 
 from group_llm_agent.context import ContextAssembler
 from group_llm_agent.database import SQLiteDatabase
-from group_llm_agent.effector import WriterEffector
+from group_llm_agent.effector import EffectorBudgets, WriterEffector
 from group_llm_agent.events import (
     EffectRequest,
     FinalEffectKind,
@@ -20,6 +20,7 @@ from group_llm_agent.events import (
     TriggerCategory,
     TriggerPath,
 )
+from group_llm_agent.expression import file_sha256, load_expression_catalog
 from group_llm_agent.memory import MemoryRepository
 from group_llm_agent.messages import MessageRepository
 from group_llm_agent.model import (
@@ -218,6 +219,120 @@ class WriterEffectorTests(unittest.TestCase):
             self.assertEqual("final_persona_snapshot_mismatch", final.reason_code)
             self.assertNotEqual("普通回答。", final.text)
 
+    def test_complex_turn_can_extend_from_three_to_five_but_never_six(self) -> None:
+        budgets = EffectorBudgets(
+            maximum_model_calls=6,
+            ordinary_tool_calls=3,
+            maximum_tool_calls=5,
+        )
+        script = (
+            _tool_result("search_recent_group_messages", {"query": "needle"}),
+            _tool_result("lookup_member_memory", {"member_user_id": "member-a"}),
+            _tool_result("search_recent_group_messages", {"query": "alpha"}),
+            _tool_result(
+                "search_recent_group_messages",
+                {"query": "beta"},
+                extension_reason_code="missing_beta_context",
+            ),
+            _tool_result(
+                "search_recent_group_messages",
+                {"query": "gamma"},
+                extension_reason_code="missing_gamma_context",
+            ),
+            _tool_result(
+                "search_recent_group_messages",
+                {"query": "sixth"},
+                extension_reason_code="should_never_run",
+            ),
+        )
+        with EffectorFixtureContext(*script, budgets=budgets) as fixture:
+            messages = MessageRepository(fixture.database)
+            for index, token in enumerate(("alpha", "beta", "gamma"), start=20):
+                messages.ingest_inbound(
+                    TelegramTextMessage(
+                        event_id=f"extra-{index}",
+                        group_id="group-a",
+                        message_id=str(index),
+                        sender_id="member-a",
+                        sender_display_name="Member A",
+                        text=f"{token} unique context",
+                        timestamp=datetime.now(UTC),
+                    ),
+                    persona=fixture.bundle.snapshot,
+                    recognition_policy_version="policy-v1",
+                )
+
+            final = fixture.effector.execute(request=fixture.request, bundle=fixture.bundle)
+
+            self.assertEqual(FinalEffectKind.FAILURE_REPLY, final.kind)
+            connection = fixture.database.connect()
+            try:
+                audits = connection.execute(
+                    """
+                    SELECT budget_ordinal, extension_reason_code, result_novel
+                    FROM tool_call_audit ORDER BY id
+                    """
+                ).fetchall()
+            finally:
+                connection.close()
+            self.assertEqual([1, 2, 3, 4, 5], [row["budget_ordinal"] for row in audits])
+            self.assertEqual(
+                [None, None, None, "missing_beta_context", "missing_gamma_context"],
+                [row["extension_reason_code"] for row in audits],
+            )
+            self.assertTrue(all(row["result_novel"] for row in audits))
+
+    def test_enabled_catalog_semantic_choice_becomes_validated_sticker_effect(self) -> None:
+        catalog_path = (
+            Path(__file__).parents[1]
+            / "src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/catalog.json"
+        )
+        candidate = load_expression_catalog(
+            catalog_path,
+            expected_sha256=file_sha256(catalog_path),
+            allowed_statuses=frozenset({"candidate"}),
+        )
+        selected = next(
+            entry for entry in candidate.entries if entry.minimum_relationship == "public"
+        )
+        with EffectorFixtureContext(
+            StructuredModelResult(
+                {
+                    "kind": "sticker",
+                    "reason_code": "light_reaction",
+                    "sticker_id": selected.semantic_id,
+                    "catalog_version": candidate.catalog_version,
+                    "catalog_digest": candidate.digest,
+                    "fallback_text": "好耶！",
+                    "mood_signal": "joyful",
+                }
+            )
+        ) as fixture:
+            enabled_entries = tuple(
+                replace(
+                    entry,
+                    status="enabled",
+                    telegram_file_id=f"file-{entry.semantic_id}",
+                    telegram_file_unique_id=f"unique-{entry.semantic_id}",
+                )
+                for entry in candidate.entries
+            )
+            enabled = replace(
+                candidate,
+                status="enabled",
+                persona_id=fixture.bundle.snapshot.persona_id,
+                persona_version=fixture.bundle.snapshot.persona_version,
+                persona_digest=fixture.bundle.snapshot.persona_digest,
+                entries=enabled_entries,
+            )
+            fixture.effector.expression_catalog_provider = lambda: enabled
+
+            final = fixture.effector.execute(request=fixture.request, bundle=fixture.bundle)
+
+            self.assertEqual(FinalEffectKind.STICKER, final.kind)
+            self.assertEqual(selected.semantic_id, final.sticker_id)
+            self.assertEqual("joyful", final.mood_signal)
+
 
 class EffectorFixture:
     def __init__(
@@ -265,11 +380,17 @@ class EffectorFixtureContext:
         trigger_path: TriggerPath = TriggerPath.DIRECT,
         complete_after_deadline: bool = False,
         mutate_snapshot_after_model: bool = False,
+        budgets: EffectorBudgets | None = None,
     ) -> None:
         self.script = script
         self.trigger_path = trigger_path
         self.complete_after_deadline = complete_after_deadline
         self.mutate_snapshot_after_model = mutate_snapshot_after_model
+        self.budgets = budgets or EffectorBudgets(
+            maximum_model_calls=3,
+            ordinary_tool_calls=2,
+            maximum_tool_calls=2,
+        )
         self.database_context = temporary_database()
         self.fixture: EffectorFixture | None = None
 
@@ -333,6 +454,7 @@ class EffectorFixtureContext:
             contexts=contexts,
             tools=registry,
             runs=runs,
+            budgets=self.budgets,
             clock=lambda: completed_at,
         )
         request = EffectRequest(
@@ -380,16 +502,22 @@ class SnapshotChangingModel(ScriptedModelClient):
         return result
 
 
-def _tool_result(name: str, arguments: dict[str, object]) -> StructuredModelResult:
-    return StructuredModelResult(
-        {
-            "kind": "call_tool",
-            "reason_code": "need_context",
-            "tool_name": name,
-            "tool_arguments": arguments,
-            "tool_purpose_code": "continue_scene",
-        }
-    )
+def _tool_result(
+    name: str,
+    arguments: dict[str, object],
+    *,
+    extension_reason_code: str | None = None,
+) -> StructuredModelResult:
+    payload: dict[str, object] = {
+        "kind": "call_tool",
+        "reason_code": "need_context",
+        "tool_name": name,
+        "tool_arguments": arguments,
+        "tool_purpose_code": "continue_scene",
+    }
+    if extension_reason_code is not None:
+        payload["extension_reason_code"] = extension_reason_code
+    return StructuredModelResult(payload)
 
 
 if __name__ == "__main__":

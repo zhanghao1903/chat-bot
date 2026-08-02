@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import sqlite3
 import unittest
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Event
 
 from helpers import ScriptedModelClient
+from PIL import Image
 
 from group_llm_agent.app import run
 from group_llm_agent.database import SQLiteDatabase
@@ -20,6 +23,7 @@ from group_llm_agent.events import (
     TriggerCategory,
     TriggerPath,
 )
+from group_llm_agent.media import NormalizedMedia
 from group_llm_agent.messages import MessageRepository
 from group_llm_agent.model import ModelRole, StructuredModelResult
 from group_llm_agent.persona import CharacterBundle, load_character_bundle
@@ -27,10 +31,12 @@ from group_llm_agent.platforms.telegram import (
     ChatMemberStatus,
     SentMessage,
     TelegramAdapter,
+    TelegramFile,
     TelegramMemberStatus,
 )
 from group_llm_agent.runs import RunRepository
 from group_llm_agent.runtime import RecognitionBackgroundWorker
+from group_llm_agent.vision import VisionEvidence
 
 
 class PersonaTelegramClient:
@@ -44,6 +50,7 @@ class PersonaTelegramClient:
         self.get_me_calls = 0
         self.get_updates_calls = 0
         self.sent: list[tuple[str, str, str | None]] = []
+        self.media_load_calls = 0
 
     def get_me(self) -> dict[str, object]:
         self.get_me_calls += 1
@@ -74,8 +81,89 @@ class PersonaTelegramClient:
     def get_chat_member(self, *, chat_id: str, user_id: str) -> ChatMemberStatus:
         return ChatMemberStatus(user_id=user_id, status=TelegramMemberStatus.ADMINISTRATOR)
 
+    def get_file(self, *, file_id: str) -> TelegramFile:
+        self.media_load_calls += 1
+        return TelegramFile(file_path="photos/test.jpg", file_size=len(_jpeg_bytes()))
+
+    def download_file(
+        self,
+        *,
+        file_path: str,
+        maximum_bytes: int,
+        timeout_seconds: int | None = None,
+    ) -> bytes:
+        self.media_load_calls += 1
+        return _jpeg_bytes()
+
 
 class PersonaRuntimeTests(unittest.TestCase):
+    def test_eligible_media_calls_vision_after_trigger_and_injects_untrusted_evidence(self) -> None:
+        bundle = _bundle()
+        with TemporaryDirectory() as tmpdir:
+            database_path = Path(tmpdir) / "runtime.sqlite3"
+            client = PersonaTelegramClient([_media_update(1, caption="Test Lantern，看看")])
+            vision = ScriptedVision()
+            model = ScriptedModelClient(
+                StructuredModelResult(
+                    {
+                        "kind": "reply",
+                        "reason_code": "saw_image",
+                        "text": "我看到蓝色方块啦。",
+                        "mood_signal": "playful",
+                    }
+                )
+            )
+            env = _env(bundle, database_path, mode="persona_direct")
+            env.update({"VISION_CAPABILITY": "available", "VISION_MODEL": "vision-test"})
+
+            exit_code = run(
+                env,
+                client_factory=lambda *_args, **_kwargs: client,
+                model_factory=lambda _settings: model,
+                vision_factory=lambda _settings: vision,
+            )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual(2, client.media_load_calls)
+            self.assertEqual(1, vision.calls)
+            writer_messages = model.calls[0]["messages"]
+            self.assertTrue(
+                any("BEGIN_UNTRUSTED_VISION_EVIDENCE" in item.content for item in writer_messages)
+            )
+            connection = sqlite3.connect(database_path)
+            try:
+                audit = connection.execute(
+                    "SELECT media_kind, result_status, model_id FROM media_effect_audit"
+                ).fetchone()
+                mood_count = connection.execute(
+                    "SELECT count(*) FROM persona_mood_observations"
+                ).fetchone()[0]
+            finally:
+                connection.close()
+            self.assertEqual(("photo", "completed", "vision-test"), audit)
+            self.assertEqual(0, mood_count)
+
+    def test_unaddressed_media_does_not_download_or_call_vision(self) -> None:
+        bundle = _bundle()
+        with TemporaryDirectory() as tmpdir:
+            database_path = Path(tmpdir) / "runtime.sqlite3"
+            client = PersonaTelegramClient([_media_update(1, caption="大家看看")])
+            vision = ScriptedVision()
+            env = _env(bundle, database_path, mode="persona_direct")
+            env.update({"VISION_CAPABILITY": "available", "VISION_MODEL": "vision-test"})
+
+            exit_code = run(
+                env,
+                client_factory=lambda *_args, **_kwargs: client,
+                model_factory=lambda _settings: ScriptedModelClient(),
+                vision_factory=lambda _settings: vision,
+            )
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual(0, client.media_load_calls)
+            self.assertEqual(0, vision.calls)
+            self.assertEqual([], client.sent)
+
     def test_character_name_direct_sends_in_direct_mode_and_audits_category(self) -> None:
         bundle = _bundle()
         with TemporaryDirectory() as tmpdir:
@@ -591,6 +679,31 @@ class WaitingRecognitionWorker:
         return False
 
 
+class ScriptedVision:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def analyze(
+        self,
+        *,
+        media: NormalizedMedia,
+        caption: str,
+        recent_scene: Sequence[str],
+        deadline: datetime,
+    ) -> VisionEvidence:
+        self.calls += 1
+        return VisionEvidence(
+            summary="一个蓝色方块。",
+            visible_text=(),
+            observations=("方块位于画面中央。",),
+            inferences=(),
+            uncertainties=(),
+            safety_flags=(),
+            media_sha256=media.sha256,
+            model_id="vision-test",
+        )
+
+
 def _bundle() -> CharacterBundle:
     return load_character_bundle(Path(__file__).parent / "fixtures/personas/test-original/v1")
 
@@ -634,6 +747,34 @@ def _update(
     if direct:
         message["entities"] = [{"type": "bot_command", "offset": 0, "length": len(text)}]
     return {"update_id": index, "message": message}
+
+
+def _media_update(index: int, *, caption: str) -> dict[str, object]:
+    return {
+        "update_id": index,
+        "message": {
+            "message_id": index,
+            "date": 1785283200 + index,
+            "chat": {"id": -1001, "type": "supergroup"},
+            "from": {"id": 100 + index, "first_name": f"Member {index}"},
+            "caption": caption,
+            "photo": [
+                {
+                    "file_id": "transient-file-id",
+                    "file_unique_id": "stable-unique-id",
+                    "width": 20,
+                    "height": 10,
+                    "file_size": len(_jpeg_bytes()),
+                }
+            ],
+        },
+    }
+
+
+def _jpeg_bytes() -> bytes:
+    output = BytesIO()
+    Image.new("RGB", (20, 10), (20, 80, 160)).save(output, format="JPEG")
+    return output.getvalue()
 
 
 def _effect_request_id(chat_id: str, event_id: str) -> str:

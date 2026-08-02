@@ -35,6 +35,7 @@ class AssetPipelineTests(unittest.TestCase):
         self.assertIsNone(manifest["approval"])
         self.assertEqual(48, manifest["candidate_count"])
         self.assertEqual(48, len(catalog.entries))
+        self.assertEqual(48, len({entry.content_summary for entry in catalog.entries}))
         self.assertEqual(
             [source.sha256 for source in LOCKED_SOURCES],
             [source["sha256"] for source in manifest["source_assets"]],

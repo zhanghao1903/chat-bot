@@ -14,6 +14,7 @@ from group_llm_agent.events import (
     ExternalEffectKind,
     ExternalEffectStatus,
     FinalEffect,
+    MediaKind,
     PersonaSnapshot,
     PersonaTriggerDecision,
     PlatformTriggerKind,
@@ -60,6 +61,27 @@ class TriggerEvaluationRecord:
     model_status: TriggerModelStatus
     persona_name_hit: bool
     continuity_anchor_message_id: str | None
+
+
+@dataclass(frozen=True)
+class ExpressionUsageMetrics:
+    visible_effect_count: int
+    sticker_requested_count: int
+    sticker_sent_count: int
+    repeated_sticker_count: int
+    degraded_sticker_count: int
+
+    @property
+    def sticker_visible_rate(self) -> float:
+        if self.visible_effect_count == 0:
+            return 0.0
+        return self.sticker_sent_count / self.visible_effect_count
+
+    @property
+    def sticker_degradation_rate(self) -> float:
+        if self.sticker_requested_count == 0:
+            return 0.0
+        return self.degraded_sticker_count / self.sticker_requested_count
 
 
 class RunRepository:
@@ -413,6 +435,105 @@ class RunRepository:
             )
             return _lastrowid(cursor)
 
+    def record_media_effect_audit(
+        self,
+        *,
+        chat_id: str,
+        trigger_event_id: str,
+        media_kind: MediaKind,
+        result_status: str,
+        media_bytes: int | None = None,
+        media_pixels: int | None = None,
+        model_id: str | None = None,
+        latency_ms: int = 0,
+        error_code: str | None = None,
+    ) -> int:
+        if latency_ms < 0:
+            raise ValueError("latency_ms must be non-negative")
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO media_effect_audit (
+                    chat_id, trigger_event_id, media_kind, result_status,
+                    byte_bucket, pixel_bucket, model_id, latency_ms,
+                    error_code, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    chat_id,
+                    trigger_event_id,
+                    media_kind.value,
+                    result_status,
+                    _size_bucket(media_bytes),
+                    _pixel_bucket(media_pixels),
+                    model_id,
+                    latency_ms,
+                    error_code,
+                    _utc_now(),
+                ),
+            )
+            return _lastrowid(cursor)
+
+    def annotate_tool_call(
+        self,
+        audit_id: int,
+        *,
+        budget_ordinal: int,
+        extension_reason_code: str | None,
+        result_novel: bool,
+    ) -> None:
+        if budget_ordinal <= 0:
+            raise ValueError("budget_ordinal must be positive")
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE tool_call_audit
+                SET budget_ordinal = ?, extension_reason_code = ?, result_novel = ?
+                WHERE id = ?
+                """,
+                (budget_ordinal, extension_reason_code, int(result_novel), audit_id),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("Unknown tool audit id")
+
+    def record_mood_observation(
+        self,
+        *,
+        bot_user_id: str,
+        trigger_event_id: str,
+        persona: PersonaSnapshot,
+        mood_code: str,
+        catalog_version: str | None = None,
+        catalog_digest: str | None = None,
+        bot_scope_count: int = 1,
+    ) -> int | None:
+        if bot_scope_count < 1:
+            raise ValueError("bot_scope_count must be positive")
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO persona_mood_observations (
+                    bot_user_id, trigger_event_id, persona_version,
+                    persona_digest, catalog_version, catalog_digest,
+                    mood_code, bot_scope_count, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    bot_user_id,
+                    trigger_event_id,
+                    persona.persona_version,
+                    persona.persona_digest,
+                    catalog_version,
+                    catalog_digest,
+                    mood_code,
+                    bot_scope_count,
+                    _utc_now(),
+                ),
+            )
+            return _lastrowid(cursor) if cursor.rowcount else None
+
     def record_control_action(
         self,
         *,
@@ -566,6 +687,70 @@ class RunRepository:
             error_code=str(row["error_code"]) if row["error_code"] is not None else None,
         )
 
+    def expression_usage_metrics(
+        self,
+        *,
+        chat_id: str,
+        since: datetime,
+    ) -> ExpressionUsageMetrics:
+        """Aggregate expression outcomes without reading or returning message bodies."""
+
+        if not chat_id or since.tzinfo is None:
+            raise ValueError("chat_id and timezone-aware since are required")
+        connection = self.database.connect()
+        try:
+            rows = connection.execute(
+                """
+                SELECT requested_effect_kind, delivered_effect_kind,
+                       asset_semantic_id, status
+                FROM external_effects
+                WHERE chat_id = ? AND created_at >= ?
+                ORDER BY id
+                """,
+                (chat_id, since.isoformat()),
+            ).fetchall()
+        finally:
+            connection.close()
+
+        visible = 0
+        requested = 0
+        sent = 0
+        repeated = 0
+        degraded = 0
+        previous_visible_sticker: str | None = None
+        for row in rows:
+            requested_kind = str(row["requested_effect_kind"])
+            delivered = (
+                str(row["delivered_effect_kind"])
+                if row["delivered_effect_kind"] is not None
+                else None
+            )
+            status = str(row["status"])
+            semantic_id = (
+                str(row["asset_semantic_id"]) if row["asset_semantic_id"] is not None else None
+            )
+            if requested_kind == ExternalEffectKind.STICKER.value:
+                requested += 1
+                if status != ExternalEffectStatus.SENT.value or delivered != "sticker":
+                    degraded += 1
+            if status != ExternalEffectStatus.SENT.value or delivered is None:
+                continue
+            visible += 1
+            if delivered == ExternalEffectKind.STICKER.value:
+                sent += 1
+                if semantic_id is not None and semantic_id == previous_visible_sticker:
+                    repeated += 1
+                previous_visible_sticker = semantic_id
+            else:
+                previous_visible_sticker = None
+        return ExpressionUsageMetrics(
+            visible_effect_count=visible,
+            sticker_requested_count=requested,
+            sticker_sent_count=sent,
+            repeated_sticker_count=repeated,
+            degraded_sticker_count=degraded,
+        )
+
     def _finish_effect_run(
         self,
         *,
@@ -634,3 +819,27 @@ class RunRepository:
             )
             if cursor.rowcount != 1:
                 raise ValueError(f"Unknown or completed external effect id: {effect_id}")
+
+
+def _size_bucket(value: int | None) -> str | None:
+    if value is None:
+        return None
+    if value < 256 * 1024:
+        return "lt_256k"
+    if value < 1024 * 1024:
+        return "lt_1m"
+    if value < 4 * 1024 * 1024:
+        return "lt_4m"
+    return "gte_4m"
+
+
+def _pixel_bucket(value: int | None) -> str | None:
+    if value is None:
+        return None
+    if value < 1_000_000:
+        return "lt_1mp"
+    if value < 4_000_000:
+        return "lt_4mp"
+    if value < 12_000_000:
+        return "lt_12mp"
+    return "gte_12mp"
