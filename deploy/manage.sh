@@ -28,6 +28,10 @@ REPOSITORY_ROOT=$(CDPATH= cd -- "${SCRIPT_DIR}/.." && pwd)
 STATE_DIR="${SCRIPT_DIR}/state"
 STATE_FILE="${STATE_DIR}/persona-release.json"
 LOCK_DIR="${STATE_DIR}/persona-release.lock"
+LOCK_HELD=0
+RELEASE_PINS_SET=0
+RELEASE_TERMINAL=1
+RELEASE_FAILURE_STAGE=pre_pin
 
 compose() {
   docker compose --env-file "${ENV_FILE}" --project-directory "${SCRIPT_DIR}" \
@@ -43,6 +47,45 @@ require_release_arguments() {
     usage
     exit 2
   fi
+}
+
+cleanup_release_lock() {
+  if [ "${LOCK_HELD}" -eq 1 ]; then
+    rmdir "${LOCK_DIR}" 2>/dev/null || true
+    LOCK_HELD=0
+  fi
+}
+
+acquire_release_lock() {
+  mkdir -p "${STATE_DIR}"
+  if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
+    echo "Another persona release already owns the deployment lock." >&2
+    return 2
+  fi
+  LOCK_HELD=1
+  trap cleanup_release_lock EXIT
+}
+
+disable_release_signals() {
+  trap '' HUP INT TERM
+}
+
+handle_release_signal() {
+  signal_name=$1
+  disable_release_signals
+  if [ "${RELEASE_PINS_SET}" -eq 1 ] && [ "${RELEASE_TERMINAL}" -eq 0 ]; then
+    if rollback_after_failure "signal_${signal_name}"; then
+      :
+    fi
+  fi
+  RELEASE_TERMINAL=1
+  exit 2
+}
+
+install_release_signal_handlers() {
+  trap 'handle_release_signal hup' HUP
+  trap 'handle_release_signal int' INT
+  trap 'handle_release_signal term' TERM
 }
 
 persona_preflight() {
@@ -103,6 +146,7 @@ record_release_failure() {
 
 rollback_after_failure() {
   stage=$1
+  disable_release_signals
   echo "Persona release failed at ${stage}; restoring v1." >&2
   record_release_failure "${stage}" attempted
   if persona_restore; then
@@ -141,22 +185,35 @@ persona_release() {
   candidate_path=$1
   candidate_digest=$2
   report_path=$3
-  mkdir -p "${STATE_DIR}"
-  if ! mkdir "${LOCK_DIR}" 2>/dev/null; then
-    echo "Another persona release already owns the deployment lock." >&2
+  acquire_release_lock || return 2
+  RELEASE_PINS_SET=0
+  RELEASE_TERMINAL=0
+  install_release_signal_handlers
+  if ! persona_preflight "${candidate_path}" "${candidate_digest}" "${report_path}"; then
+    RELEASE_TERMINAL=1
     return 2
   fi
-  trap 'rmdir "${LOCK_DIR}" 2>/dev/null || true' EXIT HUP INT TERM
-  persona_preflight "${candidate_path}" "${candidate_digest}" "${report_path}"
-  release_python set-pins \
+  RELEASE_FAILURE_STAGE=set_pins
+  RELEASE_PINS_SET=1
+  if ! release_python set-pins \
     --env-file "${ENV_FILE}" \
     --bundle-path "${candidate_path}" \
-    --digest "${candidate_digest}"
-  RELEASE_FAILURE_STAGE=compose_down
-  if ! activate_candidate "${candidate_digest}"; then
-    rollback_after_failure "${RELEASE_FAILURE_STAGE}"
+    --digest "${candidate_digest}"; then
+    if rollback_after_failure "${RELEASE_FAILURE_STAGE}"; then
+      :
+    fi
+    RELEASE_TERMINAL=1
     return 2
   fi
+  RELEASE_FAILURE_STAGE=compose_down
+  if ! activate_candidate "${candidate_digest}"; then
+    if rollback_after_failure "${RELEASE_FAILURE_STAGE}"; then
+      :
+    fi
+    RELEASE_TERMINAL=1
+    return 2
+  fi
+  RELEASE_TERMINAL=1
   echo "Persona release is running with lezhi-v2.0; send one direct Telegram message, then run persona-smoke."
 }
 
@@ -182,11 +239,31 @@ verify_persona_smoke() {
 }
 
 persona_smoke() {
+  acquire_release_lock || return 2
+  RELEASE_PINS_SET=1
+  RELEASE_TERMINAL=0
+  install_release_signal_handlers
   RELEASE_FAILURE_STAGE=smoke_state
   if ! verify_persona_smoke; then
-    rollback_after_failure "${RELEASE_FAILURE_STAGE}"
+    if rollback_after_failure "${RELEASE_FAILURE_STAGE}"; then
+      :
+    fi
+    RELEASE_TERMINAL=1
     return 2
   fi
+  RELEASE_TERMINAL=1
+}
+
+persona_rollback() {
+  acquire_release_lock || return 2
+  RELEASE_PINS_SET=1
+  RELEASE_TERMINAL=0
+  disable_release_signals
+  if ! persona_restore; then
+    RELEASE_TERMINAL=1
+    return 2
+  fi
+  RELEASE_TERMINAL=1
 }
 
 case "$1" in
@@ -231,7 +308,7 @@ case "$1" in
     ;;
   persona-rollback)
     [ "$#" -eq 1 ] || { usage; exit 2; }
-    persona_restore
+    persona_rollback
     ;;
   *)
     usage

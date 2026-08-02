@@ -11,9 +11,36 @@ from typing import Self
 
 _ROOT = Path(__file__).parents[1]
 _V2_DIGEST = "0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603"
+_V1_DIGEST = "25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a"
 
 
 class PersonaManageRollbackTests(unittest.TestCase):
+    def test_activation_and_smoke_signals_hold_lock_restore_v1_and_fail(self) -> None:
+        for command, injected in (
+            ("persona-release", "signal_activation"),
+            ("persona-smoke", "signal_smoke"),
+        ):
+            for signal_name in ("HUP", "INT", "TERM"):
+                with self.subTest(command=command, signal=signal_name), self._harness() as harness:
+                    result = harness.run(
+                        command,
+                        fail_stage=injected,
+                        signal_name=signal_name,
+                    )
+
+                    self.assertEqual(2, result.returncode, result.stdout + result.stderr)
+                    self.assertNotIn("Persona release is running with lezhi-v2.0", result.stdout)
+                    calls = harness.calls()
+                    stage = f"signal_{signal_name.lower()}"
+                    self.assertIn("lock_held_during_signal", calls)
+                    self.assertNotIn("lock_reacquired_during_signal", calls)
+                    self.assertIn("persona_release restore-pins", calls)
+                    self.assertIn(f"--stage {stage} --rollback-status attempted", calls)
+                    self.assertIn(f"--stage {stage} --rollback-status succeeded", calls)
+                    self.assertFalse(harness.lock.exists())
+                    self.assertIn("lezhi-v1.0", harness.environment_text())
+                    self.assertIn(_V1_DIGEST, harness.environment_text())
+
     def test_every_post_pin_activation_failure_restores_v1_and_records_result(self) -> None:
         for stage in (
             "compose_down",
@@ -94,7 +121,13 @@ class _ManageHarness:
         shutil.copy2(_ROOT / "deploy/manage.sh", self.deploy / "manage.sh")
         (self.deploy / "manage.sh").chmod(0o755)
         (self.deploy / "compose.yaml").write_text("services: {}\n", encoding="utf-8")
-        (self.deploy / ".env").write_text("TEST=1\n", encoding="utf-8")
+        self.environment = self.deploy / ".env"
+        self.environment.write_text(
+            "PERSONA_BUNDLE_PATH=/app/src/group_llm_agent/persona_bundles/lezhi/lezhi-v1.0\n"
+            f"PERSONA_EXPECTED_SHA256={_V1_DIGEST}\n",
+            encoding="utf-8",
+        )
+        self.lock = self.deploy / "state/persona-release.lock"
         self.log = self.root / "calls.log"
         self._write_executable("docker", _FAKE_DOCKER)
         self._write_executable("python3", _FAKE_PYTHON)
@@ -112,6 +145,7 @@ class _ManageHarness:
         *,
         fail_stage: str,
         fail_rollback: bool = False,
+        signal_name: str = "TERM",
     ) -> subprocess.CompletedProcess[str]:
         arguments = [str(self.deploy / "manage.sh"), command]
         if command == "persona-release":
@@ -132,6 +166,8 @@ class _ManageHarness:
                 "FAKE_STATE_DIR": str(self.root / "fake-state"),
                 "FAIL_STAGE": fail_stage,
                 "FAIL_ROLLBACK": "1" if fail_rollback else "0",
+                "SIGNAL_NAME": signal_name,
+                "EXPECTED_LOCK_DIR": str(self.lock),
             }
         )
         return subprocess.run(
@@ -145,6 +181,9 @@ class _ManageHarness:
 
     def calls(self) -> str:
         return self.log.read_text(encoding="utf-8")
+
+    def environment_text(self) -> str:
+        return self.environment.read_text(encoding="utf-8")
 
     def _write_executable(self, name: str, content: str) -> None:
         path = self.bin / name
@@ -196,6 +235,15 @@ _FAKE_DOCKER = r"""
         count=$((count + 1))
         echo "${count}" > "${count_file}"
         if [ "${FAIL_STAGE}" = "compose_up" ] && [ "${count}" -eq 1 ]; then exit 8; fi
+        if [ "${FAIL_STAGE}" = "signal_activation" ] && [ "${count}" -eq 1 ]; then
+          kill "-${SIGNAL_NAME}" "${PPID}"
+          if mkdir "${EXPECTED_LOCK_DIR}" 2>/dev/null; then
+            echo lock_reacquired_during_signal >> "${CALL_LOG}"
+            rmdir "${EXPECTED_LOCK_DIR}"
+          else
+            echo lock_held_during_signal >> "${CALL_LOG}"
+          fi
+        fi
         exit 0
         ;;
       *" smoke-baseline "*)
@@ -205,6 +253,15 @@ _FAKE_DOCKER = r"""
         ;;
       *" smoke-verify "*)
         [ "${FAIL_STAGE}" != "smoke_verify" ] || exit 9
+        if [ "${FAIL_STAGE}" = "signal_smoke" ]; then
+          kill "-${SIGNAL_NAME}" "${PPID}"
+          if mkdir "${EXPECTED_LOCK_DIR}" 2>/dev/null; then
+            echo lock_reacquired_during_signal >> "${CALL_LOG}"
+            rmdir "${EXPECTED_LOCK_DIR}"
+          else
+            echo lock_held_during_signal >> "${CALL_LOG}"
+          fi
+        fi
         echo "persona_smoke_passed outcome=sent external_effects=1"
         exit 0
         ;;
@@ -218,6 +275,12 @@ _FAKE_PYTHON = r"""
     set -eu
     echo "python $*" >> "${CALL_LOG}"
     arguments=" $* "
+    environment_file=""
+    previous=""
+    for argument in "$@"; do
+      if [ "${previous}" = "--env-file" ]; then environment_file=${argument}; fi
+      previous=${argument}
+    done
     case "${arguments}" in
       *" group_llm_agent.persona_release environment-chat-id "*)
         [ "${FAIL_STAGE}" != "chat_id" ] || exit 9
@@ -236,9 +299,19 @@ _FAKE_PYTHON = r"""
         echo persona_smoke_baseline_recorded
         ;;
       *" group_llm_agent.persona_release preflight "*) echo persona_preflight_passed ;;
-      *" group_llm_agent.persona_release set-pins "*) echo persona_pins_updated ;;
+      *" group_llm_agent.persona_release set-pins "*)
+        printf '%s\n' \
+          'PERSONA_BUNDLE_PATH=/app/src/group_llm_agent/persona_bundles/lezhi/lezhi-v2.0' \
+          'PERSONA_EXPECTED_SHA256=0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603' \
+          > "${environment_file}"
+        echo persona_pins_updated
+        ;;
       *" group_llm_agent.persona_release restore-pins "*)
         [ "${FAIL_ROLLBACK}" != "1" ] || exit 9
+        printf '%s\n' \
+          'PERSONA_BUNDLE_PATH=/app/src/group_llm_agent/persona_bundles/lezhi/lezhi-v1.0' \
+          'PERSONA_EXPECTED_SHA256=25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a' \
+          > "${environment_file}"
         echo persona_pins_restored
         ;;
       *" group_llm_agent.persona_release record-failure "*) echo persona_release_failure_recorded ;;

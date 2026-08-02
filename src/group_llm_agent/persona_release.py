@@ -37,6 +37,7 @@ _SHA256_ZERO = "0" * 64
 _PIN_NAMES = ("PERSONA_BUNDLE_PATH", "PERSONA_EXPECTED_SHA256")
 _V1_DIGEST = "25af6db13d2a9d4702a167ed99c685d3e934c6436eca491ce7de2ee58907a72a"
 _RELEASE_FAILURE_STAGES = {
+    "set_pins",
     "compose_down",
     "compose_up",
     "running_state",
@@ -47,6 +48,9 @@ _RELEASE_FAILURE_STAGES = {
     "smoke_baseline",
     "record_baseline",
     "smoke_verify",
+    "signal_hup",
+    "signal_int",
+    "signal_term",
 }
 _ROLLBACK_STATUSES = {"attempted", "succeeded", "failed"}
 _EVALUATION_SETTINGS = {
