@@ -6,7 +6,7 @@ services:
     env_file:
       - ${TELEGRAM_BOT_ENV_FILE:-.env}
     environment:
-      DATABASE_PATH: /app/data/telegram_bot.sqlite3
+      DATABASE_PATH: ${DATABASE_PATH:-/app/data/telegram_bot.sqlite3}
     init: true
     read_only: true
     restart: unless-stopped
@@ -19,3 +19,4 @@ services:
 
 volumes:
   telegram-bot-data:
+    name: ${TELEGRAM_BOT_DATA_VOLUME:-telegram-bot-data}

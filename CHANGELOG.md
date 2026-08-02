@@ -4,6 +4,12 @@
 
 ### Added
 
+- Immutable `lezhi-v2.0` Character Bundle with complete nineteen-field source preservation, 37
+  paired examples/evaluation cases, exact source traceability, and shared Trigger, Recognition,
+  and Effector snapshot identity.
+- Real-provider persona evaluation and fail-closed release gates with exact v1 rollback pins,
+  bounded Telegram smoke verification, and redacted local release evidence.
+
 - Original `lezhi-v1.0` Character Bundle with one immutable Trigger, Recognition, and Effector
   snapshot, 15 original examples, and 22 fixed evaluation cases.
 - Explicit `persona_direct` and `persona_full` modes while preserving `fixed` as the default and
@@ -24,6 +30,11 @@
   and confirmed continuity anchor ID without extending raw-text retention.
 
 ### Changed
+
+- Compose persona releases now preserve the explicitly selected database file and named data
+  volume, including deployments whose historical SQLite filename differs from the default.
+- The production persona can be explicitly pinned to `lezhi-v2.0`; subjective memory remains
+  snapshot-bound while persona-neutral observations remain available across v1/v2 transitions.
 
 - Persona modes use the SQLite database for idempotency, audited model/tool runs, bounded raw
   message retention, and group-scoped derived recognition; fixed mode keeps its compatible

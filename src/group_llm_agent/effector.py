@@ -26,7 +26,7 @@ from group_llm_agent.persona import CharacterBundle
 from group_llm_agent.runs import RunRepository
 from group_llm_agent.tools import ReadOnlyToolRegistry, ToolExecutionResult, ToolExecutionScope
 
-_WRITER_RESPONSE_SCHEMA = {
+WRITER_RESPONSE_SCHEMA = {
     "type": "object",
     "oneOf": [
         {
@@ -183,7 +183,7 @@ class WriterEffector:
                 result = self.model.complete(
                     model_role=ModelRole.WRITER,
                     messages=messages,
-                    response_schema=_WRITER_RESPONSE_SCHEMA,
+                    response_schema=WRITER_RESPONSE_SCHEMA,
                     deadline=request.deadline_at,
                     max_output_tokens=1_200,
                     temperature=0.7,
