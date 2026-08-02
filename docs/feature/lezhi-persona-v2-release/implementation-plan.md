@@ -1,7 +1,7 @@
 # Implementation Plan: 乐枝人格 v2 发布与低频版本管理
 
 - Status: Ready for implementation
-- Requirements: `requirements.md` at `df696d4c83259ed653a9848bd90d5f888cf39b46`
+- Requirements: `requirements.md` at `25eacf0c81fb903f131ffa5b113b1740d0cf4512`
 - Design: `design.md` at `1e6912b611c8e5ae0cc0103b98aa47e222bf307f`
 - Branch: `codex/lezhi-persona-v2-release`
 - Written: 2026-08-02
@@ -13,6 +13,11 @@ Implementation must add and activate `lezhi-v2.0` without changing any byte in
 database volume. The release remains fail-closed until deterministic verification, all 37 real
 provider cases and deployment preflight pass. A failed startup or smoke restores the exact v1
 path/digest recorded before the service is stopped.
+
+The revised requirements handoff
+`48d7910e4afefc7854dcfaab227e3880bacac102f24ac23877df8c07856ef820` corrects only the source
+character-file digest. All slices, boundaries and stop conditions remain unchanged; importer and
+tests use the corrected 64-character value.
 
 ## 2. Planned Boundaries
 

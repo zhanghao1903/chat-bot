@@ -2,8 +2,8 @@
 
 - Status: Approved for implementation
 - Feature: `lezhi-persona-v2-release`
-- Requirements input: `df696d4c83259ed653a9848bd90d5f888cf39b46`
-- Requirements handoff: `7ca86de3a3557f76ebba5727ea5d1238a73221c2f4aad6d7c2c0e7a89a7f45f0`
+- Requirements input: `25eacf0c81fb903f131ffa5b113b1740d0cf4512`
+- Requirements handoff: `48d7910e4afefc7854dcfaab227e3880bacac102f24ac23877df8c07856ef820`
 - Baseline: `4f50c14e748afd00c097393c0fa481184c006e12`
 - Written: 2026-08-02
 
@@ -21,6 +21,14 @@ the candidate, validates the recorded v1 rollback bundle, verifies deterministic
 real-provider evaluation report, then performs the existing Compose restart without deleting the
 named data volume. Failure before restart leaves v1 running; failed startup or Telegram smoke
 restores the recorded v1 pin and restarts once.
+
+### Requirements revision coordination
+
+The accepted requirements revision changes only the confirmed source JSON SHA-256 from an
+invalid 65-character transcription to the verified 64-character value
+`600fed847d362f272739d6613874aac857e339c02bc76c18619d104280dbbfcc`, plus confirmation and
+supersession metadata. Product behavior, acceptance criteria, assumptions and decisions are
+unchanged. The design remains valid and now binds to the revised handoff above.
 
 ## 2. Source and Production Artifact Contract
 
