@@ -398,6 +398,29 @@ class TriggerTests(unittest.TestCase):
             self.assertIsNone(result.effect_request)
             self.assertEqual([], model.calls)
 
+    def test_food_control_command_routes_before_persona_model(self) -> None:
+        bundle = _bundle()
+        with temporary_database() as database:
+            messages = MessageRepository(database)
+            command = _message(
+                1,
+                mentioned_bot=True,
+                text="/food_subscribe@testbot",
+                is_bot_command=True,
+            )
+            model = ScriptedModelClient()
+            coordinator, _ = _coordinator(
+                database=database,
+                messages=messages,
+                model=model,
+            )
+
+            result = coordinator.evaluate(message=command, bundle=bundle)
+
+            self.assertEqual(PlatformTriggerKind.CONTROL, result.platform.kind)
+            self.assertIsNone(result.effect_request)
+            self.assertEqual([], model.calls)
+
     def test_contextual_candidate_calls_trigger_once_and_carries_same_snapshot(self) -> None:
         bundle = _bundle()
         with temporary_database() as database:

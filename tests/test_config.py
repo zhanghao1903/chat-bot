@@ -24,6 +24,9 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.bot_mode, "fixed")
         self.assertIsNone(settings.model_api_key)
         self.assertEqual(settings.member_memory_capability, "disabled")
+        self.assertEqual(settings.automation_capability, "disabled")
+        self.assertEqual(settings.automation_tick_seconds, 15)
+        self.assertEqual(settings.scheduled_effect_deadline_seconds, 60)
         self.assertNotIn("123456:test-token", repr(settings))
 
     def test_missing_token_is_safe_and_actionable(self) -> None:
@@ -122,6 +125,25 @@ class SettingsTests(unittest.TestCase):
             Settings.from_env(env)
 
         self.assertEqual(caught.exception.setting, "EFFECT_MAX_TOOL_CALLS")
+
+    def test_automation_capability_and_schedule_bounds_are_strict(self) -> None:
+        env = _persona_env()
+        env.update(
+            {
+                "AUTOMATION_CAPABILITY": "available",
+                "AUTOMATION_TICK_SECONDS": "5",
+                "SCHEDULED_EFFECT_DEADLINE_SECONDS": "90",
+            }
+        )
+        settings = Settings.from_env(env)
+        self.assertEqual("available", settings.automation_capability)
+        self.assertEqual(5, settings.automation_tick_seconds)
+        self.assertEqual(90, settings.scheduled_effect_deadline_seconds)
+
+        env["AUTOMATION_TICK_SECONDS"] = "4"
+        with self.assertRaises(ConfigError) as caught:
+            Settings.from_env(env)
+        self.assertEqual("AUTOMATION_TICK_SECONDS", caught.exception.setting)
 
 
 def _persona_env() -> dict[str, str]:

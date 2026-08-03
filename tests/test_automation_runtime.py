@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+import unittest
+from datetime import UTC, datetime
+
+from helpers import temporary_database
+
+from group_llm_agent.automation import (
+    AutomationOccurrence,
+    AutomationRepository,
+    MealSlot,
+    OccurrenceStatus,
+)
+from group_llm_agent.automation_runtime import AutomationScheduler, next_scheduled
+from group_llm_agent.events import PersonaSnapshot, ScheduledOccurrenceSource
+
+
+class FakeOccurrenceProcessor:
+    def __init__(
+        self,
+        outcome: OccurrenceStatus = OccurrenceStatus.SENT,
+        *,
+        fail: bool = False,
+    ) -> None:
+        self.outcome = outcome
+        self.fail = fail
+        self.sources: list[ScheduledOccurrenceSource] = []
+
+    def process(
+        self,
+        *,
+        occurrence: AutomationOccurrence,
+        source: ScheduledOccurrenceSource,
+    ) -> OccurrenceStatus:
+        self.sources.append(source)
+        if self.fail:
+            raise RuntimeError("scripted failure")
+        return self.outcome
+
+
+_PERSONA = PersonaSnapshot("lezhi", "v2", "a" * 64)
+
+
+class AutomationSchedulerTests(unittest.TestCase):
+    def test_due_occurrence_runs_once_and_has_typed_aggregate_source(self) -> None:
+        with temporary_database() as database:
+            repository = AutomationRepository(database)
+            repository.enable_group(chat_id="-1001")
+            repository.subscribe(chat_id="-1001", member_user_id="member-1")
+            processor = FakeOccurrenceProcessor()
+            scheduler = AutomationScheduler(
+                repository=repository,
+                processor=processor,
+                bot_user_id="7",
+                persona=_PERSONA,
+                clock=lambda: datetime(2026, 8, 3, 3, 35, tzinfo=UTC),
+            )
+            self.assertEqual(1, scheduler.run_once(worker_id="worker-a"))
+            self.assertEqual(0, scheduler.run_once(worker_id="worker-b"))
+            self.assertEqual(1, len(processor.sources))
+            self.assertEqual(1, processor.sources[0].subscriber_count)
+            self.assertEqual(MealSlot.LUNCH.value, processor.sources[0].meal_slot)
+            occurrence_id = processor.sources[0].occurrence_id
+            occurrence = repository.get_occurrence(occurrence_id=occurrence_id)
+            assert occurrence is not None
+            self.assertEqual(OccurrenceStatus.SENT, occurrence.status)
+
+    def test_no_subscriber_and_late_occurrences_skip_without_processor(self) -> None:
+        with temporary_database() as database:
+            repository = AutomationRepository(database)
+            repository.enable_group(chat_id="-1001")
+            processor = FakeOccurrenceProcessor()
+            no_subscriber = AutomationScheduler(
+                repository=repository,
+                processor=processor,
+                bot_user_id="7",
+                persona=_PERSONA,
+                clock=lambda: datetime(2026, 8, 3, 3, 35, tzinfo=UTC),
+            )
+            self.assertEqual(1, no_subscriber.run_once(worker_id="worker-a"))
+            self.assertEqual([], processor.sources)
+
+            repository.subscribe(chat_id="-1001", member_user_id="member-1")
+            late = AutomationScheduler(
+                repository=repository,
+                processor=processor,
+                bot_user_id="7",
+                persona=_PERSONA,
+                clock=lambda: datetime(2026, 8, 3, 10, 5, tzinfo=UTC),
+            )
+            self.assertEqual(1, late.run_once(worker_id="worker-a"))
+            self.assertEqual([], processor.sources)
+
+    def test_processor_failure_is_contained_and_terminal(self) -> None:
+        with temporary_database() as database:
+            repository = AutomationRepository(database)
+            repository.enable_group(chat_id="-1001")
+            repository.subscribe(chat_id="-1001", member_user_id="member-1")
+            processor = FakeOccurrenceProcessor(fail=True)
+            scheduler = AutomationScheduler(
+                repository=repository,
+                processor=processor,
+                bot_user_id="7",
+                persona=_PERSONA,
+                clock=lambda: datetime(2026, 8, 3, 3, 31, tzinfo=UTC),
+            )
+            self.assertEqual(1, scheduler.run_once(worker_id="worker-a"))
+            occurrence = repository.get_occurrence(occurrence_id=processor.sources[0].occurrence_id)
+            assert occurrence is not None
+            self.assertEqual(OccurrenceStatus.DEFINITE_FAILURE, occurrence.status)
+
+    def test_next_schedule_skips_weekend(self) -> None:
+        with temporary_database() as database:
+            repository = AutomationRepository(database)
+            config = repository.enable_group(chat_id="-1001")
+            next_at = next_scheduled(
+                config,
+                after=datetime(2026, 8, 1, 2, tzinfo=UTC),
+            )
+            self.assertEqual(datetime(2026, 8, 3, 3, 30, tzinfo=UTC), next_at)
+
+
+if __name__ == "__main__":
+    unittest.main()

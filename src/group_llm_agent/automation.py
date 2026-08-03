@@ -246,6 +246,56 @@ class AutomationRepository:
             ).fetchone()
         return _config_from_row(row) if row is not None else None
 
+    def list_configs(self) -> tuple[GroupAutomationConfig, ...]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM automation_group_configs
+                WHERE automation_type = ? ORDER BY chat_id
+                """,
+                (_TYPE_ID,),
+            ).fetchall()
+        return tuple(_config_from_row(row) for row in rows)
+
+    def update_config(
+        self,
+        *,
+        chat_id: str,
+        timezone: str,
+        lunch_time: str,
+        dinner_time: str,
+        location_text: str | None,
+    ) -> GroupAutomationConfig:
+        timezone = validate_timezone(timezone)
+        lunch_time = validate_meal_time(lunch_time)
+        dinner_time = validate_meal_time(dinner_time)
+        if lunch_time == dinner_time:
+            raise ValueError("meal times must be distinct")
+        location_text = validate_location(location_text)
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE automation_group_configs
+                SET timezone = ?, lunch_time = ?, dinner_time = ?, location_text = ?,
+                    config_version = config_version + 1, updated_at = ?
+                WHERE chat_id = ? AND automation_type = ? AND enabled = 1
+                """,
+                (
+                    timezone,
+                    lunch_time,
+                    dinner_time,
+                    location_text,
+                    _utc_now(),
+                    chat_id,
+                    _TYPE_ID,
+                ),
+            )
+        if cursor.rowcount != 1:
+            raise ValueError("automation is not enabled")
+        config = self.get_config(chat_id=chat_id)
+        assert config is not None
+        return config
+
     def set_paused(self, *, chat_id: str, paused: bool) -> bool:
         return self._set_flag(chat_id=chat_id, column="paused", value=paused)
 
@@ -321,6 +371,47 @@ class AutomationRepository:
                 (chat_id, _TYPE_ID, member_user_id),
             )
         return cursor.rowcount == 1
+
+    def set_preferences(
+        self,
+        *,
+        chat_id: str,
+        member_user_id: str,
+        preferences: SubscriptionPreferences,
+    ) -> bool:
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE automation_subscriptions
+                SET cuisine_tags_json = ?, budget_band = ?, dietary_tags_json = ?,
+                    avoid_items_json = ?, updated_at = ?
+                WHERE chat_id = ? AND automation_type = ? AND member_user_id = ?
+                  AND active = 1
+                """,
+                (
+                    _json_array(preferences.cuisine_tags),
+                    preferences.budget_band,
+                    _json_array(preferences.dietary_tags),
+                    _json_array(preferences.avoid_items),
+                    _utc_now(),
+                    chat_id,
+                    _TYPE_ID,
+                    member_user_id,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def is_subscribed(self, *, chat_id: str, member_user_id: str) -> bool:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT 1 FROM automation_subscriptions
+                WHERE chat_id = ? AND automation_type = ? AND member_user_id = ?
+                  AND active = 1
+                """,
+                (chat_id, _TYPE_ID, member_user_id),
+            ).fetchone()
+        return row is not None
 
     def aggregate_preferences(self, *, chat_id: str) -> AggregatedPreferences:
         with self.database.connect() as connection:
@@ -486,6 +577,69 @@ class AutomationRepository:
                 (chat_id, _TYPE_ID, limit),
             ).fetchall()
         return tuple(str(row["prepared_primary_key"]) for row in rows)
+
+    def mark_occurrence(
+        self,
+        *,
+        occurrence_id: str,
+        status: OccurrenceStatus,
+        reason_code: str,
+    ) -> bool:
+        if status in {OccurrenceStatus.DUE, OccurrenceStatus.LEASED}:
+            raise ValueError("occurrence outcome must be terminal or prepared")
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE automation_occurrences
+                SET status = ?, reason_code = ?, lease_owner = NULL,
+                    lease_expires_at = NULL, updated_at = ?
+                WHERE occurrence_id = ?
+                  AND status NOT IN ('sent', 'uncertain', 'definite_failure')
+                """,
+                (status.value, reason_code, _utc_now(), occurrence_id),
+            )
+        return cursor.rowcount == 1
+
+    def record_action(
+        self,
+        *,
+        chat_id: str,
+        actor_user_id: str,
+        actor_role: str,
+        action_kind: str,
+        result_kind: str,
+        reason_code: str,
+        config_version: int | None = None,
+        at: datetime | None = None,
+    ) -> int:
+        current = at or datetime.now(UTC)
+        _require_aware(current)
+        purge_after = current + timedelta(days=30)
+        with self.database.transaction() as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO automation_action_audit (
+                    chat_id, automation_type, actor_user_id, actor_role,
+                    action_kind, result_kind, reason_code, config_version,
+                    created_at, purge_after
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    chat_id,
+                    _TYPE_ID,
+                    actor_user_id,
+                    actor_role,
+                    action_kind,
+                    result_kind,
+                    reason_code,
+                    config_version,
+                    current.isoformat(),
+                    purge_after.isoformat(),
+                ),
+            )
+        if cursor.lastrowid is None:
+            raise sqlite3.DatabaseError("automation audit insert produced no row")
+        return int(cursor.lastrowid)
 
     def scheduled_source(self, *, occurrence: AutomationOccurrence) -> ScheduledOccurrenceSource:
         config = self.get_config(chat_id=occurrence.chat_id)

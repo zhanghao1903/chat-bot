@@ -13,6 +13,7 @@ _BOT_MODES = {"fixed", "persona_direct", "persona_full"}
 _MEMORY_CAPABILITIES = {"disabled", "available"}
 _VISION_CAPABILITIES = {"disabled", "available"}
 _EXPRESSION_CAPABILITIES = {"disabled", "enabled"}
+_AUTOMATION_CAPABILITIES = {"disabled", "available"}
 _MODEL_PROVIDERS = {"openai_compatible"}
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -119,6 +120,9 @@ class Settings:
     expression_capability: str
     expression_catalog_path: Path | None
     expression_catalog_sha256: str | None
+    automation_capability: str
+    automation_tick_seconds: int
+    scheduled_effect_deadline_seconds: int
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -171,6 +175,12 @@ class Settings:
             "EXPRESSION_CAPABILITY",
             default="disabled",
             choices=_EXPRESSION_CAPABILITIES,
+        )
+        automation_capability = _choice(
+            env,
+            "AUTOMATION_CAPABILITY",
+            default="disabled",
+            choices=_AUTOMATION_CAPABILITIES,
         )
         expression_catalog_path: Path | None = None
         expression_catalog_sha256: str | None = None
@@ -329,4 +339,19 @@ class Settings:
             expression_capability=expression_capability,
             expression_catalog_path=expression_catalog_path,
             expression_catalog_sha256=expression_catalog_sha256,
+            automation_capability=automation_capability,
+            automation_tick_seconds=_integer(
+                env,
+                "AUTOMATION_TICK_SECONDS",
+                default=15,
+                minimum=5,
+                maximum=60,
+            ),
+            scheduled_effect_deadline_seconds=_integer(
+                env,
+                "SCHEDULED_EFFECT_DEADLINE_SECONDS",
+                default=60,
+                minimum=15,
+                maximum=90,
+            ),
         )

@@ -7,6 +7,8 @@ from datetime import timedelta
 from time import sleep as default_sleep
 from typing import Any
 
+from group_llm_agent.automation import AutomationRepository
+from group_llm_agent.automation_control import AutomationControlService
 from group_llm_agent.config import ConfigError, Settings
 from group_llm_agent.context import ContextAssembler
 from group_llm_agent.continuity import ConversationContinuityDecider
@@ -307,6 +309,15 @@ def _persona_runtime(
         runs=runs,
         capability_available=settings.member_memory_capability == "available",
     )
+    automation_controls = AutomationControlService(
+        allowed_chat_id=settings.telegram_chat_id,
+        bot_user_id=bot_user_id,
+        bot_username=bot_username,
+        telegram=client,
+        repository=AutomationRepository(database),
+        runs=runs,
+        capability_available=settings.automation_capability == "available",
+    )
     processor = PersonaMessageProcessor(
         mode=settings.bot_mode,
         allowed_chat_id=settings.telegram_chat_id,
@@ -319,6 +330,7 @@ def _persona_runtime(
         controls=controls,
         triggers=triggers,
         effector=effector,
+        automation_controls=automation_controls,
         media_loader=(
             TelegramMediaLoader(
                 client=client,
