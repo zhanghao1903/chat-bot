@@ -14,6 +14,7 @@ _MEMORY_CAPABILITIES = {"disabled", "available"}
 _VISION_CAPABILITIES = {"disabled", "available"}
 _EXPRESSION_CAPABILITIES = {"disabled", "enabled"}
 _AUTOMATION_CAPABILITIES = {"disabled", "available"}
+_TAVILY_WEB_CAPABILITIES = {"disabled", "available"}
 _MODEL_PROVIDERS = {"openai_compatible"}
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -50,6 +51,17 @@ def _secret(env: Mapping[str, str], name: str) -> str:
         or any(ord(character) < 33 or ord(character) == 127 for character in value)
     ):
         raise ConfigError(name, "has an invalid format")
+    return value
+
+
+def _optional_secret(env: Mapping[str, str], name: str) -> str | None:
+    value = env.get(name, "")
+    if not value:
+        return None
+    if value != value.strip() or any(
+        ord(character) < 33 or ord(character) == 127 for character in value
+    ):
+        return None
     return value
 
 
@@ -123,6 +135,10 @@ class Settings:
     automation_capability: str
     automation_tick_seconds: int
     scheduled_effect_deadline_seconds: int
+    tavily_web_capability: str
+    tavily_api_key: str | None = field(repr=False)
+    tavily_project_id: str | None
+    tavily_timeout_seconds: int
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -182,6 +198,19 @@ class Settings:
             default="disabled",
             choices=_AUTOMATION_CAPABILITIES,
         )
+        tavily_web_capability = _choice(
+            env,
+            "TAVILY_WEB_CAPABILITY",
+            default="disabled",
+            choices=_TAVILY_WEB_CAPABILITIES,
+        )
+        tavily_api_key = _optional_secret(env, "TAVILY_API_KEY")
+        tavily_project_id = env.get("TAVILY_PROJECT_ID", "").strip() or None
+        if tavily_project_id is not None and (
+            len(tavily_project_id) > 128
+            or any(ord(character) < 33 for character in tavily_project_id)
+        ):
+            raise ConfigError("TAVILY_PROJECT_ID", "has an invalid format")
         expression_catalog_path: Path | None = None
         expression_catalog_sha256: str | None = None
         if bot_mode != "fixed":
@@ -353,5 +382,15 @@ class Settings:
                 default=60,
                 minimum=15,
                 maximum=90,
+            ),
+            tavily_web_capability=tavily_web_capability,
+            tavily_api_key=tavily_api_key,
+            tavily_project_id=tavily_project_id,
+            tavily_timeout_seconds=_integer(
+                env,
+                "TAVILY_TIMEOUT_SECONDS",
+                default=8,
+                minimum=3,
+                maximum=10,
             ),
         )

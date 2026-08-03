@@ -407,6 +407,12 @@ class RunRepository:
         budget_ordinal: int = 0,
         extension_reason_code: str | None = None,
         result_novel: bool = False,
+        budget_kind: Literal["context", "web"] = "context",
+        provider_request_id: str | None = None,
+        provider_credits: float | None = None,
+        source_domains_json: str | None = None,
+        retrieved_at: datetime | None = None,
+        provider_error_code: str | None = None,
     ) -> int:
         if min(latency_ms, result_count, result_char_count, budget_ordinal) < 0:
             raise ValueError("Audit counts must be non-negative")
@@ -417,9 +423,11 @@ class RunRepository:
                     owner_kind, owner_id, chat_id, capability, purpose_code,
                     source_scope, status, latency_ms, result_count,
                     result_char_count, budget_ordinal, extension_reason_code,
-                    result_novel, created_at
+                    result_novel, budget_kind, provider_request_id,
+                    provider_credits, source_domains_json, retrieved_at,
+                    provider_error_code, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     owner_kind,
@@ -435,6 +443,12 @@ class RunRepository:
                     budget_ordinal,
                     extension_reason_code,
                     int(result_novel),
+                    budget_kind,
+                    provider_request_id,
+                    provider_credits,
+                    source_domains_json,
+                    retrieved_at.isoformat() if retrieved_at is not None else None,
+                    provider_error_code,
                     _utc_now(),
                 ),
             )
