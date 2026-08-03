@@ -284,3 +284,5 @@ class FinalEffect:
     mood_signal: str | None = None
     used_memory_ids: tuple[str, ...] = ()
     used_tool_call_ids: tuple[int, ...] = ()
+    primary_key: str | None = None
+    source_urls: tuple[str, ...] = ()

@@ -45,6 +45,7 @@ from group_llm_agent.runtime import (
     RecognitionBackgroundWorker,
     TelegramPollingService,
 )
+from group_llm_agent.tavily import TavilyClient
 from group_llm_agent.tools import ReadOnlyToolRegistry
 from group_llm_agent.trigger import (
     PersonaTriggerDecider,
@@ -52,6 +53,7 @@ from group_llm_agent.trigger import (
     TriggerCoordinator,
 )
 from group_llm_agent.vision import OpenAICompatibleVisionClient, VisionModelPort
+from group_llm_agent.web_tools import WebToolSession
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +250,18 @@ def _persona_runtime(
         recognition_policy_version="recognition-v1",
     )
     tools = ReadOnlyToolRegistry(messages=messages, memory=memory, runs=runs)
+    web_session_factory: Callable[[], WebToolSession] | None = None
+    if settings.tavily_web_capability == "available" and settings.tavily_api_key is not None:
+        tavily_client = TavilyClient(
+            api_key=settings.tavily_api_key,
+            timeout_seconds=settings.tavily_timeout_seconds,
+            project_id=settings.tavily_project_id,
+        )
+
+        def _web_session() -> WebToolSession:
+            return WebToolSession(client=tavily_client, runs=runs)
+
+        web_session_factory = _web_session
     catalog_provider: Callable[[], ExpressionCatalog] | None = None
     if settings.expression_capability == "enabled":
         assert settings.expression_catalog_path is not None
@@ -273,8 +287,11 @@ def _persona_runtime(
             maximum_model_calls=settings.effect_max_model_calls,
             ordinary_tool_calls=settings.effect_ordinary_tool_calls,
             maximum_tool_calls=settings.effect_max_tool_calls,
+            maximum_web_tool_calls=settings.web_tool_limit,
+            maximum_result_characters=settings.tool_result_total_chars,
         ),
         expression_catalog_provider=catalog_provider,
+        web_session_factory=web_session_factory,
     )
     platform_gate = PlatformTriggerGate(
         allowed_chat_id=settings.telegram_chat_id,

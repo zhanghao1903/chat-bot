@@ -340,6 +340,58 @@ class ModelResultParserTests(unittest.TestCase):
                 allowed_tools=frozenset(),
             )
 
+    def test_writer_food_parser_accepts_only_exact_bounded_shape(self) -> None:
+        payload = {
+            "kind": "food_recommendation",
+            "reason_code": "weekday_lunch",
+            "mode": "sourced",
+            "primary": {
+                "canonical_key": "merchant:noodle-house",
+                "label": "面馆",
+                "description": "热汤面，适合今天的午餐。",
+            },
+            "alternatives": [
+                {
+                    "canonical_key": "dish:rice-bowl",
+                    "label": "盖饭",
+                    "description": "更快更扎实。",
+                },
+                {
+                    "canonical_key": "dish:salad",
+                    "label": "沙拉碗",
+                    "description": "想吃清爽一点可以选它。",
+                },
+            ],
+            "source_result_ids": ["web:1"],
+            "cautious_freshness_note": "营业信息可能变化，出发前再确认一下。",
+        }
+
+        decision = parse_writer_decision(
+            StructuredModelResult(payload),
+            allowed_tools=frozenset(),
+        )
+
+        self.assertEqual(WriterDecisionKind.FOOD_RECOMMENDATION, decision.kind)
+        self.assertEqual("merchant:noodle-house", decision.food_primary.canonical_key)
+        self.assertEqual(2, len(decision.food_alternatives))
+        self.assertEqual(("web:1",), decision.source_result_ids)
+
+        invalid_payloads = (
+            {**payload, "unexpected": True},
+            {**payload, "alternatives": payload["alternatives"][:1]},
+            {**payload, "source_result_ids": ["web:1", "web:1"]},
+            {
+                **payload,
+                "primary": {**payload["primary"], "raw_url": "https://example.test"},
+            },
+        )
+        for invalid in invalid_payloads:
+            with self.subTest(invalid=invalid), self.assertRaises(ModelResultError):
+                parse_writer_decision(
+                    StructuredModelResult(invalid),
+                    allowed_tools=frozenset(),
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

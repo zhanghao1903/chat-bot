@@ -29,6 +29,9 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.scheduled_effect_deadline_seconds, 60)
         self.assertEqual(settings.tavily_web_capability, "disabled")
         self.assertIsNone(settings.tavily_api_key)
+        self.assertEqual(11, settings.effect_max_model_calls)
+        self.assertEqual(5, settings.web_tool_limit)
+        self.assertEqual(16_384, settings.tool_result_total_chars)
         self.assertNotIn("123456:test-token", repr(settings))
 
     def test_missing_token_is_safe_and_actionable(self) -> None:
@@ -84,6 +87,8 @@ class SettingsTests(unittest.TestCase):
                 "RAW_MESSAGE_RETENTION_DAYS": "5",
                 "EFFECT_MAX_MODEL_CALLS": "2",
                 "EFFECT_MAX_TOOL_CALLS": "1",
+                "WEB_TOOL_LIMIT": "4",
+                "TOOL_RESULT_TOTAL_CHARS": "4096",
                 "EFFECT_DEADLINE_SECONDS": "18",
                 "TRIGGER_DECISION_TIMEOUT_SECONDS": "4",
                 "RECOGNITION_TIMEOUT_SECONDS": "20",
@@ -104,6 +109,8 @@ class SettingsTests(unittest.TestCase):
             (settings.effect_max_model_calls, settings.effect_max_tool_calls),
             (2, 1),
         )
+        self.assertEqual(4, settings.web_tool_limit)
+        self.assertEqual(4096, settings.tool_result_total_chars)
         self.assertNotIn("model-secret", repr(settings))
 
     def test_persona_mode_rejects_missing_or_unsafe_secret_without_echo(self) -> None:

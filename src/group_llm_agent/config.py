@@ -120,6 +120,8 @@ class Settings:
     effect_max_model_calls: int
     effect_ordinary_tool_calls: int
     effect_max_tool_calls: int
+    web_tool_limit: int
+    tool_result_total_chars: int
     effect_deadline_seconds: int
     trigger_decision_timeout_seconds: int
     recognition_timeout_seconds: int
@@ -246,9 +248,9 @@ class Settings:
         effect_max_model_calls = _integer(
             env,
             "EFFECT_MAX_MODEL_CALLS",
-            default=6,
+            default=11,
             minimum=1,
-            maximum=6,
+            maximum=11,
         )
         effect_max_tool_calls = _integer(
             env,
@@ -314,6 +316,20 @@ class Settings:
             effect_max_model_calls=effect_max_model_calls,
             effect_ordinary_tool_calls=effect_ordinary_tool_calls,
             effect_max_tool_calls=effect_max_tool_calls,
+            web_tool_limit=_integer(
+                env,
+                "WEB_TOOL_LIMIT",
+                default=5,
+                minimum=0,
+                maximum=5,
+            ),
+            tool_result_total_chars=_integer(
+                env,
+                "TOOL_RESULT_TOTAL_CHARS",
+                default=16_384,
+                minimum=1_024,
+                maximum=16_384,
+            ),
             effect_deadline_seconds=_integer(
                 env,
                 "EFFECT_DEADLINE_SECONDS",
