@@ -8,7 +8,7 @@ from tempfile import TemporaryDirectory
 
 from helpers import temporary_database
 
-from group_llm_agent.database import SQLiteDatabase
+from group_llm_agent.database import _MIGRATIONS, SQLiteDatabase
 from group_llm_agent.delivery import SQLiteDeliveryLedger
 from group_llm_agent.events import (
     EffectRequest,
@@ -137,6 +137,88 @@ class DatabaseMigrationTests(unittest.TestCase):
                 ).status,  # type: ignore[union-attr]
             )
             reopened.close()
+
+    def test_exact_v4_database_migrates_to_v5_without_losing_effect_audit(self) -> None:
+        with TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "runtime-v4.sqlite3"
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE schema_migrations (
+                        version INTEGER PRIMARY KEY,
+                        name TEXT NOT NULL,
+                        applied_at TEXT NOT NULL
+                    )
+                    """
+                )
+                for version, name, script in _MIGRATIONS[:4]:
+                    connection.executescript(script)
+                    connection.execute(
+                        "INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)",
+                        (version, name, "2026-08-03T00:00:00+00:00"),
+                    )
+                connection.execute(
+                    """
+                    INSERT INTO external_effects (
+                        chat_id, trigger_event_id, trigger_message_id, effect_kind,
+                        requested_effect_kind, delivered_effect_kind, status,
+                        persona_version, persona_digest, platform_message_id,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, 'reply', 'reply', 'reply', 'sent', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "-1001",
+                        "legacy-event",
+                        "legacy-message",
+                        "lezhi-v2.0",
+                        "a" * 64,
+                        "legacy-outbound",
+                        "2026-08-03T00:00:00+00:00",
+                        "2026-08-03T00:00:00+00:00",
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO tool_call_audit (
+                        owner_kind, owner_id, chat_id, capability, purpose_code,
+                        source_scope, status, result_count, result_char_count,
+                        created_at
+                    ) VALUES ('effect', 7, '-1001', 'recent_messages',
+                              'context_gap', 'group', 'completed', 1, 12, ?)
+                    """,
+                    ("2026-08-03T00:00:00+00:00",),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            SQLiteDatabase(path).initialize()
+            connection = sqlite3.connect(path)
+            connection.row_factory = sqlite3.Row
+            try:
+                effect = connection.execute(
+                    "SELECT * FROM external_effects WHERE trigger_event_id = 'legacy-event'"
+                ).fetchone()
+                tool = connection.execute(
+                    "SELECT * FROM tool_call_audit WHERE owner_id = 7"
+                ).fetchone()
+                quick_check = str(connection.execute("PRAGMA quick_check").fetchone()[0])
+                migration = connection.execute(
+                    "SELECT name FROM schema_migrations WHERE version = 5"
+                ).fetchone()
+            finally:
+                connection.close()
+
+            assert effect is not None
+            assert tool is not None
+            assert migration is not None
+            self.assertEqual("inbound", effect["source_kind"])
+            self.assertIsNone(effect["scheduled_occurrence_id"])
+            self.assertEqual("legacy-outbound", effect["platform_message_id"])
+            self.assertEqual("context", tool["budget_kind"])
+            self.assertEqual("scheduled_food_automation_v0_4", migration["name"])
+            self.assertEqual("ok", quick_check)
 
     def test_memory_sources_cannot_cross_group_foreign_key_boundary(self) -> None:
         with temporary_database() as database:

@@ -4,6 +4,14 @@
 
 ### Added
 
+- Default-disabled, administrator-governed weekday lunch/dinner automation with member opt-in,
+  Shanghai-local scheduling, a 30-minute grace window, stable occurrences and at-most-once group
+  delivery.
+- Strict scheduled-food Writer output with one primary, two distinct alternatives, recent-primary
+  exclusion, typed aggregate preferences and application-owned source/render validation.
+- Tavily-backed read-only `web_search` and `web_fetch` with a separate five-call budget, opaque
+  result IDs, URL/SSRF controls, bounded untrusted content and redacted usage audit.
+
 - Bounded static Telegram media intake and OpenAI-compatible visual understanding that runs only
   after existing trigger eligibility, keeps image content untrusted, and stores no media binary.
 - Deterministic 48-item Lezhi expression candidate set with transparent masters, Telegram WebP,
@@ -42,6 +50,10 @@
 
 ### Changed
 
+- Writer model completions are capped at eleven so independent context 3/5 and Web 0–5 budgets can
+  share one deadline, 16 KiB admitted-result ceiling and reserved final completion without an
+  unbounded loop.
+
 - Writer can emit a bounded mood signal with text, sticker, or silence; media turns never
   contribute to global avatar mood state.
 - Runtime and deployment templates keep vision, production expressions, and automatic avatar
@@ -62,6 +74,10 @@
   human-message gate for unrelated ordinary messages.
 
 ### Security
+
+- Automation, Tavily Web access and every group subscription remain disabled by default; group
+  messages cannot create schedules, broaden URL scope, expose provider credentials or replay an
+  uncertain Telegram effect.
 
 - Models and group messages cannot upload assets, promote catalogs, expose Telegram asset IDs,
   change the bot profile, or expand read-only tool budgets beyond application-owned limits.

@@ -80,6 +80,40 @@ MEMBER_MEMORY_CAPABILITY=disabled
 同秒或更早、对象不明、无关内容和模型失败回到原普通规则或静默。
 此功能继续使用出站 Telegram/model HTTPS，不新增 webhook、监听端口或环境变量。
 
+## 工作日美食推荐 v0.4
+
+首次部署必须保持：
+
+```text
+AUTOMATION_CAPABILITY=disabled
+TAVILY_WEB_CAPABILITY=disabled
+```
+
+完成本地验证并取得单独的部署授权后，先只把 `AUTOMATION_CAPABILITY` 改成 `available` 并
+重启。此操作不会启用任何群；管理员还需在目标群发送 `/food_enable`，成员再发送
+`/food_subscribe`。默认时区为 `Asia/Shanghai`，工作日午餐 11:30、晚餐 17:30，宽限 30 分钟。
+管理员可用 `/food_config timezone=... lunch=HH:MM dinner=HH:MM location=...` 修改有界配置，
+并用 `/food_pause`、`/food_resume` 或 `/food_disable CONFIRM` 控制生命周期。
+
+真实 Tavily 探针需要另行授权，因为会把查询发送到外部兼容服务并可能消耗额度。获批后才
+从受保护的 `deploy/.env` 提供：
+
+```text
+TAVILY_WEB_CAPABILITY=available
+TAVILY_API_KEY=<runtime secret>
+TAVILY_PROJECT_ID=<optional id>
+TAVILY_TIMEOUT_SECONDS=8
+WEB_TOOL_LIMIT=5
+TOOL_RESULT_TOTAL_CHARS=16384
+EFFECT_MAX_MODEL_CALLS=11
+SCHEDULED_EFFECT_DEADLINE_SECONDS=60
+```
+
+Web 与既有上下文工具分别最多 5 次，但共享截止时间和总结果上限。Tavily Search/Extract
+只读，不登录、不提交、不执行脚本；失败时使用通用菜品或静默，普通聊天继续。先用
+`/food_status` 确认群配置和订阅，再等待受控的下一次 occurrence；不要通过修改系统时钟或
+数据库制造真实群消息。
+
 ## 图片理解与专属表情 v0.3
 
 图片理解和表情目录均默认关闭。纯图片不会自动抢话；只有既有触发规则已经生成一次 effect
@@ -173,6 +207,9 @@ deploy/manage.sh persona-smoke
 8. `/memory_forget_me` 后，后续互动不得使用已清除认识。
 9. `persona_full` 中与乐枝无关的消息仍受 15 分钟/5 条真人消息门槛约束。
 10. 检查日志不含 Telegram/model token、完整 prompt 或 provider 原始响应体。
+11. 自动化 capability 可用但群未启用时，确认没有 Writer、Tavily 或主动 Telegram 效果。
+12. 管理员启用且成员订阅后，确认一个工作日 occurrence 最多一条群级推荐；暂停、退订最后
+    一人、周末和超过宽限均不发送。
 
 模型人格评分和真实群 smoke 是运营证明，不会由仓库内 scripted-model 测试替代。
 
@@ -208,6 +245,10 @@ TELEGRAM_BOT_ENV_FILE=/secure/path/telegram-bot.env deploy/manage.sh start
   设计降级或静默。
 - 认识未启用：确认 capability 为 `available`，命令发送者是管理员，且公开说明发送成功。
 - SQLite 错误：检查 `telegram-bot-data` 可写性和磁盘容量。
+- 美食推荐未发送：用 `/food_status` 检查 capability、群启用/暂停、有效订阅、时区、窗口与
+  配置版本；Tavily 不可用本身不应中断普通聊天。
+- occurrence 为 `uncertain`：不要人工重放或改数据库；先确认 Telegram 实际结果，再按新的
+  未来 occurrence 恢复。系统有意不自动补发。
 
 ## 回滚
 
@@ -215,6 +256,11 @@ TELEGRAM_BOT_ENV_FILE=/secure/path/telegram-bot.env deploy/manage.sh start
 同一 Compose 服务。不要删除 `TELEGRAM_BOT_DATA_VOLUME` 指定的数据卷，否则会丢失投递
 去重、审计、认识重置代次和可能仍需保留的数据清除证据。若必须删除数据，应先按群内
 透明控制流程清除，并明确接受恢复影响。
+
+自动化回滚无需删除数据：先由管理员 `/food_pause` 或 `/food_disable CONFIRM`，再把
+`AUTOMATION_CAPABILITY=disabled` 和 `TAVILY_WEB_CAPABILITY=disabled` 写回外部环境并重启。
+移除 Tavily key 时不要打印文件内容。保留 SQLite occurrence、外部效果和控制审计；尤其不要
+把 `uncertain` 改回可发送状态。
 
 ## 安全说明
 
