@@ -1,10 +1,13 @@
 # 乐枝 v0.3 候选资产确认单
 
-- 状态：等待用户单独确认
+- 状态：已由用户单独确认（2026-08-03）
 - 候选清单 SHA-256：`1dd20aeca66a5f6cc0cc6ac5f952593abc418cd9b8fab60ce140239fb2224e5b`
-- 48 条语义目录 SHA-256：`bd85f2a6ead7943d2504d3e5203ddb54e35aa3e91446b8f5743c9ba28372f3cd`
-- 头像目录 SHA-256：`abd8aa18ab295cb261d7610daabf6650e82de8c5640855c51755de0d5c25f4ea`
-- 当前生产状态：全部 `candidate`；未上传、未映射、未启用；自动头像轮换关闭
+- 候选语义目录 SHA-256：`bd85f2a6ead7943d2504d3e5203ddb54e35aa3e91446b8f5743c9ba28372f3cd`
+- 部署侧批准目录预期 SHA-256：`b059a83987510de427d2ca2d4d4cee1c7a4f7217141aade29499127e57ac5e45`
+- 候选头像目录 SHA-256：`abd8aa18ab295cb261d7610daabf6650e82de8c5640855c51755de0d5c25f4ea`
+- 部署侧批准头像目录预期 SHA-256：`b871161e68c18115893d7aea932dabf1e9101d40278d6ce9168a6eb3735d405a`
+- 确认范围：全部 48 枚表情、完整语义目录、默认头像和四个心情头像及现有映射
+- 当前状态：用户确认已记录；仓库中的不可变源仍保持 `candidate`。合并后将从精确候选摘要复制到受保护持久目录并提升为 `approved`；尚未上传或绑定 Telegram 映射，表情运行时未启用；自动头像轮换关闭
 
 ## 逐组预览
 
@@ -74,11 +77,12 @@
 
 | 头像 ID | 来源 | 允许心情 | 圆形预览 | 生产状态 |
 | --- | --- | --- | --- | --- |
-| `lezhi-default` | Character Visual Bible 正面头像裁切 | default | [预览](../../../../src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/avatars/lezhi-default-circle.png) | candidate |
-| `lezhi-joyful` | A13 | joyful / celebratory | [预览](../../../../src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/avatars/lezhi-joyful-circle.png) | candidate |
-| `lezhi-playful` | B03 | playful / mischievous | [预览](../../../../src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/avatars/lezhi-playful-circle.png) | candidate |
-| `lezhi-pouty` | C07 | pouty / mildly_annoyed | [预览](../../../../src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/avatars/lezhi-pouty-circle.png) | candidate |
-| `lezhi-gentle` | A04 | gentle / caring | [预览](../../../../src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/avatars/lezhi-gentle-circle.png) | candidate |
+| `lezhi-default` | Character Visual Bible 正面头像裁切 | default | [预览](../../../../src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/avatars/lezhi-default-circle.png) | user-approved; source candidate |
+| `lezhi-joyful` | A13 | joyful / celebratory | [预览](../../../../src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/avatars/lezhi-joyful-circle.png) | user-approved; source candidate |
+| `lezhi-playful` | B03 | playful / mischievous | [预览](../../../../src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/avatars/lezhi-playful-circle.png) | user-approved; source candidate |
+| `lezhi-pouty` | C07 | pouty / mildly_annoyed | [预览](../../../../src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/avatars/lezhi-pouty-circle.png) | user-approved; source candidate |
+| `lezhi-gentle` | A04 | gentle / caring | [预览](../../../../src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/avatars/lezhi-gentle-circle.png) | user-approved; source candidate |
 
-需要分别确认：默认头像裁切；允许进入集合的心情头像；每个 mood 映射；是否启用自动轮换。
-确认头像不等于确认表情生产子集，确认表情也不自动授权修改公开头像。
+确认记录：用户已批准默认头像、四个心情头像及当前 mood 映射，并明确要求自动轮换暂时关闭。
+默认头像可在合并后按受控 operator 流程提升部署侧目录、写入并读取验证；心情头像可提升为
+`approved`，但不会自动应用。仓库中的确定性候选源继续保持 `candidate`，供重建和审计。

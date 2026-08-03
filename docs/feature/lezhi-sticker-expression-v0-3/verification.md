@@ -20,11 +20,17 @@
 
 - Candidate manifest SHA-256: `1dd20aeca66a5f6cc0cc6ac5f952593abc418cd9b8fab60ce140239fb2224e5b`
 - Candidate expression catalog SHA-256: `bd85f2a6ead7943d2504d3e5203ddb54e35aa3e91446b8f5743c9ba28372f3cd`
+- Expected deployment-side approved expression catalog SHA-256: `b059a83987510de427d2ca2d4d4cee1c7a4f7217141aade29499127e57ac5e45`
 - Candidate avatar catalog SHA-256: `abd8aa18ab295cb261d7610daabf6650e82de8c5640855c51755de0d5c25f4ea`
+- Expected deployment-side approved avatar catalog SHA-256: `b871161e68c18115893d7aea932dabf1e9101d40278d6ce9168a6eb3735d405a`
 - Fixed expression evaluation set SHA-256: `732a2be3863e588f783a3e7daf43d8e9218c0c5c2b6db27b28f1326080dd9016`
 - Candidate count: 48 masters, 48 Telegram-ready WebP candidates, 48 light previews,
   48 dark previews, four contact sheets, five avatar crops.
-- Every catalog entry remains `candidate`; the production runtime rejects this status.
+- On 2026-08-03 the user separately approved all 48 entries, the full semantic catalog, the
+  default avatar and all four mood avatars with their current mappings. The immutable repository
+  catalogs intentionally remain `candidate`; deployment-side copies will be promoted to `approved`
+  after merge using the recorded confirmation. Telegram mapping and expression runtime activation
+  remain absent, and automatic avatar rotation remains `false`.
 
 ## 3. Implemented contracts
 
@@ -133,12 +139,12 @@ Review finding closure proofs:
 
 | Gate | State | Required next evidence |
 | --- | --- | --- |
-| 48 split previews and full semantic catalog | **PENDING USER CONFIRMATION** | User approves all entries or names rejected semantic IDs after reviewing `candidate-review.md`. |
-| Production subset and Telegram mapping | **BLOCKED BY PREVIEW GATE** | Upload only approved entries, perform real static-sticker display/readback smoke, then confirm the production subset. |
+| 48 split previews and full semantic catalog | **CONFIRMED — ALL 48** | User confirmation recorded on 2026-08-03; deterministic deployment-side approved digest is recorded above. |
+| Production subset and Telegram mapping | **ALL 48 USER-APPROVED; PROMOTION/MAPPING PENDING** | After merge, promote a protected copy, upload all approved entries and perform real static-sticker display/readback smoke before runtime enable. |
 | Expression runtime enable | **DISABLED** | Exact `telegram_ready` catalog digest plus explicit `user-confirmed-enable:` reference. |
-| Avatar crops and mood mapping | **PENDING USER CONFIRMATION** | User approves default crop and optional mood crops/mappings. |
-| Default avatar write | **NOT ATTEMPTED** | Separate approved-avatar command plus Telegram readback. |
-| Automatic avatar rotation | **OFF** | Separate confirmation after an approved mood set; 72-hour and rolling-seven-day limits remain enforced. |
+| Avatar crops and mood mapping | **CONFIRMED — DEFAULT + FOUR MOODS** | Deterministic deployment-side approved digest is recorded above; immutable source remains candidate. |
+| Default avatar write | **AUTHORIZED; NOT ATTEMPTED** | Apply `lezhi-default` after merge and verify Telegram content readback. |
+| Automatic avatar rotation | **OFF BY USER DECISION** | Do not call the enable command; 72-hour and rolling-seven-day limits remain dormant. |
 | Real visual-provider image probe | **NOT RUN** | Local safety review requires explicit authorization to transmit a project candidate image to the configured non-official compatible endpoint. |
 | Real Telegram group UAT | **NOT RUN** | Requires the approved assets/mapping and operator-owned group messages. |
 
