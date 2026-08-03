@@ -26,6 +26,10 @@ from group_llm_agent.events import (
 from group_llm_agent.runs import RunRepository
 
 _EXPECTED_RUNTIME_TABLES = {
+    "automation_action_audit",
+    "automation_group_configs",
+    "automation_occurrences",
+    "automation_subscriptions",
     "avatar_change_audit",
     "control_action_audit",
     "effect_runs",
@@ -90,6 +94,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     (2, "conversation_triggers_v0_2"),
                     (3, "visual_expression_v0_3"),
                     (4, "avatar_global_provenance"),
+                    (5, "scheduled_food_automation_v0_4"),
                 ],
                 [tuple(row) for row in migrations],
             )

@@ -205,6 +205,8 @@ class WriterEffector:
                 used_tool_call_ids=(),
                 reason_code="persona_snapshot_mismatch",
             )
+        if request.message is None:
+            raise ValueError("scheduled effects require the scheduled effector path")
         context = self.contexts.effect_context(
             bundle=bundle,
             message=request.message,

@@ -154,7 +154,7 @@ class RunRepository:
                 SELECT 1 FROM external_effects
                 WHERE chat_id = ? AND trigger_event_id = ?
                 """,
-                (request.message.group_id, request.message.event_id),
+                (request.chat_id, request.trigger_event_id),
             ).fetchone()
             if claimed is not None:
                 raise ValueError("External effect already claimed")
@@ -163,15 +163,18 @@ class RunRepository:
                 INSERT INTO effect_runs (
                     request_id, chat_id, trigger_event_id, trigger_message_id,
                     trigger_path, trigger_category, persona_id, persona_version,
-                    persona_digest, status, deadline_at, created_at, updated_at
+                    persona_digest, source_kind, scheduled_occurrence_id,
+                    status, deadline_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)
                 ON CONFLICT(request_id) DO UPDATE SET
                     chat_id = excluded.chat_id,
                     trigger_event_id = excluded.trigger_event_id,
                     trigger_message_id = excluded.trigger_message_id,
                     trigger_path = excluded.trigger_path,
                     trigger_category = excluded.trigger_category,
+                    source_kind = excluded.source_kind,
+                    scheduled_occurrence_id = excluded.scheduled_occurrence_id,
                     persona_id = excluded.persona_id,
                     persona_version = excluded.persona_version,
                     persona_digest = excluded.persona_digest,
@@ -185,14 +188,16 @@ class RunRepository:
                 """,
                 (
                     request.request_id,
-                    request.message.group_id,
-                    request.message.event_id,
-                    request.message.message_id,
+                    request.chat_id,
+                    request.trigger_event_id,
+                    request.trigger_message_id,
                     request.trigger_path.value,
                     request.trigger_category.value,
                     request.persona.persona_id,
                     request.persona.persona_version,
                     request.persona.persona_digest,
+                    request.source_kind.value,
+                    request.scheduled.occurrence_id if request.scheduled is not None else None,
                     request.deadline_at.isoformat(),
                     now,
                     now,
