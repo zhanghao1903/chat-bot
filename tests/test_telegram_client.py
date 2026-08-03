@@ -34,6 +34,20 @@ class _BodyReadTimeoutResponse(_Response):
         raise TimeoutError("response body timed out")
 
 
+class _BinaryResponse:
+    def __init__(self, content: bytes) -> None:
+        self.content = content
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self, amount: int = -1) -> bytes:
+        return self.content if amount < 0 else self.content[:amount]
+
+
 class TelegramBotApiClientTests(unittest.TestCase):
     def test_get_me_returns_valid_result(self) -> None:
         client = TelegramBotApiClient("123456:test-token")
@@ -86,6 +100,73 @@ class TelegramBotApiClientTests(unittest.TestCase):
             },
             payload,
         )
+
+    def test_get_file_and_bounded_download(self) -> None:
+        client = TelegramBotApiClient("123456:test-token")
+        with patch(
+            "urllib.request.urlopen",
+            side_effect=[
+                _Response(
+                    {
+                        "ok": True,
+                        "result": {"file_path": "photos/file.jpg", "file_size": 4},
+                    }
+                ),
+                _BinaryResponse(b"data"),
+            ],
+        ) as urlopen:
+            telegram_file = client.get_file(file_id="opaque-file-id")
+            content = client.download_file(
+                file_path=telegram_file.file_path,
+                maximum_bytes=4,
+            )
+
+        self.assertEqual(b"data", content)
+        self.assertEqual(4, telegram_file.file_size)
+        request = urlopen.call_args_list[1].args[0]
+        self.assertEqual("GET", request.method)
+
+    def test_send_sticker_uses_mapping_and_validates_returned_identity(self) -> None:
+        client = TelegramBotApiClient("123456:test-token")
+        with patch(
+            "urllib.request.urlopen",
+            return_value=_Response(
+                {
+                    "ok": True,
+                    "result": {
+                        "message_id": 88,
+                        "sticker": {"file_unique_id": "stable-unique"},
+                    },
+                }
+            ),
+        ) as urlopen:
+            sent = client.send_sticker(
+                chat_id="-1001",
+                sticker="mapped-file-id",
+                reply_to_message_id="12",
+            )
+
+        self.assertEqual("88", sent.message_id)
+        payload = json.loads(urlopen.call_args.args[0].data.decode())
+        self.assertEqual("mapped-file-id", payload["sticker"])
+        self.assertEqual({"message_id": 12}, payload["reply_parameters"])
+
+    def test_download_rejects_paths_and_stream_overflow_without_leakage(self) -> None:
+        token = "123456:very-secret"
+        client = TelegramBotApiClient(token)
+        for path in ("../secret", "/absolute", "https://example.test/file", "a\\b"):
+            with self.subTest(path=path), self.assertRaises(TelegramApiError) as caught:
+                client.download_file(file_path=path, maximum_bytes=4)
+            self.assertEqual("invalid_file_path", caught.exception.category)
+            self.assertNotIn(path, str(caught.exception))
+            self.assertNotIn(token, str(caught.exception))
+
+        with (
+            patch("urllib.request.urlopen", return_value=_BinaryResponse(b"12345")),
+            self.assertRaises(TelegramApiError) as caught,
+        ):
+            client.download_file(file_path="photos/file.jpg", maximum_bytes=4)
+        self.assertEqual("too_large", caught.exception.category)
 
     def test_get_chat_member_returns_live_admin_status(self) -> None:
         client = TelegramBotApiClient("123456:test-token")

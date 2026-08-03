@@ -26,6 +26,7 @@ from group_llm_agent.events import (
 from group_llm_agent.runs import RunRepository
 
 _EXPECTED_RUNTIME_TABLES = {
+    "avatar_change_audit",
     "control_action_audit",
     "effect_runs",
     "external_effects",
@@ -34,6 +35,8 @@ _EXPECTED_RUNTIME_TABLES = {
     "member_memory_items",
     "member_memory_sources",
     "memory_reset_barriers",
+    "media_effect_audit",
+    "persona_mood_observations",
     "recognition_change_audit",
     "recognition_jobs",
     "schema_migrations",
@@ -82,7 +85,12 @@ class DatabaseMigrationTests(unittest.TestCase):
 
             self.assertTrue(_EXPECTED_RUNTIME_TABLES.issubset(tables))
             self.assertEqual(
-                [(1, "persona_runtime"), (2, "conversation_triggers_v0_2")],
+                [
+                    (1, "persona_runtime"),
+                    (2, "conversation_triggers_v0_2"),
+                    (3, "visual_expression_v0_3"),
+                    (4, "avatar_global_provenance"),
+                ],
                 [tuple(row) for row in migrations],
             )
             self.assertEqual(1, foreign_keys)
@@ -194,6 +202,35 @@ class DatabaseMigrationTests(unittest.TestCase):
 
 
 class RunRepositoryTests(unittest.TestCase):
+    def test_sticker_effect_records_requested_and_fallback_delivery_kinds(self) -> None:
+        with temporary_database() as database:
+            repository = RunRepository(database)
+            message = _message()
+            persona = PersonaSnapshot("original", "v1", "digest-1")
+
+            effect_id = repository.claim_external_effect(
+                message=message,
+                effect_kind=ExternalEffectKind.STICKER,
+                persona=persona,
+                asset_semantic_id="reaction.delighted.v1",
+            )
+            assert effect_id is not None
+            repository.mark_external_sent(
+                effect_id,
+                platform_message_id="telegram-fallback-99",
+                delivered_effect_kind=ExternalEffectKind.REPLY,
+            )
+
+            record = repository.get_external_effect(
+                chat_id=message.group_id,
+                trigger_event_id=message.event_id,
+            )
+            assert record is not None
+            self.assertEqual(ExternalEffectKind.STICKER, record.effect_kind)
+            self.assertEqual(ExternalEffectKind.STICKER, record.requested_effect_kind)
+            self.assertEqual(ExternalEffectKind.REPLY, record.delivered_effect_kind)
+            self.assertEqual("reaction.delighted.v1", record.asset_semantic_id)
+
     def test_external_effect_is_unique_across_kind_and_persona_version(self) -> None:
         with temporary_database() as database:
             repository = RunRepository(database)
@@ -260,6 +297,48 @@ class RunRepositoryTests(unittest.TestCase):
                 )
                 assert record is not None
                 self.assertEqual(expected, record.status.value)
+
+    def test_expression_usage_metrics_are_aggregate_only(self) -> None:
+        with temporary_database() as database:
+            repository = RunRepository(database)
+            persona = PersonaSnapshot("original", "v1", "digest-1")
+            effects = (
+                ("sticker", "a", "sticker", "sent"),
+                ("sticker", "a", "sticker", "sent"),
+                ("sticker", "b", "sticker", "sent"),
+                ("sticker", "c", "failure_reply", "sent"),
+                ("sticker", "d", None, "uncertain"),
+                ("reply", None, "reply", "sent"),
+            )
+            for index, (requested, semantic_id, delivered, status) in enumerate(effects, start=1):
+                effect_id = repository.claim_external_effect(
+                    message=_message(event_id=f"metric-{index}", message_id=str(index)),
+                    effect_kind=ExternalEffectKind(requested),
+                    persona=persona,
+                    asset_semantic_id=semantic_id,
+                )
+                assert effect_id is not None
+                if status == "sent":
+                    repository.mark_external_sent(
+                        effect_id,
+                        platform_message_id=f"out-{index}",
+                        delivered_effect_kind=ExternalEffectKind(delivered),
+                    )
+                else:
+                    repository.mark_external_uncertain(effect_id, error_code="timeout")
+
+            metrics = repository.expression_usage_metrics(
+                chat_id="-1001",
+                since=datetime(2026, 1, 1, tzinfo=UTC),
+            )
+
+            self.assertEqual(5, metrics.visible_effect_count)
+            self.assertEqual(5, metrics.sticker_requested_count)
+            self.assertEqual(3, metrics.sticker_sent_count)
+            self.assertEqual(1, metrics.repeated_sticker_count)
+            self.assertEqual(2, metrics.degraded_sticker_count)
+            self.assertEqual(0.6, metrics.sticker_visible_rate)
+            self.assertEqual(0.4, metrics.sticker_degradation_rate)
 
     def test_effect_run_records_metadata_but_not_response_text(self) -> None:
         with temporary_database() as database:

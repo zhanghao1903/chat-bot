@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 from helpers import temporary_database
 
-from group_llm_agent.events import PersonaSnapshot, TelegramTextMessage
+from group_llm_agent.events import InboundMedia, MediaKind, PersonaSnapshot, TelegramTextMessage
 from group_llm_agent.messages import MessageRepository
 
 _PERSONA = PersonaSnapshot("test-persona", "v1", "digest-v1")
@@ -29,6 +29,112 @@ def _message(
 
 
 class MessageRepositoryTests(unittest.TestCase):
+    def test_transient_media_keeps_safe_reference_without_persistence(self) -> None:
+        with temporary_database() as database:
+            repository = MessageRepository(database)
+            message = TelegramTextMessage(
+                event_id="event-media-transient",
+                group_id="group-a",
+                message_id="media-1",
+                sender_id="user-a",
+                sender_display_name="A",
+                text="",
+                timestamp=datetime(2026, 7, 29, tzinfo=UTC),
+                media=InboundMedia(
+                    kind=MediaKind.PHOTO,
+                    file_id="telegram-download-secret",
+                    file_unique_id="stable-media-reference",
+                    file_size=1234,
+                    width=640,
+                    height=480,
+                ),
+            )
+
+            result = repository.ingest_inbound(
+                message,
+                persona=_PERSONA,
+                recognition_policy_version="policy-v1",
+            )
+            recent = repository.recent(chat_id="group-a")
+
+            self.assertFalse(result.persisted)
+            self.assertEqual(1, len(recent))
+            self.assertEqual("photo", recent[0].media_kind)
+            self.assertEqual("stable-media-reference", recent[0].media_unique_id)
+
+            connection = database.connect()
+            try:
+                self.assertEqual(
+                    0,
+                    int(connection.execute("SELECT count(*) FROM group_messages").fetchone()[0]),
+                )
+            finally:
+                connection.close()
+
+    def test_persistent_media_only_message_never_stores_download_file_id(self) -> None:
+        with temporary_database() as database:
+            repository = MessageRepository(database)
+            repository.policies.set_memory_status(
+                chat_id="group-a",
+                status="enabled",
+                persona=_PERSONA,
+                notice_message_id="notice-1",
+                enabled_by_user_id="admin-1",
+            )
+            message = TelegramTextMessage(
+                event_id="event-media-persistent",
+                group_id="group-a",
+                message_id="media-2",
+                sender_id="user-a",
+                sender_display_name="A",
+                text="",
+                timestamp=datetime(2026, 7, 29, tzinfo=UTC),
+                media=InboundMedia(
+                    kind=MediaKind.STATIC_STICKER,
+                    file_id="telegram-download-secret",
+                    file_unique_id="stable-media-reference",
+                    mime_type="image/webp",
+                    width=512,
+                    height=512,
+                    sticker_set_name="example_set",
+                ),
+            )
+
+            result = repository.ingest_inbound(
+                message,
+                persona=_PERSONA,
+                recognition_policy_version="policy-v1",
+            )
+
+            self.assertTrue(result.persisted)
+            self.assertIsNotNone(result.message_id)
+            self.assertIsNone(result.recognition_job_id)
+            connection = database.connect()
+            try:
+                row = connection.execute(
+                    """
+                    SELECT media_kind, media_unique_id, media_catalog_id
+                    FROM group_messages WHERE id = ?
+                    """,
+                    (result.message_id,),
+                ).fetchone()
+                columns = {
+                    str(column["name"])
+                    for column in connection.execute("PRAGMA table_info(group_messages)")
+                }
+                jobs = int(
+                    connection.execute("SELECT count(*) FROM recognition_jobs").fetchone()[0]
+                )
+            finally:
+                connection.close()
+
+            self.assertEqual(
+                ("static_sticker", "stable-media-reference", None),
+                tuple(row),
+            )
+            self.assertNotIn("file_id", columns)
+            self.assertEqual(0, jobs)
+
     def test_disabled_memory_keeps_only_last_twenty_messages_in_process(self) -> None:
         with temporary_database() as database:
             repository = MessageRepository(database)

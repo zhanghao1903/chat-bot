@@ -352,8 +352,9 @@ class PersonaDeploymentGateTests(unittest.TestCase):
                     """
                     INSERT INTO external_effects (
                         chat_id, trigger_event_id, trigger_message_id, effect_kind,
+                        requested_effect_kind, delivered_effect_kind,
                         status, persona_version, persona_digest, created_at, updated_at
-                    ) VALUES (?, ?, ?, 'reply', 'sent', ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, 'reply', 'reply', 'reply', 'sent', ?, ?, ?, ?)
                     """,
                     (
                         "-1001",

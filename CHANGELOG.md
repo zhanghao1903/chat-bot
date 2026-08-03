@@ -4,6 +4,17 @@
 
 ### Added
 
+- Bounded static Telegram media intake and OpenAI-compatible visual understanding that runs only
+  after existing trigger eligibility, keeps image content untrusted, and stores no media binary.
+- Deterministic 48-item Lezhi expression candidate set with transparent masters, Telegram WebP,
+  light/dark previews, canonical semantic catalog, exact source traceability, and five avatar crops.
+- Application-owned text/sticker/silence decisions, enabled-catalog allowlisting, final mapping
+  revalidation, one-effect delivery, uncertain-send suppression, and confirmed-failure fallback.
+- Explicit operator-only catalog promotion, sticker-pack publication, profile-photo update,
+  readback/rollback, global stable-mood rotation, and signal-safe exclusive mutation lock.
+- Adaptive read-only Writer budget with three ordinary calls, auditable calls four and five only
+  after novel evidence and a remaining gap, and a hard prohibition on a sixth call.
+
 - Immutable `lezhi-v2.0` Character Bundle with complete nineteen-field source preservation, 37
   paired examples/evaluation cases, exact source traceability, and shared Trigger, Recognition,
   and Effector snapshot identity.
@@ -31,6 +42,11 @@
 
 ### Changed
 
+- Writer can emit a bounded mood signal with text, sticker, or silence; media turns never
+  contribute to global avatar mood state.
+- Runtime and deployment templates keep vision, production expressions, and automatic avatar
+  rotation disabled until their separate user-confirmation and Telegram verification gates pass.
+
 - Compose persona releases now preserve the explicitly selected database file and named data
   volume, including deployments whose historical SQLite filename differs from the default.
 - The production persona can be explicitly pinned to `lezhi-v2.0`; subjective memory remains
@@ -46,6 +62,11 @@
   human-message gate for unrelated ordinary messages.
 
 ### Security
+
+- Models and group messages cannot upload assets, promote catalogs, expose Telegram asset IDs,
+  change the bot profile, or expand read-only tool budgets beyond application-owned limits.
+- Media downloads are bounded by bytes, pixels, dimensions, MIME and timeout; token-bearing URLs,
+  raw pixels, prompts and provider bodies do not enter durable audits.
 
 - Model-selected tools cannot override group/member scope, invoke external writes, or access
   credentials.

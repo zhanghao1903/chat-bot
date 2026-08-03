@@ -80,6 +80,36 @@ MEMBER_MEMORY_CAPABILITY=disabled
 同秒或更早、对象不明、无关内容和模型失败回到原普通规则或静默。
 此功能继续使用出站 Telegram/model HTTPS，不新增 webhook、监听端口或环境变量。
 
+## 图片理解与专属表情 v0.3
+
+图片理解和表情目录均默认关闭。纯图片不会自动抢话；只有既有触发规则已经生成一次 effect
+request，运行时才会下载静态媒体。要试验视觉能力，先配置 `VISION_MODEL`，再显式设置：
+
+```text
+VISION_CAPABILITY=available
+```
+
+专属表情不得直接把候选目录设为 enabled。操作者必须使用
+`group-llm-agent-operator` 依次完成 `expression-approve`、`expression-publish`、
+`expression-attach` 和 `expression-enable`，每条命令都提供精确前态 SHA-256 和相应用户确认/
+Telegram smoke 引用。映射 carrier 应写入 `/app/data` 或其他受保护持久目录，权限保持 0600。
+只有启用后的精确目录路径和摘要才能写入：
+
+```text
+EXPRESSION_CAPABILITY=enabled
+EXPRESSION_CATALOG_PATH=/app/src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/catalog.json
+EXPRESSION_CATALOG_SHA256=<enabled catalog sha256>
+```
+
+头像使用同一 operator 入口的 `avatar-approve`、`avatar-apply`、
+`avatar-enable-rotation` 和 `avatar-rotate`。更新对象是 bot 账号公开头像，不是群头像。外部写入
+期间独占锁覆盖 apply、读取验证和旧头像/none 回滚；HUP/INT/TERM 会先走回滚再释放锁。
+自动轮换默认关闭，即使启用也要求至少三次、跨两小时、70% 一致的全局心情证据，并受 72
+小时冷却和滚动 7 天最多两次限制。
+
+在用户分别确认 48 枚联系表与目录、生产子集及 Telegram 显示、头像裁切和心情映射以前，
+不得运行上述真实 publish/apply/enable 命令。
+
 ## 低频发布乐枝 v2
 
 `lezhi-v1.0` 是固定回滚点；`lezhi-v2.0` 的生产摘要为：

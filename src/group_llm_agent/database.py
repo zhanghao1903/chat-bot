@@ -295,6 +295,190 @@ _MIGRATIONS: tuple[tuple[int, str, str], ...] = (
             ON trigger_evaluations(chat_id, trigger_event_id);
         """,
     ),
+    (
+        3,
+        "visual_expression_v0_3",
+        """
+        ALTER TABLE group_messages
+            ADD COLUMN media_kind TEXT
+                CHECK (media_kind IN ('photo', 'static_document', 'static_sticker'));
+        ALTER TABLE group_messages ADD COLUMN media_unique_id TEXT;
+        ALTER TABLE group_messages ADD COLUMN media_catalog_id TEXT;
+
+        ALTER TABLE effect_runs RENAME TO effect_runs_v2;
+        CREATE TABLE effect_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id TEXT NOT NULL UNIQUE,
+            chat_id TEXT NOT NULL,
+            trigger_event_id TEXT NOT NULL,
+            trigger_message_id TEXT NOT NULL,
+            trigger_path TEXT NOT NULL CHECK (trigger_path IN ('direct', 'contextual')),
+            trigger_category TEXT NOT NULL DEFAULT 'ordinary_contextual'
+                CHECK (
+                    trigger_category IN (
+                        'direct_platform', 'direct_persona_name',
+                        'conversation_continuity', 'ordinary_contextual'
+                    )
+                ),
+            persona_id TEXT NOT NULL,
+            persona_version TEXT NOT NULL,
+            persona_digest TEXT NOT NULL,
+            status TEXT NOT NULL
+                CHECK (
+                    status IN (
+                        'processing', 'reply', 'sticker', 'silence',
+                        'failure_reply', 'failed'
+                    )
+                ),
+            model_call_count INTEGER NOT NULL DEFAULT 0,
+            tool_call_count INTEGER NOT NULL DEFAULT 0,
+            reason_code TEXT,
+            error_code TEXT,
+            deadline_at TEXT NOT NULL,
+            vision_status TEXT NOT NULL DEFAULT 'not_called'
+                CHECK (vision_status IN ('not_called', 'completed', 'failed')),
+            vision_model TEXT,
+            catalog_version TEXT,
+            catalog_digest TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        INSERT INTO effect_runs (
+            id, request_id, chat_id, trigger_event_id, trigger_message_id,
+            trigger_path, trigger_category, persona_id, persona_version,
+            persona_digest, status, model_call_count, tool_call_count,
+            reason_code, error_code, deadline_at, created_at, updated_at
+        )
+        SELECT
+            id, request_id, chat_id, trigger_event_id, trigger_message_id,
+            trigger_path, trigger_category, persona_id, persona_version,
+            persona_digest, status, model_call_count, tool_call_count,
+            reason_code, error_code, deadline_at, created_at, updated_at
+        FROM effect_runs_v2;
+        DROP TABLE effect_runs_v2;
+        CREATE INDEX idx_effect_runs_chat_event
+            ON effect_runs(chat_id, trigger_event_id);
+
+        ALTER TABLE external_effects RENAME TO external_effects_v2;
+        CREATE TABLE external_effects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            trigger_event_id TEXT NOT NULL,
+            trigger_message_id TEXT NOT NULL,
+            effect_kind TEXT NOT NULL
+                CHECK (effect_kind IN ('reply', 'sticker', 'failure_reply', 'control_ack')),
+            requested_effect_kind TEXT NOT NULL
+                CHECK (
+                    requested_effect_kind IN (
+                        'reply', 'sticker', 'failure_reply', 'control_ack'
+                    )
+                ),
+            delivered_effect_kind TEXT
+                CHECK (
+                    delivered_effect_kind IS NULL OR delivered_effect_kind IN (
+                        'reply', 'sticker', 'failure_reply', 'control_ack'
+                    )
+                ),
+            asset_semantic_id TEXT,
+            status TEXT NOT NULL
+                CHECK (status IN ('sending', 'sent', 'failed', 'uncertain')),
+            persona_version TEXT,
+            persona_digest TEXT,
+            platform_message_id TEXT,
+            error_code TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(chat_id, trigger_event_id)
+        );
+        INSERT INTO external_effects (
+            id, chat_id, trigger_event_id, trigger_message_id, effect_kind,
+            requested_effect_kind, delivered_effect_kind, status,
+            persona_version, persona_digest, platform_message_id, error_code,
+            created_at, updated_at
+        )
+        SELECT
+            id, chat_id, trigger_event_id, trigger_message_id, effect_kind,
+            effect_kind,
+            CASE WHEN status = 'sent' THEN effect_kind ELSE NULL END,
+            status, persona_version, persona_digest, platform_message_id,
+            error_code, created_at, updated_at
+        FROM external_effects_v2;
+        DROP TABLE external_effects_v2;
+
+        ALTER TABLE tool_call_audit
+            ADD COLUMN budget_ordinal INTEGER NOT NULL DEFAULT 0
+                CHECK (budget_ordinal >= 0);
+        ALTER TABLE tool_call_audit ADD COLUMN extension_reason_code TEXT;
+        ALTER TABLE tool_call_audit
+            ADD COLUMN result_novel INTEGER NOT NULL DEFAULT 0
+                CHECK (result_novel IN (0, 1));
+
+        CREATE TABLE media_effect_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            trigger_event_id TEXT NOT NULL,
+            media_kind TEXT NOT NULL
+                CHECK (media_kind IN ('photo', 'static_document', 'static_sticker')),
+            result_status TEXT NOT NULL,
+            byte_bucket TEXT,
+            pixel_bucket TEXT,
+            model_id TEXT,
+            latency_ms INTEGER NOT NULL DEFAULT 0 CHECK (latency_ms >= 0),
+            error_code TEXT,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_media_effect_audit_event
+            ON media_effect_audit(chat_id, trigger_event_id);
+
+        CREATE TABLE persona_mood_observations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bot_user_id TEXT NOT NULL,
+            trigger_event_id TEXT NOT NULL,
+            persona_version TEXT NOT NULL,
+            persona_digest TEXT NOT NULL,
+            catalog_version TEXT,
+            catalog_digest TEXT,
+            mood_code TEXT NOT NULL,
+            bot_scope_count INTEGER NOT NULL DEFAULT 1 CHECK (bot_scope_count >= 1),
+            created_at TEXT NOT NULL,
+            UNIQUE(bot_user_id, trigger_event_id)
+        );
+        CREATE INDEX idx_persona_mood_recent
+            ON persona_mood_observations(bot_user_id, created_at DESC);
+
+        CREATE TABLE avatar_change_audit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bot_user_id TEXT NOT NULL,
+            avatar_catalog_version TEXT NOT NULL,
+            avatar_catalog_digest TEXT NOT NULL,
+            previous_avatar_id TEXT,
+            requested_avatar_id TEXT NOT NULL,
+            reason_code TEXT NOT NULL,
+            cooldown_status TEXT NOT NULL,
+            requested_by TEXT NOT NULL,
+            platform_status TEXT NOT NULL,
+            error_code TEXT,
+            rollback_status TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX idx_avatar_change_recent
+            ON avatar_change_audit(bot_user_id, created_at DESC);
+        """,
+    ),
+    (
+        4,
+        "avatar_global_provenance",
+        """
+        ALTER TABLE persona_mood_observations ADD COLUMN chat_id TEXT;
+        ALTER TABLE persona_mood_observations ADD COLUMN member_user_id TEXT;
+        ALTER TABLE avatar_change_audit ADD COLUMN requested_image_sha256 TEXT;
+        CREATE INDEX idx_persona_mood_provenance
+            ON persona_mood_observations(
+                bot_user_id, mood_code, chat_id, member_user_id, created_at DESC
+            );
+        """,
+    ),
 )
 
 

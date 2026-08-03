@@ -4,9 +4,11 @@ version = "0.1.0"
 description = "A minimal Telegram group fixed-reply service."
 readme = "README.md"
 requires-python = ">=3.11"
+dependencies = ["Pillow==11.3.0"]
 
 [project.scripts]
 group-llm-agent = "group_llm_agent.__main__:main"
+group-llm-agent-operator = "group_llm_agent.operator_cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
@@ -16,7 +18,16 @@ build-backend = "setuptools.build_meta"
 where = ["src"]
 
 [tool.setuptools.package-data]
-group_llm_agent = ["persona_bundles/*/*/*"]
+group_llm_agent = [
+    "persona_bundles/*/*/*",
+    "expression_assets/*/*/*.json",
+    "expression_assets/*/*/sources/*",
+    "expression_assets/*/*/masters/*",
+    "expression_assets/*/*/telegram/*",
+    "expression_assets/*/*/previews/*",
+    "expression_assets/*/*/previews/*/*",
+    "expression_assets/*/*/avatars/*",
+]
 
 [tool.ruff]
 line-length = 100
