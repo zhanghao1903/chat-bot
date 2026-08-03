@@ -26,6 +26,7 @@ class ScheduledOccurrenceProcessor(Protocol):
         *,
         occurrence: AutomationOccurrence,
         source: ScheduledOccurrenceSource,
+        worker_id: str,
     ) -> OccurrenceStatus: ...
 
 
@@ -61,7 +62,23 @@ class AutomationScheduler:
                     slot=slot,
                     persona=self.persona,
                 )
-                if occurrence is None or occurrence.status is not OccurrenceStatus.DUE:
+                if occurrence is None:
+                    continue
+                if occurrence.status is OccurrenceStatus.PREPARED:
+                    result = self.processor.process(
+                        occurrence=occurrence,
+                        source=self.repository.scheduled_source(occurrence=occurrence),
+                        worker_id=worker_id,
+                    )
+                    if result not in {OccurrenceStatus.PREPARED, OccurrenceStatus.SENDING}:
+                        self.repository.mark_occurrence(
+                            occurrence_id=occurrence.occurrence_id,
+                            status=result,
+                            reason_code=result.value,
+                        )
+                    processed += 1
+                    continue
+                if occurrence.status not in {OccurrenceStatus.DUE, OccurrenceStatus.LEASED}:
                     continue
                 outcome = self._eligibility(config=config, occurrence=occurrence, now=now)
                 if outcome is not None:
@@ -93,7 +110,11 @@ class AutomationScheduler:
                             result = OccurrenceStatus.SKIPPED_LATE
                         else:
                             source = self.repository.scheduled_source(occurrence=leased)
-                            result = self.processor.process(occurrence=leased, source=source)
+                            result = self.processor.process(
+                                occurrence=leased,
+                                source=source,
+                                worker_id=worker_id,
+                            )
                 except Exception:
                     logger.exception(
                         "automation_occurrence_failed occurrence_id=%s",

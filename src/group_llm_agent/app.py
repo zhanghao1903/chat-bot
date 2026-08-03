@@ -5,10 +5,12 @@ import sqlite3
 from collections.abc import Callable, Mapping
 from datetime import timedelta
 from time import sleep as default_sleep
-from typing import Any
+from typing import Any, Protocol
 
 from group_llm_agent.automation import AutomationRepository
 from group_llm_agent.automation_control import AutomationControlService
+from group_llm_agent.automation_delivery import AutomationDeliveryRepository
+from group_llm_agent.automation_runtime import AutomationBackgroundWorker, AutomationScheduler
 from group_llm_agent.config import ConfigError, Settings
 from group_llm_agent.context import ContextAssembler
 from group_llm_agent.continuity import ConversationContinuityDecider
@@ -45,6 +47,7 @@ from group_llm_agent.runtime import (
     RecognitionBackgroundWorker,
     TelegramPollingService,
 )
+from group_llm_agent.scheduled_food import ScheduledFoodProcessor
 from group_llm_agent.tavily import TavilyClient
 from group_llm_agent.tools import ReadOnlyToolRegistry
 from group_llm_agent.trigger import (
@@ -60,6 +63,32 @@ logger = logging.getLogger(__name__)
 ClientFactory = Callable[..., TelegramBotApiClient]
 ModelFactory = Callable[[Settings], StructuredModelPort]
 VisionFactory = Callable[[Settings], VisionModelPort]
+
+
+class BackgroundWorker(Protocol):
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
+
+
+class BackgroundWorkerGroup:
+    def __init__(self, workers: tuple[BackgroundWorker, ...]) -> None:
+        self.workers = workers
+
+    def start(self) -> None:
+        started: list[BackgroundWorker] = []
+        try:
+            for worker in self.workers:
+                worker.start()
+                started.append(worker)
+        except Exception:
+            for worker in reversed(started):
+                worker.stop()
+            raise
+
+    def stop(self) -> None:
+        for worker in reversed(self.workers):
+            worker.stop()
 
 
 def run(
@@ -84,7 +113,7 @@ def run(
     )
 
     store: SQLiteDeliveryLedger | None = None
-    background_worker: RecognitionBackgroundWorker | None = None
+    background_worker: BackgroundWorker | None = None
     try:
         bundle: CharacterBundle | None = None
         model: StructuredModelPort | None = None
@@ -232,7 +261,7 @@ def _persona_runtime(
     model: StructuredModelPort,
     database: SQLiteDatabase,
     vision_factory: VisionFactory | None = None,
-) -> tuple[PersonaMessageProcessor, RecognitionBackgroundWorker | None]:
+) -> tuple[PersonaMessageProcessor, BackgroundWorker | None]:
     messages = MessageRepository(database)
     messages.policies.ensure(
         chat_id=settings.telegram_chat_id,
@@ -326,12 +355,13 @@ def _persona_runtime(
         runs=runs,
         capability_available=settings.member_memory_capability == "available",
     )
+    automation_repository = AutomationRepository(database)
     automation_controls = AutomationControlService(
         allowed_chat_id=settings.telegram_chat_id,
         bot_user_id=bot_user_id,
         bot_username=bot_username,
         telegram=client,
-        repository=AutomationRepository(database),
+        repository=automation_repository,
         runs=runs,
         capability_available=settings.automation_capability == "available",
     )
@@ -376,21 +406,51 @@ def _persona_runtime(
         ),
         expression_catalog_provider=catalog_provider,
     )
-    if settings.member_memory_capability != "available":
-        return processor, None
-    jobs = RecognitionJobRepository(
-        database,
-        maximum_attempts=settings.recognition_max_attempts,
-    )
-    recognition = RecognitionWorker(
-        database=database,
-        model=model,
-        messages=messages,
-        jobs=jobs,
-        model_timeout=timedelta(seconds=settings.recognition_timeout_seconds),
-        lease_duration=timedelta(seconds=settings.recognition_timeout_seconds + 15),
-    )
-    return processor, RecognitionBackgroundWorker(worker=recognition, bundle=bundle)
+    workers: list[BackgroundWorker] = []
+    if settings.member_memory_capability == "available":
+        jobs = RecognitionJobRepository(
+            database,
+            maximum_attempts=settings.recognition_max_attempts,
+        )
+        recognition = RecognitionWorker(
+            database=database,
+            model=model,
+            messages=messages,
+            jobs=jobs,
+            model_timeout=timedelta(seconds=settings.recognition_timeout_seconds),
+            lease_duration=timedelta(seconds=settings.recognition_timeout_seconds + 15),
+        )
+        workers.append(RecognitionBackgroundWorker(worker=recognition, bundle=bundle))
+    if settings.automation_capability == "available":
+        scheduled_food = ScheduledFoodProcessor(
+            repository=automation_repository,
+            delivery_repository=AutomationDeliveryRepository(database),
+            effector=effector,
+            telegram=client,
+            messages=messages,
+            runs=runs,
+            bundle=bundle,
+            allowed_chat_id=settings.telegram_chat_id,
+            bot_user_id=bot_user_id,
+            bot_display_name=bot_display_name,
+            deadline_seconds=settings.scheduled_effect_deadline_seconds,
+        )
+        recovered = scheduled_food.recover_inflight()
+        if recovered:
+            logger.warning("scheduled_effects_recovered_uncertain count=%s", recovered)
+        workers.append(
+            AutomationBackgroundWorker(
+                scheduler=AutomationScheduler(
+                    repository=automation_repository,
+                    processor=scheduled_food,
+                    bot_user_id=bot_user_id,
+                    persona=bundle.snapshot,
+                ),
+                worker_id=f"automation-{bot_user_id}",
+                idle_seconds=float(settings.automation_tick_seconds),
+            )
+        )
+    return processor, BackgroundWorkerGroup(tuple(workers)) if workers else None
 
 
 def _log_format() -> str:

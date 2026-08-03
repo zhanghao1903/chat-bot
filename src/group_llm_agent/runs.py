@@ -41,7 +41,7 @@ class ExternalEffectRecord:
     id: int
     chat_id: str
     trigger_event_id: str
-    trigger_message_id: str
+    trigger_message_id: str | None
     effect_kind: ExternalEffectKind
     requested_effect_kind: ExternalEffectKind
     delivered_effect_kind: ExternalEffectKind | None
@@ -688,7 +688,9 @@ class RunRepository:
             id=int(row["id"]),
             chat_id=str(row["chat_id"]),
             trigger_event_id=str(row["trigger_event_id"]),
-            trigger_message_id=str(row["trigger_message_id"]),
+            trigger_message_id=(
+                str(row["trigger_message_id"]) if row["trigger_message_id"] is not None else None
+            ),
             effect_kind=ExternalEffectKind(str(row["effect_kind"])),
             requested_effect_kind=ExternalEffectKind(str(row["requested_effect_kind"])),
             delivered_effect_kind=(

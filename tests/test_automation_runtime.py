@@ -31,7 +31,9 @@ class FakeOccurrenceProcessor:
         *,
         occurrence: AutomationOccurrence,
         source: ScheduledOccurrenceSource,
+        worker_id: str,
     ) -> OccurrenceStatus:
+        del occurrence, worker_id
         self.sources.append(source)
         if self.fail:
             raise RuntimeError("scripted failure")
@@ -108,6 +110,50 @@ class AutomationSchedulerTests(unittest.TestCase):
             occurrence = repository.get_occurrence(occurrence_id=processor.sources[0].occurrence_id)
             assert occurrence is not None
             self.assertEqual(OccurrenceStatus.DEFINITE_FAILURE, occurrence.status)
+
+    def test_prepared_occurrence_resumes_without_a_new_lease(self) -> None:
+        with temporary_database() as database:
+            repository = AutomationRepository(database)
+            config = repository.enable_group(chat_id="-1001")
+            repository.subscribe(chat_id="-1001", member_user_id="member-1")
+            occurrence = repository.create_occurrence(
+                bot_user_id="7",
+                config=config,
+                local_date=datetime(2026, 8, 3, tzinfo=UTC).date(),
+                slot=MealSlot.LUNCH,
+                persona=_PERSONA,
+            )
+            assert occurrence is not None
+            leased = repository.lease(
+                occurrence_id=occurrence.occurrence_id,
+                worker_id="dead-worker",
+                now=occurrence.scheduled_for,
+            )
+            assert leased is not None
+            self.assertTrue(
+                repository.prepare(
+                    occurrence_id=occurrence.occurrence_id,
+                    worker_id="dead-worker",
+                    effect_request_id="scheduled:prepared",
+                    primary_key="dish:noodles",
+                    payload={"kind": "food_recommendation"},
+                    text="persisted recommendation",
+                )
+            )
+            processor = FakeOccurrenceProcessor()
+            scheduler = AutomationScheduler(
+                repository=repository,
+                processor=processor,
+                bot_user_id="7",
+                persona=_PERSONA,
+                clock=lambda: datetime(2026, 8, 3, 3, 35, tzinfo=UTC),
+            )
+
+            self.assertEqual(1, scheduler.run_once(worker_id="replacement-worker"))
+            self.assertEqual(1, len(processor.sources))
+            stored = repository.get_occurrence(occurrence_id=occurrence.occurrence_id)
+            assert stored is not None
+            self.assertEqual(OccurrenceStatus.SENT, stored.status)
 
     def test_next_schedule_skips_weekend(self) -> None:
         with temporary_database() as database:
