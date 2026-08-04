@@ -93,7 +93,7 @@ class AutomationScheduler:
                     occurrence_id=occurrence.occurrence_id,
                     worker_id=worker_id,
                     now=now,
-                    expected_config_version=config.config_version,
+                    expected_config_version=occurrence.config_version,
                 )
                 if leased is None:
                     continue

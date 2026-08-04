@@ -101,7 +101,8 @@
 - duplicate subscription and occurrence converge to one row;
 - other chat cannot read config, preferences, history or occurrence;
 - lease expiry only recovers pre-claim work; a config edit between refresh and lease makes the stale
-  worker lose without terminalizing the due row; post-claim replay cannot resend;
+  worker lose without terminalizing the due row, while a config edit after lease lets recovery
+  terminalize the immutable old snapshot once; post-claim replay cannot resend;
 - diff check, compileall, targeted unittest, Ruff and Mypy.
 
 ### Commit intent
@@ -138,6 +139,8 @@
 - controlled clocks: Monday/Saturday, Shanghai defaults, two meal slots, timezone/DST edge;
 - config change affects only unleased future occurrence, including the deterministic
   refresh-commit/admin-update/pre-lease interleaving;
+- lease-v1/admin-config-v2/crash-before-prepare recovery reaches one bounded definite-failure
+  outcome with no processor call, external effect, duplicate or stranded lease;
 - 0/1/20 subscribers still produces 0/1/1 occurrence effects;
 - command addressed to foreign bot, non-admin mutation and cross-member operation are rejected;
 - disable deletes active subscription preferences; pause does not stop ordinary replies;

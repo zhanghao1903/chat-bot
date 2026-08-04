@@ -293,6 +293,61 @@ class AutomationSchedulerTests(unittest.TestCase):
             self.assertEqual(changed_config.config_version, stored.config_version)
             self.assertEqual(datetime(2026, 8, 3, 3, 40, tzinfo=UTC), stored.scheduled_for)
 
+    def test_config_change_after_lease_crash_terminalizes_expired_snapshot_once(self) -> None:
+        with temporary_database() as database:
+            repository = AutomationRepository(database)
+            original_config = repository.enable_group(chat_id="-1001")
+            repository.subscribe(chat_id="-1001", member_user_id="member-1")
+            occurrence = repository.create_occurrence(
+                bot_user_id="7",
+                config=original_config,
+                local_date=datetime(2026, 8, 3, tzinfo=UTC).date(),
+                slot=MealSlot.LUNCH,
+                persona=_PERSONA,
+            )
+            assert occurrence is not None
+            leased = repository.lease(
+                occurrence_id=occurrence.occurrence_id,
+                worker_id="crashed-worker",
+                now=occurrence.scheduled_for,
+                expected_config_version=occurrence.config_version,
+            )
+            assert leased is not None
+            changed_config = repository.update_config(
+                chat_id="-1001",
+                timezone="Asia/Shanghai",
+                lunch_time="11:40",
+                dinner_time="17:30",
+                location_text=None,
+            )
+            self.assertEqual(original_config.config_version + 1, changed_config.config_version)
+
+            processor = FakeOccurrenceProcessor()
+            recovery_scheduler = AutomationScheduler(
+                repository=repository,
+                processor=processor,
+                bot_user_id="7",
+                persona=_PERSONA,
+                clock=lambda: datetime(2026, 8, 3, 3, 40, tzinfo=UTC),
+            )
+            self.assertEqual(1, recovery_scheduler.run_once(worker_id="recovery-worker"))
+            self.assertEqual(0, recovery_scheduler.run_once(worker_id="duplicate-worker"))
+            self.assertEqual(0, len(processor.sources))
+            with database.connect() as connection:
+                effect_count = connection.execute(
+                    "SELECT COUNT(*) AS count FROM external_effects WHERE scheduled_occurrence_id = ?",
+                    (occurrence.occurrence_id,),
+                ).fetchone()
+            assert effect_count is not None
+            self.assertEqual(0, int(effect_count["count"]))
+
+            stored = repository.get_occurrence(occurrence_id=occurrence.occurrence_id)
+            assert stored is not None
+            self.assertEqual(OccurrenceStatus.DEFINITE_FAILURE, stored.status)
+            self.assertEqual("definite_failure", stored.reason_code)
+            self.assertEqual(original_config.config_version, stored.config_version)
+            self.assertEqual(datetime(2026, 8, 3, 3, 30, tzinfo=UTC), stored.scheduled_for)
+
     def test_next_schedule_skips_weekend(self) -> None:
         with temporary_database() as database:
             repository = AutomationRepository(database)

@@ -555,18 +555,24 @@ class AutomationRepository:
                 UPDATE automation_occurrences
                 SET status = 'leased', lease_owner = ?, lease_expires_at = ?, updated_at = ?
                 WHERE occurrence_id = ?
-                  AND config_version = ?
-                  AND EXISTS (
-                    SELECT 1
-                    FROM automation_group_configs AS active
-                    WHERE active.chat_id = automation_occurrences.chat_id
-                      AND active.automation_type = automation_occurrences.automation_type
-                      AND active.enabled = 1
-                      AND active.config_version = ?
-                  )
                   AND (
-                    status = 'due'
-                    OR (status = 'leased' AND lease_expires_at < ?)
+                    (
+                      status = 'due'
+                      AND config_version = ?
+                      AND EXISTS (
+                        SELECT 1
+                        FROM automation_group_configs AS active
+                        WHERE active.chat_id = automation_occurrences.chat_id
+                          AND active.automation_type = automation_occurrences.automation_type
+                          AND active.enabled = 1
+                          AND active.config_version = ?
+                      )
+                    )
+                    OR (
+                      status = 'leased'
+                      AND config_version = ?
+                      AND lease_expires_at < ?
+                    )
                   )
                 """,
                 (
@@ -574,6 +580,7 @@ class AutomationRepository:
                     (now + _LEASE).isoformat(),
                     now.isoformat(),
                     occurrence_id,
+                    expected_config_version,
                     expected_config_version,
                     expected_config_version,
                     now.isoformat(),

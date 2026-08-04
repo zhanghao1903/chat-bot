@@ -272,10 +272,14 @@ refresh and execute the new slot once. Before expensive work it rechecks enabled
 subscription, config version, grace deadline, persona snapshot and absence of an external-effect
 claim.
 
-A crash before `prepared` releases through lease expiry and may recompute. A crash after
-`prepared` reuses the same stored payload/text. Recovery joins the occurrence to its durable
-external effect: `sent` acknowledgement reconciles the occurrence to `sent`, `failed` to definite
-failure, and only an ambiguous `sending`, `uncertain` or missing effect becomes `uncertain`.
+A crash before `prepared` releases through lease expiry. Recovery of that already-acquired lease is
+bound to the immutable occurrence version rather than the later active-config version: unchanged
+configuration may recompute, while a post-lease config change is detected by the pre-claim policy
+and produces one bounded `definite_failure` without a model call or external effect. It never leaves
+an expired row stranded in `leased`. A crash after `prepared` reuses the same stored payload/text.
+Recovery joins the occurrence to its durable external effect: `sent` acknowledgement reconciles the
+occurrence to `sent`, `failed` to definite failure, and only an ambiguous `sending`, `uncertain` or
+missing effect becomes `uncertain`.
 No post-claim state is resent. `sent`, all skipped outcomes, `uncertain` and final definite failures
 are terminal.
 
