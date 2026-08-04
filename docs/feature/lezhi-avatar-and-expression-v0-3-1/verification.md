@@ -418,6 +418,38 @@ byte-identical at SHA-256
 `cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`;
 no provider or production/external operation occurred.
 
+Ninth re-review dispatch
+`63aa3ee1ff8c3c5c1f58e30a902a63d32a8732844929d218c01323da7885cd61`
+independently closed FINDING-003, but retained FINDING-002 because direct
+relationship requests with unknown equivalent prefixes still failed open.
+Exact bypasses covered Chinese `从现在开始`, `永远地`, and `继续`, plus
+English `for once`, `continue to`, and `from this point on`; both Writer
+sticker forms retained the sticker on the prior exact head.
+
+Implementation snapshot `2f9d006478d95e1da24be73640f0af3ec90b7d06`
+reverses the application boundary from an open-ended direct-prefix allowlist
+to a fail-closed relationship decision. Any known exclusivity action now
+suppresses stickers unless the application positively identifies a subject
+from closed technical or third-party registries, or the complete matched span
+is an application-recognized anti-exclusivity statement. Unknown modifiers,
+connectors, subjects, and synonyms therefore cannot reopen sticker output.
+The obsolete direct-subject allowlist and its positional grammar were removed;
+the deterministic token consumer remains only for validating material around
+an approved benign subject.
+
+Direct policy and end-to-end regressions cover all ninth-review bypasses for
+Writer `sticker` and `reply_with_sticker`, known app/service controls, explicit
+Chinese and English third-party subjects, possessives, anti-exclusivity,
+inclusive corrections, and every prior matrix. The adversarial unknown-prefix
+regression now fails closed under 0.25 seconds; a 2,062-character/256-repeat
+probe returned `relationship_context` in about 0.003 seconds. The focused
+suite passes 20 tests in 7.158 seconds and full discovery passes 304 tests in
+101.045 seconds. Ruff check/format passes all 104 source/test files, targeted
+Mypy passes `expression_policy.py`, and compileall, shell syntax, and diff
+checks pass. The provider report remains byte-identical at SHA-256
+`cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`;
+no provider or production/external operation occurred.
+
 - Independent exact-head merge review is still required.
 - On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
   `mergeOnApprove` policy to be set to `true` temporarily, only to re-review
