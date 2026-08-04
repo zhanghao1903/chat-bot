@@ -1,39 +1,42 @@
 # Technical Design: 乐枝默认头像部署与复合表情回复 v0.3.1
 
-- Status: Design Complete
-- Feature branch: `codex/lezhi-avatar-and-expression-v0-3-1`
-- Confirmed requirements commit: `86ace06b0704da458646747e3ca0468456235851`
-- Safe forward baseline: `origin/main@88c775c8ef0be7d1c63fd71b5924334b12492d75`
-- Requirements SHA-256: `66b82b3db77ffba968d26b651a2cccfc7a85e500b36a79a8aa41722a6b67593d`
+- Status: Design Complete — LLM Reply-Form Boundary Revision
+- Feature branch: `codex/lezhi-v031-provider-gate-fix`
+- Confirmed requirements commit: `596a754419bc971ac71436bbb85f408ecc7962f0`
+- Safe forward baseline: `origin/main@85998708aa9a1d85b33a4477a818339498846868`
+- Requirements SHA-256: `71e6b25fc970a4a6aa78697369a1a194081102f943138e699ae0a5a642caacc9`
 - Design date: 2026-08-04
 
 ## 1. Purpose And Design Boundary
 
-This design adds two bounded capabilities without weakening the v0.4 production
-baseline:
+This revision preserves the two already implemented v0.3.1 capabilities while
+changing the reply-form responsibility boundary:
 
 1. An inbound persona reply may contain one text message, one sticker, or one
    text message followed by one sticker.
 2. An explicitly authorized operator may apply the approved `lezhi-default`
    bot profile photo, with Telegram's explicit `setMyProfilePhoto=true`
    response as the system success condition.
+3. The Writer LLM is the sole semantic owner of whether the final form is
+   `reply`, `reply_with_sticker`, `sticker`, or `silence`. The application does
+   not reinterpret natural-language content to change that choice.
 
 The design does not add a second visible effect to scheduled food delivery,
 control commands, tools, avatar operations, or any other write path. It does
 not enable VISION, automatic avatar rotation, or mood-avatar application. It
 does not modify the 48 expression assets or their Telegram mapping.
 
-The implementation is based on `main@88c775c...`, including schema migration
-5 and all v0.4 subscription, food recommendation, command, scheduling, Web
-tool, and runtime behavior. The previous `c1e820a...` production snapshot is
-historical evidence only and is not a build or deployment base.
+The implementation is based on `main@85998708...`, which already contains the
+merged v0.3.1 bundle/avatar work and all v0.4 subscription, food
+recommendation, command, scheduling, Web-tool, and runtime behavior. Earlier
+`88c775c8...` and `c1e820a...` snapshots are historical evidence only.
 
 ## 2. Current Constraints And Refactoring Gate
 
 The current code has three high-risk concentration points:
 
-- `runs.py` owns model runs, external effects, tool audit, memory audit,
-  expression metrics, and mood state in one large repository.
+- `runs.py` owns model runs, external effects, tool audit, memory audit, legacy
+  expression observations, and mood state in one large repository.
 - `effector.py` combines orchestration, response schema, final validation,
   sticker policy, and degradation.
 - `avatar.py` combines catalog handling, rotation policy, platform mutation,
@@ -42,8 +45,10 @@ The current code has three high-risk concentration points:
 The feature therefore uses additive boundaries instead of adding another state
 machine to `RunRepository`:
 
-- new `effect_bundle.py` owns reply-bundle persistence and metrics;
-- new `expression_policy.py` owns pure sticker eligibility/selection rules;
+- `effect_bundle.py` owns reply-bundle persistence and delivery state; the
+  online frequency metric is retired;
+- `expression_policy.py` is reduced to pure non-semantic catalog,
+  relationship-metadata, and repetition validation;
 - new `writer_contract.py` owns the Writer response schema and protocol text;
 - `effect_delivery.py` becomes the orchestration adapter over the bundle
   repository and Telegram port;
@@ -61,14 +66,14 @@ single external effects. Scheduled automation keeps using
 | `writer_contract.py` | Application-owned Writer decision schema and exact output protocol, including `reply_with_sticker`. |
 | `writer_prompt.py` | Prompt assembly; imports the canonical protocol instead of duplicating operation names. |
 | `model.py` | Parses the canonical Writer kinds into typed decisions. It never accepts arbitrary Telegram identifiers. |
-| `expression_policy.py` | Pure classification of sticker eligibility, sticker-only eligibility, relationship bounds, and consecutive-repeat rejection. |
+| `expression_policy.py` | Non-semantic validation of catalog availability, structured relationship-rank compatibility, and consecutive-repeat rejection. It never reads message or vision text. |
 | `effector.py` | Runs the model/tool loop, validates text and selected semantic ID, and returns one immutable `FinalEffect`. It never sends Telegram effects. |
-| `effect_bundle.py` | Atomic bundle/component preparation, component state transitions, restart reconciliation, duplicate detection, and privacy-safe rate metrics. |
+| `effect_bundle.py` | Atomic bundle/component preparation, component state transitions, restart reconciliation, and duplicate detection. Existing metric columns remain readable for schema compatibility but are not used as an online policy or denominator. |
 | `effect_delivery.py` | Sends inbound persona bundle components in order and records the returned platform message identities. |
 | `runs.py` | Existing model/effect run audit and legacy single-effect paths only. A composite final maps to the existing terminal `reply` run status. |
 | `automation_delivery.py` | Unchanged v0.4 scheduled single-text claim/delivery boundary. |
 | `avatar.py` | Default-avatar preflight, one explicit platform write, outcome classification, and audit. |
-| `operator_cli.py` | Local operator authorization reference, bot identity binding, one-shot avatar apply, and privacy-safe metrics output. |
+| `operator_cli.py` | Local operator authorization reference, bot identity binding, and one-shot avatar apply. The online `expression-metrics` command is removed. |
 
 ## 4. Writer And Final-Effect Contract
 
@@ -113,7 +118,7 @@ calls, preserving REQ-029 and v0.4 behavior.
 - one validated expression semantic ID;
 - the exact enabled catalog version and digest;
 - persona snapshot and reason code;
-- `sticker_eligible` and an application-owned eligibility reason;
+- a non-semantic sticker validation outcome for audit compatibility;
 - no platform `file_id` and no additional media.
 
 The existing effect-run table does not need a new status. Completing a
@@ -122,30 +127,34 @@ visible form and component outcomes live in the bundle tables.
 
 ### 4.3 Sticker policy
 
-Sticker policy is split into two questions:
+The Writer prompt receives the complete bounded scene, relationship context,
+member memory, vision evidence when available, and enabled catalog
+descriptions. It tells the LLM to avoid stickers in serious, safety, medical,
+permission, relationship-repair, and exclusive/favoritism contexts; to prefer
+a sticker when it naturally contributes emotion or action; and never to force
+one for a target rate. This semantic guidance is not duplicated in Python.
 
-1. **Is any sticker allowed for this context?** Medical, self-harm, urgent
-   safety, illegal activity, permission failure, serious relationship repair,
-   unsafe vision evidence, and vision uncertainty are ineligible for both
-   sticker-only and composite output.
-2. **Can the selected sticker be used?** The entry must be enabled in the exact
-   catalog, compatible with the relationship level, and different from the
-   immediately preceding successfully sent sticker in the chat.
+After the LLM selects a form, the application validates only facts that do not
+require interpreting language:
 
-Factual explanations and ordinary steps require text but may carry a bounded
-sticker only when the sticker does not weaken or replace the information.
-Sticker-only remains limited to low-stakes situations where the sticker is a
-complete answer.
+1. the closed Writer schema and field combination are exact;
+2. the catalog is enabled and its version/digest match the decision;
+3. the semantic ID resolves to an enabled entry;
+4. the entry's declared `minimum_relationship` does not exceed the structured
+   relationship rank already supplied to the Writer;
+5. the semantic ID differs from the immediately preceding successfully sent
+   sticker in the chat; and
+6. the trigger path and effect/component bounds authorize the selected form.
 
-For a composite decision, valid text is retained if the selected sticker is
-rejected. The result becomes text-only with a privacy-safe degradation reason.
-For sticker-only, rejection follows the existing direct failure-reply versus
-contextual silence degradation rule.
+`expression_policy.py` must not search current-message, recent-scene, memory,
+or vision natural-language fields. It contains no semantic keyword, regular
+expression, synonym table, subject/negation grammar, or replacement classifier.
 
-Eligibility for metrics is computed before delivery from the application rule
-and exact enabled catalog, not from whether the model happened to select a
-sticker. This prevents the metric from redefining safety or hiding text-only
-eligible replies.
+DEC-016 owns failure degradation. A structurally invalid/unknown overall model
+result ends in silence after the bounded protocol attempts. A valid composite
+keeps its already validated text when only the sticker fails a non-semantic
+invariant. A sticker-only decision whose sticker fails a non-semantic invariant
+ends in silence. No fallback text is synthesized from message semantics.
 
 ## 5. Durable Bundle Model
 
@@ -159,7 +168,7 @@ The table stores one row per inbound persona trigger:
 | --- | --- |
 | Identity | `id`, `bundle_id`, `bot_user_id`, `chat_id`, `trigger_event_id`, `trigger_message_id` |
 | Immutable snapshots | `persona_version`, `persona_digest`, `catalog_version`, `catalog_digest` |
-| Decision | `requested_form`, `reason_code`, `sticker_eligible`, `eligibility_reason` |
+| Decision | `requested_form`, `reason_code`, legacy-compatible `sticker_eligible`, `eligibility_reason` |
 | Outcome | `status`, `error_code`, `created_at`, `updated_at`, `completed_at` |
 
 `UNIQUE(chat_id, trigger_event_id)` is the bundle claim. `requested_form` is
@@ -253,33 +262,30 @@ pre-claim replay path may recompute. A crash at or after preparation is
 at-most-once and terminalized without delayed content. Successfully sent or
 uncertain components are never repeated.
 
-## 7. Sticker-Bearing Metrics
+## 7. Offline Evaluation Reference
 
-The bundle repository exposes a privacy-safe aggregate for one exact
-`bot_user_id + persona_version + persona_digest + catalog_version +
-catalog_digest` tuple.
+The application no longer computes an online sticker-eligible denominator,
+rolling rate, minimum sample threshold, quota, or corrective input. The legacy
+bundle columns remain readable so migration 6 and deployed databases stay
+compatible, but runtime and operator policy do not query them as a frequency
+metric. The `expression-metrics` operator command and its seven-day/latest-100
+calculation are removed.
 
-The query considers rows completed in the last seven days, newest first, and
-uses at most 100 qualifying bundles. A bundle qualifies only when:
+The fixed evaluation carrier remains a provider-review input. Its scenario
+labels help an independent Reviewer assess whether reply forms are natural in
+ordinary, serious, safety, medical, permission, and relationship contexts; the
+labels are not compiled into runtime policy. The report verifier owns only
+deterministic evidence: exact case/catalog/persona/model snapshots, closed
+output shape, valid enabled sticker IDs, structured relationship compatibility,
+and adjacent-repeat rejection.
 
-- `sticker_eligible=1`; and
-- at least one component has `status='sent'`.
-
-The numerator is qualifying bundles with a successfully sent sticker
-component. This includes sticker-only and text+sticker. Silence, trigger
-rejection, safety/relationship ineligibility, and bundles with no sent
-component do not enter the denominator.
-
-The result contains only scope versions, window timestamps, denominator,
-sticker-bearing count, text-only count, ratio, and status. Fewer than 30
-qualifying rows returns `insufficient_data`; it does not tune prompts or force
-stickers. Values outside 0.4–0.7 are operational evidence only.
-
-The fixed evaluation carrier contains 40 sticker-eligible cases plus separate
-safety/relationship guard cases. Passing requires 16–28 sticker-bearing
-eligible cases, every necessary-text case to retain text, every hard-forbidden
-case to contain no sticker, no repeated adjacent sticker, and valid schema for
-every provider response.
+The report may display a sticker-bearing observation rate. `0.4–0.7` is a
+historical product-reference band only: values below, inside, or above it do
+not alter deterministic report validity, block release, or change runtime
+behavior. Semantic quality requires a separately authorized provider run plus
+independent human/Reviewer assessment; the existing report is retained as
+immutable historical evidence and is insufficient for the revised release
+gate.
 
 ## 8. Avatar Apply Contract
 
@@ -347,7 +353,7 @@ automatic rotation stays disabled.
 - Only the transaction that inserts the unique chat/event bundle may send.
 - Only a `planned` component may enter `sending`.
 - Terminal component and bundle rows are immutable except idempotent reads.
-- Metric reads never grant send permission and do not update policy.
+- No online expression-rate read participates in policy or send permission.
 - Avatar apply remains protected by the existing process-level operator lock;
   the audit operation is created before the single platform write.
 - Scheduled automation's lease, claim, and recovery transactions are unchanged.
@@ -369,7 +375,7 @@ automatic rotation stays disabled.
 ### Rollout
 
 1. Build and review from the exact safe-forward branch based on
-   `main@88c775c...`.
+   `main@85998708...`.
 2. Back up the production SQLite database and record its SHA-256.
 3. Prove the backup and current database both return `PRAGMA quick_check=ok`.
 4. Build the exact reviewed image and prove source/package identity.
@@ -398,12 +404,16 @@ never followed by an automatic retry.
 - Writer prompt/schema/parser exact-kind agreement and rejection of malformed
   composite payloads.
 - All five visible reply forms and one-message handling of multi-sentence text.
-- Safety, necessary-text, relationship, catalog digest, unknown semantic ID,
+- Proof that arbitrary serious, relationship, or novel wording cannot change
+  application validation: every schema-valid model form is preserved unless a
+  non-semantic invariant fails.
+- Catalog digest, unknown/disabled semantic ID, structured relationship rank,
   and consecutive-repeat rules for sticker-only and composite output.
 - Bundle uniqueness, ordering, component transitions, explicit failure,
   uncertain result, crash/restart reconciliation, and duplicate replay.
-- Metric denominator/numerator, 7-day window, newest-100 bound,
-  insufficient-data threshold, and version isolation.
+- Absence of online rate/denominator commands and decision-path queries.
+- Offline evaluation rate is reported but does not affect deterministic pass;
+  semantic scenario quality remains an explicit deferred provider/reviewer gate.
 - Avatar preflight, bot identity, exact success, explicit failure, uncertain
   categories, no retry, and proof of zero post-upload readback calls.
 - Migration 1–6 from a production-shaped database plus v0.4 scheduler/control
@@ -426,7 +436,7 @@ never followed by an automatic retry.
 | Avatar preflight/API success/audit | REQ-001–REQ-010; AC-001–AC-004 |
 | Writer and final-effect forms | REQ-011–REQ-019; AC-005–AC-007 |
 | Bundle idempotency/partial failure/restart | REQ-020–REQ-023; AC-008–AC-010 |
-| Sticker-bearing metrics | REQ-024–REQ-028; AC-011–AC-013 |
+| LLM semantics, deterministic boundary, offline evaluation reference | REQ-016–REQ-019, REQ-024–REQ-028; AC-006–AC-007, AC-011–AC-013 |
 | Scheduled/other write isolation | REQ-029; AC-014 |
 | Migration, review, safe-forward baseline | REQ-030–REQ-032; AC-015–AC-016 |
 | Production invariants and bounded deployment | REQ-033–REQ-034; AC-017–AC-018 |
@@ -437,5 +447,6 @@ never followed by an automatic retry.
 - VISION enablement or any external image analysis;
 - multiple stickers, multiple text messages, or additional media in one reply;
 - member-facing avatar controls or public anomaly-report commands;
-- automatic prompt tuning based on online sticker rate;
+- any online sticker-rate metric, quota, target, or automatic prompt tuning;
+- the separately authorized provider/evaluation run required by REQ-031;
 - second visible effects for scheduled food, controls, or tools.
