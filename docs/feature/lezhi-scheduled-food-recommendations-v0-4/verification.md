@@ -19,6 +19,53 @@ The exact merge base is `c1e820ae167c1d65d3dd44371a1a40c018e0293d`. The verified
 surface contains 40 changed files, 6,938 insertions and 264 deletions. The original shared checkout
 was not cleaned or rewritten; all work and proof used an isolated worktree.
 
+### 1.1 Review remediation boundary
+
+- First review dispatch: `d6755591928089c35bae1b2ea9bfa8ee11e02c9450b4df7767b8712a89db17b3`
+- Accepted immutable ReviewResult SHA-256:
+  `585708e88c0f2aa904247a16d0308c9e3d654429630148992321742b3117b3b6`
+- First reviewed head: `4de7259e22a2dfb4ce7eafa5876961b2b5f3a74e`
+- Exact remediation implementation commit: `2be0122454414c47173f8499222f50c01b150922`
+
+The accepted ReviewResult requested four changes. Exact remediation closes them as follows:
+
+- **FINDING-001** — the model no longer authors displayed dish/merchant labels, descriptions,
+  current facts, caution notes or safety prose. Generic choices resolve only through a closed
+  application dish/reason registry. A sourced choice must bind each of three merchant choices to a
+  distinct current-turn Web result, and the application derives the display identity, stable key,
+  URL list and cautious wording. Extra free-form merchant, allergy, medical and paraphrased
+  reassurance fields fail schema parsing independent of their vocabulary.
+- **FINDING-002** — deterministic date/slot identity is retained, but a still-unleased `due` row is
+  atomically refreshed to the active scheduled instant, grace deadline, config version and persona
+  snapshot. Leased, prepared, claimed and terminal rows remain immutable. Restart and schedule-edit
+  tests prove the changed slot runs once instead of failing on a stale row.
+- **FINDING-003** — startup recovery joins each `sending` occurrence to its durable external effect.
+  A durable `sent` acknowledgement reconciles to occurrence `sent` and enters recent-primary
+  history; durable failure reconciles to definite failure; only ambiguous/missing/sending state
+  becomes `uncertain`, with no resend.
+- **FINDING-004** — subscribe and status acknowledgements now report the current group, IANA
+  timezone, lunch/dinner wall times, next occurrence converted to group-local time, one group-level
+  message per meal slot and `/food_unsubscribe`, all in one response. Exact tests cover
+  `Asia/Shanghai` and `America/New_York` without exposing member identities.
+
+Exact remediation commit `2be0122454414c47173f8499222f50c01b150922` passed:
+
+- `python3 -m compileall -q src tests`
+- `PYTHONPATH=src:tests .venv/bin/python -m unittest discover -s tests -q` — **275 tests**
+- Ruff check — passed; Ruff format check — **96 source/test files already formatted**
+- Mypy — no issues in **49 source files**
+- `sh -n deploy/manage.sh`, `git diff --check` and package build — passed
+- Remediation sdist SHA-256:
+  `375f83d10794e57ea5bbdd76fdc729b3bb7e1003d4d1982a940c09422e0b0682`
+- Remediation wheel SHA-256:
+  `f2baa3452aef0da77742d658fe2a4a5c359420daa4d50790965d2b6a0bfe6849`
+- Remediation candidate image:
+  `sha256:94b9e7cc7ff54a20308653f575bc2e047baaac7873a8161224786818cee69fc7`,
+  user `app`, command `group-llm-agent`; a no-credential run returned the expected safe exit code 2
+
+No real Tavily call, Compose service replacement, automation enablement, subscription or Telegram
+message was performed while closing these findings.
+
 ## 2. Implemented contracts
 
 - `weekday_food_recommendation` is an application-owned automation definition. Runtime capability,
