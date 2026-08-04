@@ -6,22 +6,24 @@
 - Created: 2026-08-04
 - Last updated: 2026-08-04
 - Confirmed by: User in Requirements task
-- Confirmed at: 2026-08-04T04:55:30Z
-- Production baseline: `c1e820ae167c1d65d3dd44371a1a40c018e0293d`
-- Latest remote main observed at intake: `88c775c8ef0be7d1c63fd71b5924334b12492d75`
+- Confirmed at: 2026-08-04T05:32:35Z
+- Forward release baseline: `origin/main@88c775c8ef0be7d1c63fd71b5924334b12492d75`
+- Previous production baseline: `c1e820ae167c1d65d3dd44371a1a40c018e0293d`（本次发布不再以此构建）
 
 ## Source Request
 
 用户要求简化默认头像部署：信任 Telegram 官方头像上传接口的成功响应；接口返回成功即认定操作成功，不再执行自动 readback、字节摘要比较或视觉内容检查。如果实际头像缺失、错误或显示异常，由用户人工检查并上报，再由操作者处理。
 
-用户同时要求提高乐枝使用专属表情包的频率，并扩大一次效应器回复的可见形式。一次获得回复资格的效应器可以输出：一句文字、多句话文字、文字加一个表情包，或只回复一个表情包。用户写出的目标区间 `0. 4-07` 在本快照中暂解释为 `0.4–0.7`，即在合格回复中的表情包承载率约为 40%–70%，等待用户确认。
+用户同时要求提高乐枝使用专属表情包的频率，并扩大一次效应器回复的可见形式。一次获得回复资格的效应器可以输出：一句文字、多句话文字、文字加一个表情包，或只回复一个表情包。用户写出的目标区间 `0. 4-07` 在本快照中解释为 `0.4–0.7`，即在合格回复中的表情包承载率约为 40%–70%，并已经由用户确认。
+
+在原快照被 Main Work 接收后，用户进一步决定“使用安全前向发布，在 main 的分支上修复就行”。因此本修订只调整发布基线合同：以当前 `origin/main@88c775c8ef0be7d1c63fd71b5924334b12492d75` 为前向基线叠加 v0.3.1，并保留该基线中已经合入/上线的 v0.4 订阅与美食推荐能力。
 
 ## Upstream And Locked State
 
 | Artifact or state | Locked identity / current value |
 | --- | --- |
-| Production code baseline | `c1e820ae167c1d65d3dd44371a1a40c018e0293d` |
-| Latest `origin/main` at intake | `88c775c8ef0be7d1c63fd71b5924334b12492d75`（含 PR #6） |
+| Forward release baseline | `origin/main@88c775c8ef0be7d1c63fd71b5924334b12492d75`（含 PR #6 / v0.4） |
+| Previous production baseline | `c1e820ae167c1d65d3dd44371a1a40c018e0293d`（仅作历史证据；本次不得以此构建或覆盖 v0.4） |
 | Repository expression candidate `catalog.json` | SHA-256 `bd85f2a6ead7943d2504d3e5203ddb54e35aa3e91446b8f5743c9ba28372f3cd` |
 | Repository `avatar-candidates.json` | SHA-256 `abd8aa18ab295cb261d7610daabf6650e82de8c5640855c51755de0d5c25f4ea` |
 | Deployment-side approved avatar catalog | SHA-256 `b871161e68c18115893d7aea932dabf1e9101d40278d6ce9168a6eb3735d405a` |
@@ -185,7 +187,7 @@
 | REQ-029 | 原有“每轮最多一个可见外部效果”必须仅对本版本的回复 bundle 修订为“最多一个 text 加一个 sticker”；头像、自动触发器、工具和其他外部写入不因此获得第二效果权限。 | Scope reconciliation | Must | Confirmed |
 | REQ-030 | 任何数据库变化必须向前兼容，保留现有消息、effect、avatar audit 和 expression mapping；部署前必须备份生产 SQLite 并证明 `quick_check=ok`。 | Production safety | Must | Confirmed |
 | REQ-031 | 实现必须通过完整测试和独立复审后才能合并/部署，覆盖全部回复形式、频率口径、组件部分失败、uncertain、重放、重启、头像 success/failed/uncertain 和凭据保护。 | Release gate | Must | Confirmed |
-| REQ-032 | 生产制品必须显式协调 `c1e820a` 生产基线与最新 main；不得未经授权把 PR #6 行为带入本次生产，同时同一修复必须前向集成到最新 main。 | Baseline divergence | Must | Confirmed |
+| REQ-032 | 生产制品必须以 `origin/main@88c775c8ef0be7d1c63fd71b5924334b12492d75` 为唯一前向基线，再叠加本次 v0.3.1；必须保留 PR #6 已合入/上线的 v0.4 订阅、美食推荐、数据库迁移、命令、调度和运行时能力，不得从 `c1e820ae167c1d65d3dd44371a1a40c018e0293d` 构建 hotfix 或以其覆盖 v0.4。 | Safe forward release | Must | Confirmed |
 | REQ-033 | 部署前后必须证明 48 枚 expression mapping 和 enable 状态不变，VISION disabled，automatic avatar rotation disabled，且四张 mood 头像没有被应用。 | Deployment invariants | Must | Confirmed |
 | REQ-034 | 用户确认本快照后，在 REQ-030/REQ-031 门限通过的前提下，授权部署 effector 修订、执行一次 `lezhi-default` apply 和必要容器重启；不授权自动轮换或视觉外发。 | Explicit deployment scope | Must | Confirmed |
 
@@ -208,7 +210,7 @@
 | AC-013 | REQ-026, REQ-027 | Given 最近 7 天不足 30 个、30–100 个和超过 100 个合格样本，when 查看指标，then 分别显示 insufficient-data、全部 7 天样本结果、最新 100 个样本结果，且无成员正文/敏感字段。 | Confirmed |
 | AC-014 | REQ-029 | Given 同一触发的 text+sticker 以及任何头像/工具/自动触发操作，when 校验权限，then 只有该回复 bundle 可有两个可见组件，其他系统不能借此增加效果。 | Confirmed |
 | AC-015 | REQ-030, REQ-031 | Given 生产数据库副本和精确代码提交，when 发布检查，then向前迁移、`quick_check`、完整测试和独立 Reviewer 均通过；否则不部署。 | Confirmed |
-| AC-016 | REQ-032 | Given 生产基线 `c1e820a` 与最新 main 不同，when 核对制品，then 本次生产只含获准修订，同一修复已前向集成且 PR #6 未被隐式启用。 | Confirmed |
+| AC-016 | REQ-032 | Given `origin/main@88c775c8ef0be7d1c63fd71b5924334b12492d75` 已包含 v0.4，when 构建和核对发布制品，then 制品祖先包含该精确提交并叠加 v0.3.1，且 v0.4 的数据库迁移、管理员/成员订阅命令、调度和运行时能力继续可用并通过回归验证；不得回退到 `c1e820a`。 | Confirmed |
 | AC-017 | REQ-033 | Given 部署和重启前后，when 比较生产状态，then 48/48 mapping 与 enable 不变，VISION/rotation disabled，mood avatar apply 为零。 | Confirmed |
 | AC-018 | REQ-001 through REQ-034 | Given 最终发布记录，when 独立审计，then 能追溯确认需求、评审提交、测试、备份、复合回复、频率、一次 default apply 和不变量，且没有未授权视觉外发或重复组件。 | Confirmed |
 
@@ -247,7 +249,7 @@
 | ASM-006 | 频率只针对 sticker-eligible 可见回复，不包含安全/关系禁止 sticker 或静默轮次。 | 避免指标破坏安全。 | 若按全部轮次统计，可能无法安全达到下限。 | Accepted |
 | ASM-007 | 头像异常上报使用既有人工运维沟通渠道，不新增群命令、工单系统或成员写权限。 | 用户只要求“用户检查上报”。 | 新上报产品入口需要独立范围。 | Accepted |
 | ASM-008 | Telegram 官方上传接口的明确 success 足以作为系统成功，不需要任何 post-upload 自动 readback。 | 用户明确要求信任接口报文。 | 若仍需最小 readback，REQ-004/005 必须修订。 | Accepted |
-| ASM-009 | 当前生产仍为 `c1e820a`、头像为空、48 枚表情启用、VISION/rotation disabled。 | 权威现场。 | 状态变化需在 F2 前重新协调。 | Accepted |
+| ASM-009 | 本次安全前向发布基线为 `origin/main@88c775c8ef0be7d1c63fd71b5924334b12492d75`，其中 v0.4 已合入/上线且必须保留；头像为空、48 枚表情启用、VISION/rotation disabled。 | 用户最新基线决定及权威现场。 | 若 main 或运行状态变化，必须在 F2 前重新协调。 | Accepted |
 | ASM-010 | 用户对“修复并部署”的既有授权继续适用于简化头像方案和本次 effector 修订，但仍受测试、复审和备份门限。 | 本轮是同一功能修订并新增回复需求。 | 若只授权需求设计，部署前仍需再次授权。 | Accepted |
 
 ## Decisions Requiring Confirmation
@@ -267,7 +269,7 @@
 | DEC-011 | 频率分母？ | sticker-eligible 且至少一个组件成功可见的回复；排除 silence、安全/关系禁用和全部失败。 | 防止指标逼迫不合适 sticker。 | Accepted |
 | DEC-012 | 线上统计窗口？ | 最近 7 天内最新最多 100 个合格回复；少于 30 个只报数据不足。 | 减少短窗口抖动。 | Accepted |
 | DEC-013 | 严肃场景能否用 text+sticker？ | 医疗、自伤、安全、违法、权限错误和严肃关系修复默认禁止；普通事实/步骤仅在不弱化信息时允许。 | 保持必要文字的严肃性。 | Accepted |
-| DEC-014 | 生产基线协调？ | 从 `c1e820a` 构建受控生产修订并前向集成最新 main；本次不隐式部署 PR #6。 | 避免扩大生产范围。 | Accepted |
+| DEC-014 | 生产基线协调？ | 直接以当前 `origin/main@88c775c8ef0be7d1c63fd71b5924334b12492d75` 为安全前向发布基线实现和部署 v0.3.1；不构建 `c1e820a` hotfix，并以 v0.4 回归证据作为发布门限。 | 保留已合入/上线能力，避免数据库和运行时回退。 | Accepted |
 | DEC-015 | 生产不变量？ | 48 枚表情映射保持、VISION/rotation/mood avatars 关闭。 | 防止回退和权限扩大。 | Accepted |
 
 ## Traceability
@@ -280,17 +282,14 @@
 | “一句话/多句话 + 表情包，或单纯表情包” | REQ-011 through REQ-023, REQ-029; AC-005 through AC-010, AC-014; ASM-003 through ASM-005; DEC-005 through DEC-009 |
 | “表情包回复频率 0. 4-07 左右” | REQ-024 through REQ-028; AC-011 through AC-013; ASM-001, ASM-005, ASM-006; DEC-010 through DEC-013 |
 | 既有批准头像、48 枚表情、VISION/rotation 状态 | Upstream And Locked State; REQ-001 through REQ-003, REQ-015, REQ-030 through REQ-034; AC-002, AC-015 through AC-018; ASM-009, ASM-010; DEC-014, DEC-015 |
+| “使用安全前向发布，在 main 的分支上修复就行” | REQ-032; AC-016; ASM-009; DEC-014 |
 
 ## Confirmation Record
 
-- Confirmation status: Confirmed
-- Confirmed by: User in Requirements task
-- Confirmed at: 2026-08-04T04:55:30Z
-- Confirmed scope: REQ-001 through REQ-034; AC-001 through AC-018; ASM-001 through ASM-010; DEC-001 through DEC-015.
-- The user confirms that Telegram's official avatar-upload API success response is the system success condition. The product will not perform automated post-upload profile readback, Remote SHA comparison or visual verification; visible anomalies are reported through the existing manual operations channel.
-- The user confirms that one effector reply may be one text component containing one or multiple sentences, one sticker, or text first followed by one sticker. Silence remains available.
-- The user confirms that sticker-only and successfully delivered text+sticker both count toward a sticker-bearing rate target of 0.4–0.7, using the confirmed eligibility, safety and rolling-window denominator.
-- The user accepts the confirmed component ordering, partial-failure, uncertain-delivery, restart, repetition, relationship and serious-context boundaries.
-- The user authorizes implementation and, only after the confirmed test, independent-review and database-backup gates pass, deployment of the effector revision, one `lezhi-default` apply and necessary container restart.
-- Automatic avatar rotation, VISION and mood-avatar application remain disabled; all 48 approved expression mappings remain enabled.
-- This confirmation authorizes Main Work to begin F2/F3 after accepting the versioned RequirementsHandoff. It does not itself modify implementation, call Telegram, send messages/stickers, read credentials, alter production data or deploy services.
+- Current confirmation status: Confirmed.
+- Confirmed by: User in Requirements task.
+- Confirmed at: 2026-08-04T05:32:35Z.
+- Confirmation evidence: 用户明确确认以 `origin/main@88c775c8ef0be7d1c63fd71b5924334b12492d75` 作为安全前向发布基线，保留全部 v0.4 能力并继续完成 v0.3.1；不再从 `c1e820ae167c1d65d3dd44371a1a40c018e0293d` 构建 hotfix。
+- Confirmed revision scope: REQ-032, AC-016, ASM-009 and DEC-014, plus baseline metadata and traceability. All other previously confirmed requirements, acceptance criteria, assumptions and decisions remain unchanged.
+- Prior RequirementsHandoff `ab8d01c26c029735a387028ec77b43b0ff710a477ad154aaed5db5c3c6c68b87`, requirements commit `70961981d7b6b871bcc6d16b7d8f3e4b7ffa942e` and requirements SHA-256 `762d8599aec63dfcded752ea07d34a988bf4a3d9d092c5c0e17f3582cf2a413f` remain immutable historical records.
+- This confirmation authorizes preparation of a new versioned RequirementsHandoff for Main Work. It does not itself authorize this Requirements task to perform technical design, implementation, deployment, container restart or Telegram operations.
