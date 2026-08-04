@@ -30,9 +30,23 @@ _CHINESE_EXCLUSIVITY_MARKER = (
     r"只许|只要|只会|仅限|仅|只)\s*"
 )
 _CHINESE_ADDRESSEE = r"(?:你|乐枝)\s*"
-_CHINESE_PREFIX_MODIFIER = (
-    r"(?:(?:以后|今后|将来|现在|永远|一直|始终|从今以后|从现在起|往后|"
-    r"真的|真|到底|还|再|也|都)\s*)*"
+_CHINESE_PREFIX_MODIFIER_TERM = (
+    r"(?:从今以后|从现在起|以后|今后|将来|现在|永远|一直|始终|往后|"
+    r"真的|真|到底|还|再|也|都)"
+)
+_CHINESE_PREFIX_MODIFIER = rf"(?:{_CHINESE_PREFIX_MODIFIER_TERM}\s*)*"
+_CHINESE_DIRECT_PREFIX_TOKEN = (
+    r"(?:可以不可以|应该不应该|应不应该|愿不愿意|答不答应|可不可以|"
+    r"能不能|会不会|肯不肯|从今以后|从现在起|拜托|麻烦|恳请|为什么|"
+    r"怎么可以|怎么能|是不是|愿意|答应|可以|能否|是否|应该|会|肯|"
+    r"请|求|以后|今后|将来|现在|永远|一直|始终|往后|真的|真|到底|"
+    r"还|再|也|都)"
+)
+_CHINESE_DIRECT_PREFIX = re.compile(
+    rf"(?:{_CHINESE_DIRECT_PREFIX_TOKEN}\s*)*"
+    rf"(?:(?:你|乐枝(?:你)?)\s*)?"
+    rf"(?:{_CHINESE_DIRECT_PREFIX_TOKEN}\s*)*",
+    re.IGNORECASE,
 )
 _CHINESE_TO_ME_ACTION = (
     r"(?:"
@@ -58,10 +72,25 @@ _ENGLISH_MODAL_ONLY = (
     r"(?:allowed|permitted)\s+to)"
 )
 _ENGLISH_PREFIX_MODIFIER = (
-    r"(?:(?:always|forever|ever|still|now|really|truly|actually|please|"
-    r"from now on|going forward|in the future)\s*)*"
+    r"(?:(?:always|forever|ever|still|now|really|truly|actually|please|kindly|"
+    r"maybe|perhaps|just|from now on|going forward|in the future)\s*)*"
 )
 _ENGLISH_POST_ONLY_MODIFIER = r"(?:(?:ever|always|really|truly|just)\s+)*"
+_ENGLISH_DIRECT_PREFIX_TOKEN = (
+    r"(?:from now on|going forward|in the future|how come|need to|have to|"
+    r"would like|can['’]t|couldn['’]t|wouldn['’]t|won['’]t|shouldn['’]t|"
+    r"don['’]t|doesn['’]t|didn['’]t|aren['’]t|isn['’]t|"
+    r"please|kindly|maybe|perhaps|just|always|forever|ever|still|now|really|"
+    r"truly|actually|why|can|could|would|will|should|may|might|must|do|does|"
+    r"did|are|is|was|were|shall|need|have|am|allowed|permitted|supposed|"
+    r"expected|to)"
+)
+_ENGLISH_DIRECT_PREFIX = re.compile(
+    rf"(?:{_ENGLISH_DIRECT_PREFIX_TOKEN}\s+)*"
+    rf"(?:(?:you|lezhi)(?:\s+|$))?"
+    rf"(?:{_ENGLISH_DIRECT_PREFIX_TOKEN}(?:\s+|$))*",
+    re.IGNORECASE,
+)
 _RELATIONSHIP_CLAUSE_BREAK = re.compile(r"[，,。.!！？?；;\n]")
 _RELATIONSHIP_EXCLUSIVITY_NEGATIONS = (
     re.compile(
@@ -269,6 +298,8 @@ def _relationship_match_has_direct_subject(text: str, match: re.Match[str]) -> b
     matched_text = match.group(0)
     if re.search(r"[\u3400-\u9fff]", matched_text):
         prefix = re.sub(r"^(?:但|但是|不过|而且|所以|然后)\s*", "", prefix)
+        if _CHINESE_DIRECT_PREFIX.fullmatch(prefix):
+            return True
         if prefix in {"你", "乐枝", "乐枝你", "请", "请你", "拜托", "拜托你"}:
             return True
         if re.fullmatch(
@@ -310,6 +341,8 @@ def _relationship_match_has_direct_subject(text: str, match: re.Match[str]) -> b
         )
 
     normalized = re.sub(r"^(?:but|and|so|then)\s+", "", prefix.lower())
+    if _ENGLISH_DIRECT_PREFIX.fullmatch(normalized):
+        return True
     if re.match(r"only\s+(?:you|lezhi)\b", matched_text, re.IGNORECASE) and re.fullmatch(
         r"(?:(?:why|how come)\s+)?(?:can|could|would|will|should|may|might|must)",
         normalized,
