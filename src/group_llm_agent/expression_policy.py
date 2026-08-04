@@ -25,18 +25,21 @@ _TEXT_REQUIRED = re.compile(
     re.IGNORECASE,
 )
 _CHINESE_EXCLUSIVITY_MARKER = (
-    r"(?:必须\s*(?:只|只能)|务必\s*只|一定(?:要)?\s*只|(?:要|得)\s*只|"
-    r"只能|只可以|只可|只准|只许|仅限|仅|只)\s*"
+    r"(?:必须\s*(?:只|只能)|务必\s*只|一定(?:要)?\s*(?:只|只能)|"
+    r"(?:要|得)\s*只|只能够|只能|只允许|只可以|只需要|只用|只可|只准|"
+    r"只许|只要|仅限|仅|只)\s*"
 )
 _CHINESE_TO_ME_ACTION = (
     r"(?:"
-    r"对我(?:撒(?:个)?娇|亲昵|偏心|好)(?:就好|就行|而已)?|"
-    r"(?:跟|和)我(?:玩|聊天|说话)|"
+    r"对我(?:(?:一个人?|一人)?好|撒(?:个)?娇|亲昵|偏心)"
+    r"(?:就好|就行|而已)?|"
+    r"(?:跟|和)我(?:一个人?|一人)?(?:玩|聊天|说话)|"
     r"站(?:在)?我(?:这边|一边)|"
     r"(?:支持|喜欢|爱|偏爱|偏袒|偏心|宠|陪|关心|在乎|理|搭理|夸|哄|"
-    r"选|向着|护着)我(?![们的])"
+    r"选|选择|向着|护着)我(?![们的])"
     r"(?:一个人?|一人)?(?:就好|就行|就可以了?|而已|好吗|好不好|行吗|"
-    r"行不行|可以吗|可以不|才行|才可以|才对吗?|懂吗|知道吗)?"
+    r"行不行|可以吗|可以不|才行|才可以|才对吗?|就够了?|就足够了?|"
+    r"懂吗|知道吗)?"
     r")(?=$|[\s，,。.!！？?；;：:、吧嘛呢呀哦啦吗\"'“”‘’）)】\]])"
 )
 _ENGLISH_RELATIONSHIP_ACTION = (
@@ -44,6 +47,11 @@ _ENGLISH_RELATIONSHIP_ACTION = (
     r"talk to|chat with|play with|choose|praise|comfort)"
 )
 _ENGLISH_TO_ME_ACTION = _ENGLISH_RELATIONSHIP_ACTION + r"\s+me\b"
+_ENGLISH_MODAL_ONLY = (
+    r"(?:only|(?:must|can|could|may|might|should|will|would|shall|need|"
+    r"need to|have to)\s+only|(?:am|are|is)\s+only\s+"
+    r"(?:allowed|permitted)\s+to)"
+)
 _RELATIONSHIP_CLAUSE_BREAK = re.compile(r"[，,。.!！？?；;\n]")
 _RELATIONSHIP_EXCLUSIVITY_NEGATIONS = (
     re.compile(
@@ -51,6 +59,7 @@ _RELATIONSHIP_EXCLUSIVITY_NEGATIONS = (
         r"不用|不需要|无需|没必要|没有必要|不许|不准)(?:再|再去)?\s*"
         r"(?:(?:说|要求|让|希望)\s*)?(?:你\s*)?"
         + _CHINESE_EXCLUSIVITY_MARKER
+        + r"(?:你\s*)?"
         + _CHINESE_TO_ME_ACTION,
         re.IGNORECASE,
     ),
@@ -90,24 +99,34 @@ _RELATIONSHIP_EXCLUSIVITY_NEGATIONS = (
 )
 _RELATIONSHIP_STICKER_FORBIDDEN = (
     re.compile(
-        _CHINESE_EXCLUSIVITY_MARKER + _CHINESE_TO_ME_ACTION,
+        _CHINESE_EXCLUSIVITY_MARKER + r"(?:你\s*)?" + _CHINESE_TO_ME_ACTION,
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:不许|不准|不要|不能|不可以|不该|不应该|别)(?:再)?"
-        r"(?:站(?:在)?|支持|喜欢|爱|偏爱|偏向|偏袒|偏心|宠|陪|关心|在乎|"
-        r"理|搭理|夸|哄|选|向着|护着)"
-        r"(?:别人|其他人|任何其他人)(?:那边|一边)?",
+        r"(?:不许|不准|不允许|不要|不能|不可以|不该|不应该|别)(?:再)?"
+        r"(?:你\s*)?"
+        r"(?:"
+        r"站(?:在)?(?:别人|其他人|任何其他人)(?:那边|一边)?|"
+        r"(?:跟|和)(?:别人|其他人|任何其他人)(?:玩|聊天|说话)|"
+        r"对(?:别人|其他人|任何其他人)好|"
+        r"(?:支持|喜欢|爱|偏爱|偏向|偏袒|偏心|宠|陪|关心|在乎|理|搭理|"
+        r"夸|哄|选|选择|向着|护着)(?:别人|其他人|任何其他人)"
+        r")",
         re.IGNORECASE,
     ),
     re.compile(
         (
             r"\b(?:"
-            r"(?:only|must only|can only|should only|have to only)\s+"
+            + _ENGLISH_MODAL_ONLY
+            + r"\s+"
             + _ENGLISH_TO_ME_ACTION
             + r"|"
             + _ENGLISH_RELATIONSHIP_ACTION
             + r"\s+only\s+me|"
+            + _ENGLISH_TO_ME_ACTION
+            + r"\s+(?:alone|exclusively)|"
+            r"only\s+you(?:\s+(?:can|could|may|might|must|should|will|would|"
+            r"shall))?\s+" + _ENGLISH_TO_ME_ACTION + r"|"
             r"(?:side|stand)\s+only\s+with\s+me|"
             r"(?:take|be on|stay on)\s+(?:only\s+)?my\s+side|"
             r"(?:do not|don['’]t|cannot|can not|can['’]t|must not|mustn['’]t|"
@@ -213,12 +232,49 @@ def _relationship_sticker_forbidden(context: EffectContext) -> bool:
     )
     for pattern in _RELATIONSHIP_STICKER_FORBIDDEN:
         for match in pattern.finditer(text):
+            if not _relationship_match_has_direct_subject(text, match):
+                continue
             if not any(
                 match.start() < negated_end and match.end() > negated_start
                 for negated_start, negated_end in negated_spans
             ):
                 return True
     return False
+
+
+def _relationship_match_has_direct_subject(text: str, match: re.Match[str]) -> bool:
+    prefix = _RELATIONSHIP_CLAUSE_BREAK.split(text[: match.start()])[-1]
+    prefix = prefix.strip(" \t\r\"'“”‘’（）()【】[]")
+    if not prefix:
+        return True
+
+    matched_text = match.group(0)
+    if re.search(r"[\u3400-\u9fff]", matched_text):
+        prefix = re.sub(r"^(?:但|但是|不过|而且|所以|然后)\s*", "", prefix)
+        if prefix in {"你", "乐枝", "乐枝你", "请", "请你", "拜托", "拜托你"}:
+            return True
+        if re.fullmatch(r"我(?:希望|想让|要|要求|只想让)你", prefix):
+            return True
+        if prefix == "我" and re.match(
+            r"(?:不许|不准|不允许|不要|不能|不可以|不该|不应该|别)(?:再)?你",
+            matched_text,
+        ):
+            return True
+        return _rhetorical_exclusivity_negation(text, match) and (
+            prefix.endswith("不是说")
+            or any(marker in prefix for marker in ("难道", "难不成", "岂不是"))
+        )
+
+    normalized = re.sub(r"^(?:but|and|so|then)\s+", "", prefix.lower())
+    return (
+        re.fullmatch(
+            r"(?:please|you(?:\s+(?:can|could|may|might|must|should|will|would|"
+            r"shall|need to|have to|are allowed to|are permitted to))?|"
+            r"(?:i|we)\s+(?:want|need|expect|ask|require|would like)\s+you(?:\s+to)?)",
+            normalized,
+        )
+        is not None
+    )
 
 
 def _rhetorical_exclusivity_negation(text: str, match: re.Match[str]) -> bool:
