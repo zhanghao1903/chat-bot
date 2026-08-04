@@ -548,11 +548,19 @@ def _has_bounded_benign_subject(
                 continue
             before = value[:start].strip()
             after = value[end:].strip()
+            if _contains_direct_addressee(after, spaced=spaced):
+                continue
             if (not before or _consume_prefix_tokens(before, prefix_tokens, spaced=spaced)) and (
                 not after or _consume_prefix_tokens(after, prefix_tokens, spaced=spaced)
             ):
                 return True
     return False
+
+
+def _contains_direct_addressee(value: str, *, spaced: bool) -> bool:
+    if spaced:
+        return re.search(r"(?:^|\s)(?:you|lezhi)(?:\s|$)", value) is not None
+    return "你" in value or "乐枝" in value
 
 
 def _rhetorical_exclusivity_negation(text: str, match: re.Match[str]) -> bool:
