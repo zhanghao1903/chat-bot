@@ -170,7 +170,9 @@ pre-prepare recovery gap. It is closed as follows:
   edit terminalize the recovered v1 occurrence once as `definite_failure`. The exact
   lease-v1/admin-config-v2/crash-before-prepare/restart regression proves the first recovery processes
   one row, a duplicate processes zero, the recommendation processor is never called, zero external
-  effects exist and the row is not stranded in `leased`.
+  effects exist and the row is not stranded in `leased` while that identity remains in the active
+  schedule's current-date projection. The following exact-head review found discovery after a
+  cross-date timezone edit still open; section 1.5 records its closure.
 
 Exact fourth-remediation commit `3fcb0ef0d615aa09b91f27d85551bd4abb7ef46b` passed:
 
@@ -188,6 +190,45 @@ Exact fourth-remediation commit `3fcb0ef0d615aa09b91f27d85551bd4abb7ef46b` passe
 The Docker, provider and deployment boundaries from section 1.3 remain unchanged: no candidate image
 was rebuilt, no real Tavily call was made, capabilities stayed disabled, and no running service or
 Telegram state changed.
+
+### 1.5 Durable expired-lease discovery and fifth remediation
+
+- Fifth review dispatch: `ef975d7b3362e3cabd41470c47580fe1b0854e788997b2e3ada55a6334632d94`
+- Accepted immutable ReviewResult SHA-256:
+  `e5ba402a6e4b35b7ab68ae70f2a7a6a881aa3591a76882105f40caa952a9cb97`
+- Fifth reviewed head: `1853065749eec69641e0b17e8cf21ad01d210813`
+- Exact fifth-remediation implementation commit:
+  `2fb363a6f2ad2cf3c55674de098dfb67f4343e2d`
+
+The fifth review retained FINDING-005 because its transaction policy was reachable only when the old
+occurrence identity still appeared in the active timezone's current/previous-date projection. The
+remaining discovery boundary is closed as follows:
+
+- **FINDING-005** — `AutomationRepository.list_expired_leases` queries durable `leased` rows whose
+  lease has expired, ordered by expiry and occurrence ID with an application bound of 32 per tick.
+  `AutomationScheduler.run_once` competitively reclaims and resolves that queue before projecting
+  current configuration slots, and both recovered and normal leases share the same terminalization
+  helper. The exact regression leases Monday 2026-08-03 lunch under `Etc/GMT+12`, changes to
+  `Pacific/Kiritimati` (a 26-hour shift across more than one local date), then restarts after expiry.
+  The old durable row is discovered and terminalized once, the duplicate tick processes zero, and
+  no recommendation processor call or external effect occurs.
+
+Exact fifth-remediation commit `2fb363a6f2ad2cf3c55674de098dfb67f4343e2d` passed:
+
+- `python3 -m compileall -q src tests`
+- `PYTHONPATH=src:tests uv run python -m unittest discover -s tests -q` — **280 tests** in
+  **94.569 seconds**
+- Ruff check — passed; Ruff format check — **96 source/test files already formatted**
+- Mypy — no issues in **49 source files**
+- `sh -n deploy/manage.sh`, `git diff --check` and package build — passed
+- Fifth-remediation sdist SHA-256:
+  `fd86fae1225d6646c9c6ec88f57260f5a990fa355202d2a22f53e55a4792b1e6`
+- Fifth-remediation wheel SHA-256:
+  `f4c2b15a069a37b6eb81b38fe322404df3c2ce1bff467dce35d2020b3d751d25`
+
+The Docker, provider and deployment boundaries remain unchanged: no candidate image was rebuilt, no
+real Tavily call was made, capabilities stayed disabled, and no running service or Telegram state
+changed.
 
 ## 2. Implemented contracts
 
