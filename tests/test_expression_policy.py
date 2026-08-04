@@ -120,10 +120,16 @@ class ExpressionPolicyTests(unittest.TestCase):
             "你只能喜欢我",
             "你只许偏爱我",
             "只宠我一个",
+            "你只宠我一个人",
             "你不许站别人那边",
+            "你不准支持任何其他人",
+            "别只支持我，但你只能喜欢我",
             "Only side with me.",
             "You can only support me.",
+            "You must only like me.",
             "Don't side with anyone else.",
+            "Choose me over others.",
+            "Do not only support me; but you must only like me.",
         )
         for text in exclusive_texts:
             with self.subTest(text=text):
@@ -150,8 +156,19 @@ class ExpressionPolicyTests(unittest.TestCase):
             "谢谢你一直支持我",
             "我爸一直支持我",
             "这个决定支持我的学习",
+            "我只支持我的学习计划",
+            "这个功能只支持我的设备吗",
+            "我只喜欢我的新头像",
+            "我只支持我妈妈的决定",
+            "这个应用只能支持我的设备",
+            "别只支持我，大家都需要支持",
+            "不是只能喜欢我，大家都值得被喜欢",
+            "不应该只支持我，其他人也需要支持",
+            "别再只宠我一个，大家都要被照顾",
             "Thanks for supporting me.",
             "My family supports me.",
+            "Do not only support me; support everyone.",
+            "Do not take only my side; hear everyone out.",
         ):
             with self.subTest(text=text):
                 benign = cast(

@@ -24,24 +24,55 @@ _TEXT_REQUIRED = re.compile(
     r"steps?|how (?:do|to)|why|explain|instructions?|address|when|price)",
     re.IGNORECASE,
 )
-_RELATIONSHIP_STICKER_FORBIDDEN = (
+_CHINESE_EXCLUSIVITY_MARKER = r"(?:必须\s*只|务必\s*只|只能|只准|只许|仅限|只)\s*"
+_CHINESE_TO_ME_ACTION = (
+    r"(?:"
+    r"对我(?:撒(?:个)?娇|亲昵|偏心)(?:就好|就行|而已)?|"
+    r"站(?:在)?我(?:这边|一边)|"
+    r"(?:支持|喜欢|偏爱|偏袒|偏心|宠)我(?![们的])"
+    r"(?:一个人?)?(?:就好|就行|而已)?"
+    r")(?=$|[\s，,。.!！？?；;：:、吧嘛呢呀哦啦吗\"'“”‘’）)】\]])"
+)
+_ENGLISH_TO_ME_ACTION = r"(?:like|love|favor|support|back|side with|stand by|care for)\s+me\b"
+_RELATIONSHIP_EXCLUSIVITY_NEGATIONS = (
     re.compile(
-        r"(?:必须只|务必只|只能|只准|只许|仅限|只)(?:"
-        r"对我(?:撒(?:个)?娇|亲昵|偏心)|"
-        r"站(?:在)?我(?:这边|一边)|"
-        r"(?:支持|喜欢|偏爱|偏袒|偏心|宠)我(?!们)(?:一?个)?"
-        r")",
+        r"(?:别|不要|不是|并非|并不是|不能|不可以|不该|不应该|不应|不必|"
+        r"无需|不许|不准)(?:再|再去)?(?:说|是说|代表|意味着)?\s*(?:你\s*)?"
+        + _CHINESE_EXCLUSIVITY_MARKER
+        + _CHINESE_TO_ME_ACTION,
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:不许|不准|不要|不能)(?:再)?(?:站(?:在)?|支持|偏向|偏袒)"
+        r"(?:不只|不仅|不光)\s*" + _CHINESE_TO_ME_ACTION,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:"
+        r"(?:do not|don't|never|should not|shouldn't|must not|mustn't)\s+"
+        r"(?:only|just)\s+"
+        r"|not(?:\s+that)?(?:\s+you)?(?:\s+(?:can|must|should))?\s+only\s+"
+        r")" + _ENGLISH_TO_ME_ACTION,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:do not|don't|never|should not|shouldn't|must not|mustn't)\s+"
+        r"(?:take|be on|stay on)\s+(?:only\s+)?my\s+side\b",
+        re.IGNORECASE,
+    ),
+)
+_RELATIONSHIP_STICKER_FORBIDDEN = (
+    re.compile(
+        _CHINESE_EXCLUSIVITY_MARKER + _CHINESE_TO_ME_ACTION,
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:不许|不准|不要|不能|别)(?:再)?(?:站(?:在)?|支持|偏向|偏袒)"
         r"(?:别人|其他人|任何其他人)(?:那边|一边)?",
         re.IGNORECASE,
     ),
     re.compile(
         r"\b(?:"
-        r"(?:only|must only|can only|should only|have to only)\s+"
-        r"(?:like|love|favor|support|back|side with|stand by|care for)\s+me|"
+        r"(?:only|must only|can only|should only|have to only)\s+" + _ENGLISH_TO_ME_ACTION + r"|"
         r"(?:take|be on|stay on)\s+(?:only\s+)?my\s+side|"
         r"(?:do not|don't|must not)\s+(?:side with|support|back|favor)\s+"
         r"(?:anyone|anybody|someone|others?)\s+else|"
@@ -131,10 +162,20 @@ def _context_requires_text(context: EffectContext) -> bool:
 def _relationship_sticker_forbidden(context: EffectContext) -> bool:
     if context.current_message is None:
         return False
-    return any(
-        pattern.search(context.current_message.text) is not None
-        for pattern in _RELATIONSHIP_STICKER_FORBIDDEN
+    text = context.current_message.text
+    negated_spans = tuple(
+        match.span()
+        for pattern in _RELATIONSHIP_EXCLUSIVITY_NEGATIONS
+        for match in pattern.finditer(text)
     )
+    for pattern in _RELATIONSHIP_STICKER_FORBIDDEN:
+        for match in pattern.finditer(text):
+            if not any(
+                match.start() < negated_end and match.end() > negated_start
+                for negated_start, negated_end in negated_spans
+            ):
+                return True
+    return False
 
 
 def _vision_text(context: EffectContext) -> str:

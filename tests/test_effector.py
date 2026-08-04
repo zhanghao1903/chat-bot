@@ -587,33 +587,46 @@ class WriterEffectorTests(unittest.TestCase):
                         self.assertEqual(FinalEffectKind.REPLY, final.kind)
                         self.assertEqual(payload["text"], final.text)
 
-        for message_text in ("谢谢大家支持我们", "谢谢你一直支持我"):
-            with (
-                self.subTest(message_text=message_text),
-                EffectorFixtureContext(
-                    StructuredModelResult(
-                        {
-                            "kind": "sticker",
-                            "reason_code": "light_reaction",
-                            "sticker_id": selected.semantic_id,
-                            "catalog_version": candidate.catalog_version,
-                            "catalog_digest": candidate.digest,
-                            "fallback_text": "谢谢。",
-                            "mood_signal": "gentle",
-                        }
-                    ),
-                    current_message_text=message_text,
-                ) as fixture,
-            ):
-                fixture.effector.expression_catalog_provider = lambda: enabled_catalog(fixture)
+        for message_text in (
+            "谢谢大家支持我们",
+            "谢谢你一直支持我",
+            "这个功能只支持我的设备吗",
+            "我只喜欢我的新头像",
+            "别只支持我，大家都需要支持",
+            "不是只能喜欢我，大家都值得被喜欢",
+            "不应该只支持我，其他人也需要支持",
+            "Do not only support me; support everyone.",
+            "Do not take only my side; hear everyone out.",
+        ):
+            for decision_kind in ("sticker", "reply_with_sticker"):
+                payload = {
+                    "kind": decision_kind,
+                    "reason_code": "light_reaction",
+                    "sticker_id": selected.semantic_id,
+                    "catalog_version": candidate.catalog_version,
+                    "catalog_digest": candidate.digest,
+                    "mood_signal": "gentle",
+                }
+                if decision_kind == "sticker":
+                    payload["fallback_text"] = "谢谢。"
+                else:
+                    payload["text"] = "谢谢你把话说清楚。"
+                with (
+                    self.subTest(message_text=message_text, decision_kind=decision_kind),
+                    EffectorFixtureContext(
+                        StructuredModelResult(payload),
+                        current_message_text=message_text,
+                    ) as fixture,
+                ):
+                    fixture.effector.expression_catalog_provider = lambda: enabled_catalog(fixture)
 
-                final = fixture.effector.execute(
-                    request=fixture.request,
-                    bundle=fixture.bundle,
-                )
+                    final = fixture.effector.execute(
+                        request=fixture.request,
+                        bundle=fixture.bundle,
+                    )
 
-                self.assertEqual(FinalEffectKind.STICKER, final.kind)
-                self.assertEqual(selected.semantic_id, final.sticker_id)
+                    self.assertEqual(FinalEffectKind(decision_kind), final.kind)
+                    self.assertEqual(selected.semantic_id, final.sticker_id)
 
 
 class EffectorFixture:
