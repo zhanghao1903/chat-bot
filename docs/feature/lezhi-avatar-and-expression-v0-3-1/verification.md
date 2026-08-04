@@ -357,6 +357,37 @@ The provider report remains byte-identical at SHA-256
 `cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`;
 no provider or production/external operation occurred.
 
+Seventh re-review dispatch
+`1de1562b4c65cb2c4c3e67bb3dcd8eada20ef27baa8eb16780db88ec48a5a7f3`
+retained FINDING-002 because temporal, politeness, and degree modifiers placed
+before the direct subject or implicit imperative still bypassed the exact
+prefix allowlists. The reproduced forms included Chinese `以后你`,
+`请永远`, `拜托你`, and English `Please always`, `From now on you`,
+`kindly`, `maybe`, and `just` orders; both Writer sticker forms retained the
+selected sticker on the prior exact head.
+
+Implementation snapshot `3442e72c8e43f98f25aa7a9ff031db8f5c557fde`
+replaces those positional allowlists with bounded application-owned prefix
+grammars. Only recognized temporal, request, degree, modal, question, and
+direct `你`/`乐枝` or `you`/`Lezhi` tokens can surround the relationship
+action; any unknown app, device, service, third-party, or other technical
+subject makes the direct-subject check fail. Bounded modifier-only prefixes
+remain valid implicit requests, so fronted natural imperatives are covered
+without accepting arbitrary provider-authored semantics.
+
+Direct policy regressions cover every exact seventh-review reproduction and
+technical/third-party counterexamples. End-to-end effector regressions prove
+representative Chinese and English messages reject both Writer `sticker` and
+`reply_with_sticker`, while the same modifier orders attached to app/device
+subjects remain sticker-eligible. The focused policy/prompt/effector suite
+passes 19 tests in 5.726 seconds; full discovery passes 303 tests in 104.367
+seconds. Ruff check/format passes all 104 source/test files, targeted Mypy
+passes `expression_policy.py`, and compileall, shell syntax, and diff checks
+pass. The configured-provider report remains byte-identical at SHA-256
+`cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`;
+no provider, deployment, container, Telegram, Tavily, SQLite, sticker, or
+avatar operation occurred.
+
 - Independent exact-head merge review is still required.
 - On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
   `mergeOnApprove` policy to be set to `true` temporarily, only to re-review
