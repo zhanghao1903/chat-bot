@@ -314,10 +314,41 @@ class AvatarControllerTests(unittest.TestCase):
                 approved_avatar_ids=frozenset({"lezhi-default"}),
             )
             catalog = load_avatar_catalog(path, expected_sha256=approved_sha)
-            for bot_id, error, expected_status in (
+            cases = (
                 ("bot-failed", TelegramApiError("setMyProfilePhoto", "api_error", 400), "failed"),
-                ("bot-uncertain", TelegramApiError("setMyProfilePhoto", "timeout"), "uncertain"),
-            ):
+                ("bot-timeout", TelegramApiError("setMyProfilePhoto", "timeout"), "uncertain"),
+                (
+                    "bot-transport",
+                    TelegramApiError("setMyProfilePhoto", "transport_error"),
+                    "uncertain",
+                ),
+                (
+                    "bot-json",
+                    TelegramApiError("setMyProfilePhoto", "invalid_json"),
+                    "uncertain",
+                ),
+                (
+                    "bot-response",
+                    TelegramApiError("setMyProfilePhoto", "invalid_response"),
+                    "uncertain",
+                ),
+                (
+                    "bot-result",
+                    TelegramApiError("setMyProfilePhoto", "invalid_result"),
+                    "uncertain",
+                ),
+                (
+                    "bot-http-5xx",
+                    TelegramApiError("setMyProfilePhoto", "http_error", 503),
+                    "uncertain",
+                ),
+                (
+                    "bot-api-5xx",
+                    TelegramApiError("setMyProfilePhoto", "api_error", 500),
+                    "uncertain",
+                ),
+            )
+            for bot_id, error, expected_status in cases:
                 with self.subTest(expected_status=expected_status):
                     multipart = _Multipart(error=error)
                     controller = AvatarController(
@@ -346,13 +377,17 @@ class AvatarControllerTests(unittest.TestCase):
                 ).fetchall()
             finally:
                 connection.close()
-            self.assertEqual(
-                [
-                    ("bot-failed", "failed", "setMyProfilePhoto_api_error_400", None),
-                    ("bot-uncertain", "uncertain", "setMyProfilePhoto_timeout", None),
-                ],
-                [tuple(item) for item in audits],
-            )
+            expected = [
+                (
+                    bot_id,
+                    expected_status,
+                    f"setMyProfilePhoto_{error.category}"
+                    + (f"_{error.status_code}" if error.status_code is not None else ""),
+                    None,
+                )
+                for bot_id, error, expected_status in cases
+            ]
+            self.assertEqual(expected, [tuple(item) for item in audits])
 
     def test_digest_authorization_and_identity_mismatch_stop_before_write(self) -> None:
         with _avatar_fixture() as path, temporary_database() as database:
@@ -377,6 +412,24 @@ class AvatarControllerTests(unittest.TestCase):
                     requested_by="operator",
                     reason_code="initial_default",
                     authorization_reference="user-confirmed-avatar-apply:test",
+                )
+            self.assertEqual(0, multipart.uploads)
+
+            with self.assertRaisesRegex(
+                ExpressionCatalogError, "explicit_avatar_apply_authorization_required"
+            ):
+                AvatarController(
+                    database=database,
+                    telegram=_Telegram(),  # type: ignore[arg-type]
+                    multipart=multipart,  # type: ignore[arg-type]
+                    bot_user_id="bot-1",
+                    approved_catalog_digest=catalog.digest,
+                ).apply(
+                    catalog,
+                    avatar_id="lezhi-default",
+                    requested_by="operator",
+                    reason_code="initial_default",
+                    authorization_reference="automatic",
                 )
             self.assertEqual(0, multipart.uploads)
 

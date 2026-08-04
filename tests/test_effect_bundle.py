@@ -134,10 +134,10 @@ class EffectBundleRepositoryTests(unittest.TestCase):
             self.assertEqual(ComponentStatus.UNCERTAIN, reconciled.components[0].status)
             self.assertEqual(0, repository.reconcile_incomplete())
 
-    def test_metrics_require_30_exact_snapshot_eligible_visible_bundles(self) -> None:
+    def test_metrics_enforce_sample_boundaries_and_latest_100_window(self) -> None:
         with temporary_database() as database:
             repository = EffectBundleRepository(database)
-            for index in range(1, 31):
+            for index in range(1, 30):
                 final = _composite_final() if index <= 12 else _text_final()
                 record = repository.prepare(
                     event=_event(index),
@@ -158,7 +158,7 @@ class EffectBundleRepositoryTests(unittest.TestCase):
                 repository.finalize(bundle_id=record.bundle_id)
 
             current = datetime.now(UTC) + timedelta(seconds=1)
-            metrics = repository.metrics(
+            insufficient = repository.metrics(
                 bot_user_id="bot-1",
                 persona_version=_PERSONA.persona_version,
                 persona_digest=_PERSONA.persona_digest,
@@ -166,16 +166,109 @@ class EffectBundleRepositoryTests(unittest.TestCase):
                 catalog_digest=_CATALOG_DIGEST,
                 now=current,
             )
-            self.assertEqual("ready", metrics.status)
+            self.assertEqual("insufficient_data", insufficient.status)
+            self.assertEqual(29, insufficient.sample_count)
+            self.assertIsNone(insufficient.sticker_bearing_rate)
+
+            self._record_visible_bundle(repository, index=30, final=_text_final())
+            ready = repository.metrics(
+                bot_user_id="bot-1",
+                persona_version=_PERSONA.persona_version,
+                persona_digest=_PERSONA.persona_digest,
+                catalog_version=_CATALOG_VERSION,
+                catalog_digest=_CATALOG_DIGEST,
+                now=datetime.now(UTC) + timedelta(seconds=1),
+            )
+            self.assertEqual("ready", ready.status)
             self.assertEqual(
                 (30, 12, 18),
                 (
-                    metrics.sample_count,
-                    metrics.sticker_bearing_count,
-                    metrics.text_only_count,
+                    ready.sample_count,
+                    ready.sticker_bearing_count,
+                    ready.text_only_count,
                 ),
             )
-            self.assertEqual(0.4, metrics.sticker_bearing_rate)
+            self.assertEqual(0.4, ready.sticker_bearing_rate)
+
+            for index in range(31, 101):
+                self._record_visible_bundle(repository, index=index, final=_text_final())
+            at_limit = repository.metrics(
+                bot_user_id="bot-1",
+                persona_version=_PERSONA.persona_version,
+                persona_digest=_PERSONA.persona_digest,
+                catalog_version=_CATALOG_VERSION,
+                catalog_digest=_CATALOG_DIGEST,
+                now=datetime.now(UTC) + timedelta(seconds=1),
+            )
+            self.assertEqual((100, 12), (at_limit.sample_count, at_limit.sticker_bearing_count))
+
+            self._record_visible_bundle(repository, index=101, final=_text_final())
+            limited = repository.metrics(
+                bot_user_id="bot-1",
+                persona_version=_PERSONA.persona_version,
+                persona_digest=_PERSONA.persona_digest,
+                catalog_version=_CATALOG_VERSION,
+                catalog_digest=_CATALOG_DIGEST,
+                now=datetime.now(UTC) + timedelta(seconds=1),
+            )
+            self.assertEqual((100, 11), (limited.sample_count, limited.sticker_bearing_count))
+
+            self._record_visible_bundle(
+                repository,
+                index=102,
+                final=replace(
+                    _text_final(),
+                    sticker_eligible=False,
+                    sticker_eligibility_reason="necessary_text",
+                ),
+            )
+            failed = repository.prepare(
+                event=_event(103),
+                final=_text_final(),
+                bot_user_id="bot-1",
+            )
+            assert failed is not None
+            component_id = repository.claim_component(bundle_id=failed.bundle_id, ordinal=1)
+            assert component_id is not None
+            repository.mark_failed(component_id, error_code="explicit_failure")
+            repository.finalize(bundle_id=failed.bundle_id)
+            excluded = repository.metrics(
+                bot_user_id="bot-1",
+                persona_version=_PERSONA.persona_version,
+                persona_digest=_PERSONA.persona_digest,
+                catalog_version=_CATALOG_VERSION,
+                catalog_digest=_CATALOG_DIGEST,
+                now=datetime.now(UTC) + timedelta(seconds=1),
+            )
+            self.assertEqual(
+                (100, 11),
+                (excluded.sample_count, excluded.sticker_bearing_count),
+            )
+
+    @staticmethod
+    def _record_visible_bundle(
+        repository: EffectBundleRepository,
+        *,
+        index: int,
+        final: FinalEffect,
+    ) -> None:
+        record = repository.prepare(
+            event=_event(index),
+            final=final,
+            bot_user_id="bot-1",
+        )
+        assert record is not None
+        for component in record.components:
+            component_id = repository.claim_component(
+                bundle_id=record.bundle_id,
+                ordinal=component.ordinal,
+            )
+            assert component_id is not None
+            repository.mark_sent(
+                component_id,
+                platform_message_id=f"sent-{index}-{component.ordinal}",
+            )
+        repository.finalize(bundle_id=record.bundle_id)
 
 
 if __name__ == "__main__":
