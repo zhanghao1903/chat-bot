@@ -237,6 +237,42 @@ compileall, shell syntax, and diff checks pass. The canonical provider report
 remains byte-identical; no external call was made for this deterministic
 closure.
 
+Third re-review dispatch
+`410df9921f8f74ecc24334c4c0fd2f103291a8b86b4df3282ec44ac757445247`
+retained FINDING-002 because implementation snapshot
+`c0f803eeaada81eab6aa354e59f1409e58f1e67e` did not yet cover common
+exclusive-affection action, negative-other, marker, request-ending, English
+word-order, and rhetorical-demand forms. Exact reproductions included
+`你只能爱我`, `你不许喜欢别人`, `你不能爱任何其他人`,
+`你只可以喜欢我`, `你只能喜欢我好吗`, `你只喜欢我就可以了`,
+`You must love only me.`, `You can't love anyone else.`,
+`Don't love anyone else.`, `你不是说只能喜欢我吗？`, and
+`难道你不应该只喜欢我吗？`.
+
+Remediation snapshot `b949d1a5c92a4167838deade99cc29e238d722da`
+completes the bounded application-owned relationship grammar. It adds the
+missing `爱`/`love` and negative-other actions, natural Chinese exclusivity
+markers and request endings, English action-only and negative-other word
+orders, and rhetorical-demand handling. Exemptions cover complete
+anti-exclusivity spans only; they do not hide an independent positive demand.
+The same object boundary continues to reject possessive-prefix false matches
+such as `我的设备`, while explicit inclusive corrections in Chinese and
+English remain sticker-eligible.
+
+Direct policy and end-to-end effector regressions cover all three prior review
+matrices plus additional complete-object, imperative, modal, rhetorical,
+anti-exclusivity, and multi-span cases. Both Writer `sticker` and
+`reply_with_sticker` decisions are rejected for relationship contexts, while
+validated stickers remain possible for benign support, gratitude, possessive,
+and anti-exclusivity messages. The focused policy/prompt/effector suite passes
+19 tests and the full suite passes 303 tests in 103.165 seconds. Ruff
+check/format passes all 104 source/test files, targeted Mypy passes
+`expression_policy.py`, and compileall, shell syntax, and diff checks pass.
+The canonical configured-provider report remains byte-identical at SHA-256
+`cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`;
+no additional provider call, deployment, container replacement, Telegram,
+Tavily, SQLite, sticker, or avatar operation occurred.
+
 - Independent exact-head merge review is still required.
 - On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
   `mergeOnApprove` policy to be set to `true` temporarily, only to re-review
