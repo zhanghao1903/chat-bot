@@ -230,6 +230,26 @@ The Docker, provider and deployment boundaries remain unchanged: no candidate im
 real Tavily call was made, capabilities stayed disabled, and no running service or Telegram state
 changed.
 
+### 1.6 Exact-head approval and one-time merge authorization
+
+- Sixth review dispatch: `eb439d78e16802b23dd390f46fc0eed401a5576eb365e1b5854ac9d1927c3738`
+- Accepted immutable ReviewResult SHA-256:
+  `4b6aa8fe650e4b03f97f90b20ee2f0bbc5b0a11e300379c05771f1b542b27f1f`
+- Exact approved head: `3fb20bc657d62c47a95b128eb95020ea7a1cfd55`
+- Review decision: `APPROVE`, with no findings; merge status: `NOT_AUTHORIZED`
+
+On 2026-08-04 the user explicitly authorized changing the global Feature Lifecycle
+`mergeOnApprove` policy from `false` to `true` only long enough to issue a new immutable exact-head
+review request and, if that review approves, squash-merge PR #6. The same authorization requires
+Main Work to accept the merged ReviewResult and immediately restore the global policy to `false`.
+All other merge policy fields remain unchanged: squash merge, exact-head and green-check gates,
+with feature-branch deletion disabled.
+
+This documentation-only carrier records that authorization without modifying runtime source, tests,
+deployment assets or the verified feature behavior. It does not authorize a Tavily request, feature
+enablement, member subscription, Compose restart, container replacement, deployment or Telegram
+message. Those remain separately controlled post-merge operational steps.
+
 ## 2. Implemented contracts
 
 - `weekday_food_recommendation` is an application-owned automation definition. Runtime capability,
