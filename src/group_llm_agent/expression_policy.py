@@ -9,10 +9,14 @@ from group_llm_agent.expression import ExpressionCatalog, ExpressionEntry
 _RELATIONSHIP_RANK = {"public": 0, "familiar": 1, "close": 2}
 _HARD_STICKER_FORBIDDEN = re.compile(
     r"(?:医疗|受伤|伤口|流血|出血|血迹|自伤|自杀|急救|紧急|报警|违法|犯罪|"
+    r"安全事故|安全事件|安全险情|生产事故|工业事故|工伤事故|事故现场|"
+    r"发生(?:了)?(?:事故|险情)|出了事故|"
     r"权限错误|无权|拒绝访问|严肃道歉|关系修复|分手|病|药|药物|诊断|"
     r"medical|medication|medicine|pills?|injur|wounds?|bleed|blood|"
     r"self[- ]?harm|suicide|emergency|illegal|crime|permission|forbidden|"
-    r"access denied|serious apology|relationship repair)",
+    r"access denied|serious apology|relationship repair|"
+    r"\bsafety[- ](?:incident|accident)\b|"
+    r"\b(?:workplace|industrial)[- ]accident\b|\baccident scene\b)",
     re.IGNORECASE,
 )
 _TEXT_REQUIRED = re.compile(
