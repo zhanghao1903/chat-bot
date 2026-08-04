@@ -24,11 +24,31 @@ _TEXT_REQUIRED = re.compile(
     r"steps?|how (?:do|to)|why|explain|instructions?|address|when|price)",
     re.IGNORECASE,
 )
-_RELATIONSHIP_STICKER_FORBIDDEN = re.compile(
-    r"(?:只对我(?:撒(?:个)?娇|亲昵|偏心)|"
-    r"(?:必须|只能|只准)?只?(?:站我这边|站我一边|支持我|偏袒我|偏心我)|"
-    r"(?:take|be on|stay on) only my side|only side with me)",
-    re.IGNORECASE,
+_RELATIONSHIP_STICKER_FORBIDDEN = (
+    re.compile(
+        r"(?:必须只|务必只|只能|只准|只许|仅限|只)(?:"
+        r"对我(?:撒(?:个)?娇|亲昵|偏心)|"
+        r"站(?:在)?我(?:这边|一边)|"
+        r"(?:支持|喜欢|偏爱|偏袒|偏心|宠)我(?!们)(?:一?个)?"
+        r")",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(?:不许|不准|不要|不能)(?:再)?(?:站(?:在)?|支持|偏向|偏袒)"
+        r"(?:别人|其他人|任何其他人)(?:那边|一边)?",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:"
+        r"(?:only|must only|can only|should only|have to only)\s+"
+        r"(?:like|love|favor|support|back|side with|stand by|care for)\s+me|"
+        r"(?:take|be on|stay on)\s+(?:only\s+)?my\s+side|"
+        r"(?:do not|don't|must not)\s+(?:side with|support|back|favor)\s+"
+        r"(?:anyone|anybody|someone|others?)\s+else|"
+        r"(?:choose|favor|prefer)\s+me\s+over\s+(?:anyone|anybody|others?)"
+        r")\b",
+        re.IGNORECASE,
+    ),
 )
 _STICKER_ONLY_SAFE_VISION_FLAGS = frozenset({"known_enabled_sticker"})
 
@@ -109,9 +129,11 @@ def _context_requires_text(context: EffectContext) -> bool:
 
 
 def _relationship_sticker_forbidden(context: EffectContext) -> bool:
-    return (
-        context.current_message is not None
-        and _RELATIONSHIP_STICKER_FORBIDDEN.search(context.current_message.text) is not None
+    if context.current_message is None:
+        return False
+    return any(
+        pattern.search(context.current_message.text) is not None
+        for pattern in _RELATIONSHIP_STICKER_FORBIDDEN
     )
 
 

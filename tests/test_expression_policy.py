@@ -114,11 +114,18 @@ class ExpressionPolicyTests(unittest.TestCase):
                 ),
             ),
         )
-        for text in (
+        exclusive_texts = (
             "只对我撒个娇嘛",
             "你必须只站我这边",
+            "你只能喜欢我",
+            "你只许偏爱我",
+            "只宠我一个",
+            "你不许站别人那边",
             "Only side with me.",
-        ):
+            "You can only support me.",
+            "Don't side with anyone else.",
+        )
+        for text in exclusive_texts:
             with self.subTest(text=text):
                 context = cast(
                     EffectContext,
@@ -137,17 +144,27 @@ class ExpressionPolicyTests(unittest.TestCase):
                 self.assertFalse(eligibility.sticker_only_allowed)
                 self.assertEqual("relationship_context", eligibility.reason_code)
 
-        benign = cast(
-            EffectContext,
-            SimpleNamespace(
-                current_message=SimpleNamespace(text="这个观点我支持"),
-                vision_error_code=None,
-                vision_evidence=None,
-                member_memory=(),
-                recent_scene=(),
-            ),
-        )
-        self.assertTrue(classify_sticker_eligibility(benign, catalog).eligible)
+        for text in (
+            "这个观点我支持",
+            "谢谢大家支持我们",
+            "谢谢你一直支持我",
+            "我爸一直支持我",
+            "这个决定支持我的学习",
+            "Thanks for supporting me.",
+            "My family supports me.",
+        ):
+            with self.subTest(text=text):
+                benign = cast(
+                    EffectContext,
+                    SimpleNamespace(
+                        current_message=SimpleNamespace(text=text),
+                        vision_error_code=None,
+                        vision_evidence=None,
+                        member_memory=(),
+                        recent_scene=(),
+                    ),
+                )
+                self.assertTrue(classify_sticker_eligibility(benign, catalog).eligible)
 
     def test_last_sticker_survives_intervening_text_only_reply(self) -> None:
         context = cast(
