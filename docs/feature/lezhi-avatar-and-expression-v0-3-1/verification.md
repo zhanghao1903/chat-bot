@@ -200,7 +200,7 @@ Exact-head review dispatch
 found that the first relationship alternation treated bare `支持我` as an
 exclusive relationship signal while missing common paraphrases such as
 `你只能喜欢我`, `你只许偏爱我`, `只宠我一个`, and `你不许站别人那边`.
-The deterministic remediation replaces the substring match with bounded
+The first deterministic remediation replaces the substring match with bounded
 Chinese and English exclusivity, favoritism, and side-taking structures. Bare
 support, gratitude, `支持我们`, and English `supporting me` statements remain
 ordinary sticker-eligible context. The immutable implementation snapshot is
@@ -215,6 +215,27 @@ suite passes 303 tests. Ruff check/format passes all 104 source/test files,
 targeted Mypy passes the changed runtime module, and compileall, shell syntax,
 and diff checks pass. No additional provider call was used or required for
 this deterministic finding closure.
+
+Re-review dispatch
+`1a0dea2a011ab4281d1aada4db6393140b3e36a3b946e51fbea586e4826aebad`
+retained FINDING-002 because the first remediation still matched the `我`
+prefix inside possessives such as `我的设备`, and it did not distinguish an
+exclusive request from a clause explicitly rejecting exclusivity. Final
+implementation snapshot `c0f803eeaada81eab6aa354e59f1409e58f1e67e`
+requires a complete relationship-object/utterance boundary and treats matched
+anti-exclusivity spans as exemptions without hiding a separate exclusive
+clause in the same message.
+
+The final regression matrix includes all reviewer examples plus possessive
+continuations, family-object continuations, Chinese and English negation,
+inclusive corrections, punctuation, and messages that first reject one
+exclusive phrase but later make a distinct exclusive request. Direct policy
+and end-to-end sticker/composite coverage pass in the 19-test focused suite;
+the full suite passes 303 tests in 101.787 seconds. Ruff check/format passes all
+104 source/test files, targeted Mypy passes `expression_policy.py`, and
+compileall, shell syntax, and diff checks pass. The canonical provider report
+remains byte-identical; no external call was made for this deterministic
+closure.
 
 - Independent exact-head merge review is still required.
 - On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
