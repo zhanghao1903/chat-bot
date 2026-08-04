@@ -27,9 +27,13 @@ _TEXT_REQUIRED = re.compile(
 _CHINESE_EXCLUSIVITY_MARKER = (
     r"(?:必须\s*(?:只|只能)|务必\s*只|一定(?:要)?\s*(?:只|只能)|"
     r"(?:要|得)\s*只|只能够|只能|只允许|只可以|只需要|只用|只可|只准|"
-    r"只许|只要|仅限|仅|只)\s*"
+    r"只许|只要|只会|仅限|仅|只)\s*"
 )
 _CHINESE_ADDRESSEE = r"(?:你|乐枝)\s*"
+_CHINESE_PREFIX_MODIFIER = (
+    r"(?:(?:以后|今后|将来|现在|永远|一直|始终|从今以后|从现在起|往后|"
+    r"真的|真|到底|还|再|也|都)\s*)*"
+)
 _CHINESE_TO_ME_ACTION = (
     r"(?:"
     r"对我(?:(?:一个人?|一人)?好|撒(?:个)?娇|亲昵|偏心)"
@@ -53,6 +57,11 @@ _ENGLISH_MODAL_ONLY = (
     r"need to|have to)\s+only|(?:am|are|is)\s+only\s+"
     r"(?:allowed|permitted)\s+to)"
 )
+_ENGLISH_PREFIX_MODIFIER = (
+    r"(?:(?:always|forever|ever|still|now|really|truly|actually|please|"
+    r"from now on|going forward|in the future)\s*)*"
+)
+_ENGLISH_POST_ONLY_MODIFIER = r"(?:(?:ever|always|really|truly|just)\s+)*"
 _RELATIONSHIP_CLAUSE_BREAK = re.compile(r"[，,。.!！？?；;\n]")
 _RELATIONSHIP_EXCLUSIVITY_NEGATIONS = (
     re.compile(
@@ -122,6 +131,7 @@ _RELATIONSHIP_STICKER_FORBIDDEN = (
             r"\b(?:"
             + _ENGLISH_MODAL_ONLY
             + r"\s+"
+            + _ENGLISH_POST_ONLY_MODIFIER
             + _ENGLISH_TO_ME_ACTION
             + r"|"
             + _ENGLISH_RELATIONSHIP_ACTION
@@ -130,7 +140,9 @@ _RELATIONSHIP_STICKER_FORBIDDEN = (
             + r"\s+(?:alone|exclusively)|"
             r"only\s+(?:you|lezhi)(?:\s+(?:can|could|may|might|must|should|"
             r"will|would|shall))?\s+" + _ENGLISH_TO_ME_ACTION + r"|"
-            r"(?:am|are|is)\s+you\s+only\s+(?:allowed|permitted)\s+to\s+"
+            r"(?:am|are|is)\s+(?:you|lezhi)\s+"
+            + _ENGLISH_PREFIX_MODIFIER
+            + r"only\s+(?:allowed|permitted)\s+to\s+"
             + _ENGLISH_TO_ME_ACTION
             + r"|"
             r"(?:side|stand)\s+only\s+with\s+me|"
@@ -260,14 +272,24 @@ def _relationship_match_has_direct_subject(text: str, match: re.Match[str]) -> b
         if prefix in {"你", "乐枝", "乐枝你", "请", "请你", "拜托", "拜托你"}:
             return True
         if re.fullmatch(
-            r"(?:(?:你|乐枝)\s*)?(?:能不能|可不可以|可以不可以|能否|是否|"
-            r"愿不愿意|愿意|会不会|会|肯不肯|肯|答不答应|答应|"
-            r"应该不应该|应不应该|为什么|凭什么|怎么能|怎么可以|能|可以|"
-            r"是不是)",
+            r"(?:你|乐枝)\s*" + _CHINESE_PREFIX_MODIFIER,
             prefix,
         ):
             return True
-        if re.fullmatch(r"我(?:希望|想让|要|要求|只想让)你", prefix):
+        if re.fullmatch(
+            r"(?:(?:你|乐枝)\s*)?"
+            + _CHINESE_PREFIX_MODIFIER
+            + r"(?:能不能|可不可以|可以不可以|能否|是否|"
+            r"愿不愿意|愿意|会不会|会|肯不肯|肯|答不答应|答应|"
+            r"应该不应该|应不应该|为什么|凭什么|怎么能|怎么可以|能|可以|"
+            r"是不是)" + _CHINESE_PREFIX_MODIFIER,
+            prefix,
+        ):
+            return True
+        if re.fullmatch(
+            r"我(?:希望|想让|要|要求|只想让)你" + _CHINESE_PREFIX_MODIFIER,
+            prefix,
+        ):
             return True
         if prefix == "我" and re.match(
             r"(?:不许|不准|不允许|不要|不能|不可以|不该|不应该|别)(?:再)?你",
@@ -276,7 +298,7 @@ def _relationship_match_has_direct_subject(text: str, match: re.Match[str]) -> b
             return True
         return _rhetorical_exclusivity_negation(text, match) and (
             re.fullmatch(
-                r"(?:我|你)?不是(?:说|要求|让|希望)(?:你|乐枝)?",
+                r"(?:我|你)?不是(?:说|要求|让|希望)(?:你|乐枝)?" + _CHINESE_PREFIX_MODIFIER,
                 prefix,
             )
             is not None
@@ -296,16 +318,20 @@ def _relationship_match_has_direct_subject(text: str, match: re.Match[str]) -> b
     return (
         re.fullmatch(
             r"(?:please|(?:you|lezhi)(?:\s+(?:can|could|may|might|must|should|"
-            r"will|would|shall|need to|have to|are allowed to|are permitted to))?|"
+            r"will|would|shall|need to|have to|are|is))?\s*"
+            + _ENGLISH_PREFIX_MODIFIER
+            + r"(?:(?:allowed|permitted|supposed|expected)\s+to)?|"
             r"(?:(?:why|how come)\s+)?(?:can|could|would|will|should|may|might|"
             r"must|do|does|did|are|is|was|were|can['’]t|couldn['’]t|"
             r"wouldn['’]t|won['’]t|shouldn['’]t|don['’]t|doesn['’]t|"
             r"didn['’]t|aren['’]t|isn['’]t)\s+(?:you|lezhi)"
-            r"(?:\s+(?:allowed|permitted|"
-            r"supposed|expected)\s+to)?|"
-            r"(?:why|how come)\s+(?:you|lezhi)|"
+            r"\s*"
+            + _ENGLISH_PREFIX_MODIFIER
+            + r"(?:(?:allowed|permitted|supposed|expected)\s+to)?|"
+            r"(?:why|how come)\s+(?:you|lezhi)\s*" + _ENGLISH_PREFIX_MODIFIER + r"|"
             r"(?:didn['’]t|did not)\s+you\s+(?:say|tell me)\s+you|"
-            r"(?:i|we)\s+(?:want|need|expect|ask|require|would like)\s+you(?:\s+to)?)",
+            r"(?:i|we)\s+(?:want|need|expect|ask|require|would like)\s+you"
+            r"(?:\s+to)?\s*" + _ENGLISH_PREFIX_MODIFIER + r")",
             normalized,
         )
         is not None

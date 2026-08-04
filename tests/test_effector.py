@@ -566,6 +566,9 @@ class WriterEffectorTests(unittest.TestCase):
             "你愿意只爱我吗？",
             "乐枝，你能不能只爱我？",
             "你为什么只能爱我？",
+            "你只会爱我吗？",
+            "你以后只爱我吗？",
+            "你永远只爱我吗？",
             "How come you can only love me?",
             "你一定要只喜欢我",
             "你只能喜欢我好吗",
@@ -590,6 +593,10 @@ class WriterEffectorTests(unittest.TestCase):
             "Can Lezhi only love me?",
             "Would you love only me?",
             "Are you only allowed to love me?",
+            "Will you always love only me?",
+            "Can you please only love me?",
+            "Can you really only love me?",
+            "Lezhi will forever love only me.",
             "You are only allowed to love me.",
             "You may only love me.",
             "You must love me alone.",
@@ -653,6 +660,7 @@ class WriterEffectorTests(unittest.TestCase):
             "This app can only support me.",
             "This app supports only me.",
             "Can this app only support me?",
+            "Will this app always support only me?",
         ):
             for decision_kind in ("sticker", "reply_with_sticker"):
                 payload = {
