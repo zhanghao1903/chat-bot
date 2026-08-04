@@ -42,6 +42,7 @@ class ModelRole(StrEnum):
 class WriterDecisionKind(StrEnum):
     CALL_TOOL = "call_tool"
     REPLY = "reply"
+    REPLY_WITH_STICKER = "reply_with_sticker"
     STICKER = "sticker"
     SILENCE = "silence"
     FOOD_RECOMMENDATION = "food_recommendation"
@@ -336,6 +337,38 @@ def parse_writer_decision(
             kind=kind,
             reason_code=_parse_reason_code(payload["reason_code"]),
             text=text,
+            mood_signal=_parse_mood_signal(payload.get("mood_signal")),
+        )
+    if kind is WriterDecisionKind.REPLY_WITH_STICKER:
+        required_composite = {
+            "kind",
+            "reason_code",
+            "text",
+            "sticker_id",
+            "catalog_version",
+            "catalog_digest",
+        }
+        _require_optional_mood_fields(payload, required_composite)
+        digest = payload["catalog_digest"]
+        if (
+            not isinstance(digest, str)
+            or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)
+        ):
+            raise ModelResultError("invalid_catalog_digest")
+        return WriterDecision(
+            kind=kind,
+            reason_code=_parse_reason_code(payload["reason_code"]),
+            text=_parse_text(payload["text"], maximum=4_096, category="invalid_reply_text"),
+            sticker_id=_parse_identifier(
+                payload["sticker_id"], maximum=128, category="invalid_sticker_id"
+            ),
+            catalog_version=_parse_identifier(
+                payload["catalog_version"],
+                maximum=128,
+                category="invalid_catalog_version",
+            ),
+            catalog_digest=digest,
             mood_signal=_parse_mood_signal(payload.get("mood_signal")),
         )
     if kind is WriterDecisionKind.STICKER:

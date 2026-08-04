@@ -14,6 +14,7 @@ from group_llm_agent.avatar import (
     load_avatar_catalog,
 )
 from group_llm_agent.database import SQLiteDatabase
+from group_llm_agent.effect_bundle import EffectBundleRepository
 from group_llm_agent.expression import (
     ExpressionCatalogError,
     canonical_json_bytes,
@@ -79,6 +80,15 @@ def _parser() -> argparse.ArgumentParser:
     enable.add_argument("--activation-reference", required=True)
     enable.set_defaults(handler=_expression_enable)
 
+    metrics = commands.add_parser("expression-metrics")
+    metrics.add_argument("--database", type=Path, required=True)
+    metrics.add_argument("--bot-user-id", required=True)
+    metrics.add_argument("--persona-version", required=True)
+    metrics.add_argument("--persona-digest", required=True)
+    metrics.add_argument("--catalog-version", required=True)
+    metrics.add_argument("--catalog-digest", required=True)
+    metrics.set_defaults(handler=_expression_metrics)
+
     avatar_approve = commands.add_parser("avatar-approve")
     _catalog_digest_arguments(avatar_approve)
     avatar_approve.add_argument("--approval-reference", required=True)
@@ -91,9 +101,10 @@ def _parser() -> argparse.ArgumentParser:
     avatar_apply.add_argument("--avatar-id", required=True)
     avatar_apply.add_argument("--bot-user-id", required=True)
     avatar_apply.add_argument("--database", type=Path, required=True)
-    avatar_apply.add_argument("--state-directory", type=Path, required=True)
+    avatar_apply.add_argument("--state-directory", type=Path)
     avatar_apply.add_argument("--requested-by", required=True)
     avatar_apply.add_argument("--reason-code", required=True)
+    avatar_apply.add_argument("--authorization-reference", required=True)
     avatar_apply.set_defaults(handler=_avatar_apply)
 
     avatar_enable = commands.add_parser("avatar-enable-rotation")
@@ -183,6 +194,39 @@ def _expression_enable(args: argparse.Namespace) -> str:
         )
 
 
+def _expression_metrics(args: argparse.Namespace) -> str:
+    database = SQLiteDatabase(args.database)
+    database.initialize()
+    metrics = EffectBundleRepository(database).metrics(
+        bot_user_id=args.bot_user_id,
+        persona_version=args.persona_version,
+        persona_digest=args.persona_digest,
+        catalog_version=args.catalog_version,
+        catalog_digest=args.catalog_digest,
+    )
+    rate = (
+        "unavailable"
+        if metrics.sticker_bearing_rate is None
+        else str(round(metrics.sticker_bearing_rate, 6))
+    )
+    return " ".join(
+        (
+            f"metrics_status={metrics.status}",
+            f"sample_count={metrics.sample_count}",
+            f"sticker_bearing_count={metrics.sticker_bearing_count}",
+            f"text_only_count={metrics.text_only_count}",
+            f"sticker_bearing_rate={rate}",
+            f"window_started_at={metrics.window_started_at.isoformat()}",
+            f"window_ended_at={metrics.window_ended_at.isoformat()}",
+            f"bot_user_id={metrics.bot_user_id}",
+            f"persona_version={metrics.persona_version}",
+            f"persona_digest={metrics.persona_digest}",
+            f"catalog_version={metrics.catalog_version}",
+            f"catalog_digest={metrics.catalog_digest}",
+        )
+    )
+
+
 def _avatar_approve(args: argparse.Namespace) -> str:
     with operator_lock(args.lock_path):
         return approve_avatar_catalog(
@@ -198,12 +242,14 @@ def _avatar_apply(args: argparse.Namespace) -> str:
     with operator_lock(args.lock_path):
         catalog = load_avatar_catalog(args.catalog, expected_sha256=args.expected_sha256)
         controller = _avatar_controller(args)
-        return controller.apply(
+        result = controller.apply(
             catalog,
             avatar_id=args.avatar_id,
             requested_by=args.requested_by,
             reason_code=args.reason_code,
+            authorization_reference=args.authorization_reference,
         )
+        return f"operation_id={result.operation_id} avatar_status={result.status}"
 
 
 def _avatar_enable_rotation(args: argparse.Namespace) -> str:
@@ -222,13 +268,17 @@ def _avatar_rotate(args: argparse.Namespace) -> str:
         candidate = controller.stable_mood_candidate(catalog)
         if candidate is None:
             return "rotation_status=ineligible"
-        unique_id = controller.apply(
+        result = controller.apply(
             catalog,
             avatar_id=candidate.avatar_id,
             requested_by=args.requested_by,
             reason_code="stable_global_mood",
+            authorization_reference="automatic-rotation-disabled",
         )
-        return f"rotation_status=verified avatar_id={candidate.avatar_id} unique_id={unique_id}"
+        return (
+            f"rotation_status={result.status} avatar_id={candidate.avatar_id} "
+            f"operation_id={result.operation_id}"
+        )
 
 
 def _telegram_clients() -> tuple[TelegramBotApiClient, TelegramMultipartTransport]:

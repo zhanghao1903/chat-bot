@@ -20,8 +20,6 @@ from group_llm_agent.avatar import (
 from group_llm_agent.expression import ExpressionCatalogError, file_sha256
 from group_llm_agent.platforms.telegram import (
     TelegramApiError,
-    TelegramFile,
-    TelegramProfilePhoto,
 )
 
 _SOURCE_ROOT = (
@@ -50,47 +48,29 @@ class _Telegram:
     def __init__(
         self,
         *,
-        profiles: list[TelegramProfilePhoto | None] | None = None,
-        downloads: dict[str, bytes] | None = None,
+        bot_id: str = "bot-1",
+        error: TelegramApiError | None = None,
     ) -> None:
-        self.profile_reads = 0
-        self.removed = 0
-        self.profiles = profiles or [None]
-        self.downloads = downloads or {}
+        self.bot_id = bot_id
+        self.error = error
+        self.identity_reads = 0
 
-    def get_user_profile_photo(self, *, user_id: str) -> TelegramProfilePhoto | None:
-        self.profile_reads += 1
-        index = min(self.profile_reads - 1, len(self.profiles) - 1)
-        return self.profiles[index]
-
-    def get_file(self, *, file_id: str) -> TelegramFile:
-        return TelegramFile(file_path=f"profiles/{file_id}.jpg", file_size=None)
-
-    def download_file(
-        self,
-        *,
-        file_path: str,
-        maximum_bytes: int,
-        timeout_seconds: int | None = None,
-    ) -> bytes:
-        content = self.downloads[file_path]
-        if len(content) > maximum_bytes:
-            raise AssertionError("test download exceeds bound")
-        return content
-
-    def remove_my_profile_photo(self) -> None:
-        self.removed += 1
+    def get_me(self) -> dict[str, object]:
+        self.identity_reads += 1
+        if self.error is not None:
+            raise self.error
+        return {"id": self.bot_id, "is_bot": True, "username": "lezhi"}
 
 
 class _Multipart:
-    def __init__(self, *, fail: bool = False) -> None:
-        self.fail = fail
+    def __init__(self, *, error: TelegramApiError | None = None) -> None:
+        self.error = error
         self.uploads = 0
 
     def set_static_profile_photo(self, *, jpeg: bytes) -> None:
         self.uploads += 1
-        if self.fail:
-            raise TelegramApiError("setMyProfilePhoto", "api_error", 400)
+        if self.error is not None:
+            raise self.error
         if not jpeg:
             raise AssertionError("avatar bytes must be non-empty")
 
@@ -206,7 +186,7 @@ class AvatarControllerTests(unittest.TestCase):
                 )
             self.assertIsNone(controller.stable_mood_candidate(catalog, now=now))
 
-    def test_first_managed_avatar_must_be_exact_default_baseline(self) -> None:
+    def test_v031_apply_allows_only_exact_default_even_after_baseline(self) -> None:
         with _avatar_fixture() as path, temporary_database() as database:
             approved_sha = approve_avatar_catalog(
                 path,
@@ -227,124 +207,55 @@ class AvatarControllerTests(unittest.TestCase):
                 multipart=blocked_transport,  # type: ignore[arg-type]
                 bot_user_id="bot-1",
                 state_directory=path.parent / "state",
+                approved_catalog_digest=catalog.digest,
             )
-            with self.assertRaisesRegex(ExpressionCatalogError, "default_avatar_baseline_required"):
+            with self.assertRaisesRegex(ExpressionCatalogError, "only_default_avatar_authorized"):
                 blocked.apply(
                     catalog,
                     avatar_id="lezhi-joyful",
                     requested_by="operator",
                     reason_code="manual_mood",
+                    authorization_reference="user-confirmed-avatar-apply:test",
                 )
             self.assertEqual(0, blocked_transport.uploads)
 
-            default_profile = TelegramProfilePhoto("default-file", "default-unique", 512, 512)
-            default_bytes = (path.parent / default.image_path).read_bytes()
             default_controller = AvatarController(
                 database=database,
-                telegram=_Telegram(
-                    profiles=[None, default_profile],
-                    downloads={"profiles/default-file.jpg": default_bytes},
-                ),  # type: ignore[arg-type]
+                telegram=_Telegram(),  # type: ignore[arg-type]
                 multipart=_Multipart(),  # type: ignore[arg-type]
                 bot_user_id="bot-1",
                 state_directory=path.parent / "state",
+                approved_catalog_digest=catalog.digest,
             )
             self.assertEqual(
-                "default-unique",
+                "success",
                 default_controller.apply(
                     catalog,
                     avatar_id="lezhi-default",
                     requested_by="operator",
                     reason_code="initial_default",
-                ),
+                    authorization_reference="user-confirmed-avatar-apply:test",
+                ).status,
             )
 
-            joyful_profile = TelegramProfilePhoto("joyful-file", "joyful-unique", 512, 512)
-            joyful_bytes = (path.parent / joyful.image_path).read_bytes()
             mood_controller = AvatarController(
                 database=database,
-                telegram=_Telegram(
-                    profiles=[default_profile, joyful_profile],
-                    downloads={
-                        "profiles/default-file.jpg": default_bytes,
-                        "profiles/joyful-file.jpg": joyful_bytes,
-                    },
-                ),  # type: ignore[arg-type]
+                telegram=_Telegram(),  # type: ignore[arg-type]
                 multipart=_Multipart(),  # type: ignore[arg-type]
                 bot_user_id="bot-1",
                 state_directory=path.parent / "state",
+                approved_catalog_digest=catalog.digest,
             )
-            self.assertEqual(
-                "joyful-unique",
+            with self.assertRaisesRegex(ExpressionCatalogError, "only_default_avatar_authorized"):
                 mood_controller.apply(
                     catalog,
                     avatar_id="lezhi-joyful",
                     requested_by="rotation",
                     reason_code="stable_global_mood",
-                ),
-            )
-
-    def test_apply_verifies_readback_and_failure_rolls_back_none(self) -> None:
-        with _avatar_fixture() as path, temporary_database() as database:
-            approved_sha = approve_avatar_catalog(
-                path,
-                expected_candidate_sha256=file_sha256(path),
-                approval_reference="user-confirmed-avatar:preview-1",
-                approved_avatar_ids=frozenset({"lezhi-default"}),
-            )
-            catalog = load_avatar_catalog(path, expected_sha256=approved_sha)
-            candidate = catalog.candidate("lezhi-default")
-            assert candidate is not None
-            candidate_bytes = (path.parent / candidate.image_path).read_bytes()
-            profile = TelegramProfilePhoto("new-file", "new-unique", 512, 512)
-            telegram = _Telegram(
-                profiles=[None, profile],
-                downloads={"profiles/new-file.jpg": candidate_bytes},
-            )
-            controller = AvatarController(
-                database=database,
-                telegram=telegram,  # type: ignore[arg-type]
-                multipart=_Multipart(),  # type: ignore[arg-type]
-                bot_user_id="bot-1",
-                state_directory=path.parent / "state",
-            )
-            self.assertEqual(
-                "new-unique",
-                controller.apply(
-                    catalog,
-                    avatar_id="lezhi-default",
-                    requested_by="operator",
-                    reason_code="initial_default",
-                ),
-            )
-
-            failing_telegram = _Telegram(profiles=[None])
-            failing = AvatarController(
-                database=database,
-                telegram=failing_telegram,  # type: ignore[arg-type]
-                multipart=_Multipart(fail=True),  # type: ignore[arg-type]
-                bot_user_id="bot-2",
-                state_directory=path.parent / "state",
-            )
-            with self.assertRaises(TelegramApiError):
-                failing.apply(
-                    catalog,
-                    avatar_id="lezhi-default",
-                    requested_by="operator",
-                    reason_code="initial_default",
+                    authorization_reference="user-confirmed-avatar-apply:test",
                 )
-            self.assertEqual(1, failing_telegram.removed)
-            connection = database.connect()
-            try:
-                audit = connection.execute(
-                    "SELECT platform_status, rollback_status FROM avatar_change_audit "
-                    "WHERE bot_user_id = 'bot-2'"
-                ).fetchone()
-            finally:
-                connection.close()
-            self.assertEqual(("failed", "succeeded"), tuple(audit))
 
-    def test_unchanged_or_wrong_readback_never_records_verified(self) -> None:
+    def test_apply_uses_one_write_and_records_api_success_without_readback(self) -> None:
         with _avatar_fixture() as path, temporary_database() as database:
             approved_sha = approve_avatar_catalog(
                 path,
@@ -353,11 +264,7 @@ class AvatarControllerTests(unittest.TestCase):
                 approved_avatar_ids=frozenset({"lezhi-default"}),
             )
             catalog = load_avatar_catalog(path, expected_sha256=approved_sha)
-            old = TelegramProfilePhoto("old-file", "old-unique", 512, 512)
-            telegram = _Telegram(
-                profiles=[old, old],
-                downloads={"profiles/old-file.jpg": b"unchanged-old-avatar"},
-            )
+            telegram = _Telegram()
             multipart = _Multipart()
             controller = AvatarController(
                 database=database,
@@ -365,56 +272,130 @@ class AvatarControllerTests(unittest.TestCase):
                 multipart=multipart,  # type: ignore[arg-type]
                 bot_user_id="bot-1",
                 state_directory=path.parent / "state",
+                approved_catalog_digest=catalog.digest,
             )
-
-            with self.assertRaisesRegex(TelegramApiError, "verification_mismatch"):
-                controller.apply(
-                    catalog,
-                    avatar_id="lezhi-default",
-                    requested_by="operator",
-                    reason_code="initial_default",
-                )
-
+            result = controller.apply(
+                catalog,
+                avatar_id="lezhi-default",
+                requested_by="operator",
+                reason_code="initial_default",
+                authorization_reference="user-confirmed-avatar-apply:req-034",
+            )
+            self.assertEqual("success", result.status)
+            self.assertTrue(result.operation_id.startswith("avatar-"))
+            self.assertEqual((1, 1), (telegram.identity_reads, multipart.uploads))
             connection = database.connect()
             try:
                 audit = connection.execute(
-                    "SELECT platform_status, error_code, rollback_status "
+                    "SELECT operation_id, api_method, authorization_reference, "
+                    "platform_status, error_code, rollback_status "
                     "FROM avatar_change_audit WHERE bot_user_id = 'bot-1'"
                 ).fetchone()
             finally:
                 connection.close()
-            self.assertEqual(("failed", "verification_mismatch", "succeeded"), tuple(audit))
-            self.assertEqual(2, multipart.uploads)
+            self.assertEqual(
+                (
+                    result.operation_id,
+                    "setMyProfilePhoto",
+                    "user-confirmed-avatar-apply:req-034",
+                    "success",
+                    None,
+                    None,
+                ),
+                tuple(audit),
+            )
 
-            wrong = TelegramProfilePhoto("wrong-file", "wrong-unique", 512, 512)
-            wrong_telegram = _Telegram(
-                profiles=[None, wrong],
-                downloads={"profiles/wrong-file.jpg": b"different-avatar-content"},
+    def test_apply_classifies_explicit_failure_and_uncertain_without_retry(self) -> None:
+        with _avatar_fixture() as path, temporary_database() as database:
+            approved_sha = approve_avatar_catalog(
+                path,
+                expected_candidate_sha256=file_sha256(path),
+                approval_reference="user-confirmed-avatar:preview-1",
+                approved_avatar_ids=frozenset({"lezhi-default"}),
             )
-            wrong_controller = AvatarController(
+            catalog = load_avatar_catalog(path, expected_sha256=approved_sha)
+            for bot_id, error, expected_status in (
+                ("bot-failed", TelegramApiError("setMyProfilePhoto", "api_error", 400), "failed"),
+                ("bot-uncertain", TelegramApiError("setMyProfilePhoto", "timeout"), "uncertain"),
+            ):
+                with self.subTest(expected_status=expected_status):
+                    multipart = _Multipart(error=error)
+                    controller = AvatarController(
+                        database=database,
+                        telegram=_Telegram(bot_id=bot_id),  # type: ignore[arg-type]
+                        multipart=multipart,  # type: ignore[arg-type]
+                        bot_user_id=bot_id,
+                        state_directory=path.parent / "state",
+                        approved_catalog_digest=catalog.digest,
+                    )
+                    with self.assertRaises(TelegramApiError):
+                        controller.apply(
+                            catalog,
+                            avatar_id="lezhi-default",
+                            requested_by="operator",
+                            reason_code="initial_default",
+                            authorization_reference="user-confirmed-avatar-apply:test",
+                        )
+                    self.assertEqual(1, multipart.uploads)
+
+            connection = database.connect()
+            try:
+                audits = connection.execute(
+                    "SELECT bot_user_id, platform_status, error_code, rollback_status "
+                    "FROM avatar_change_audit ORDER BY id"
+                ).fetchall()
+            finally:
+                connection.close()
+            self.assertEqual(
+                [
+                    ("bot-failed", "failed", "setMyProfilePhoto_api_error_400", None),
+                    ("bot-uncertain", "uncertain", "setMyProfilePhoto_timeout", None),
+                ],
+                [tuple(item) for item in audits],
+            )
+
+    def test_digest_authorization_and_identity_mismatch_stop_before_write(self) -> None:
+        with _avatar_fixture() as path, temporary_database() as database:
+            approved_sha = approve_avatar_catalog(
+                path,
+                expected_candidate_sha256=file_sha256(path),
+                approval_reference="user-confirmed-avatar:preview-1",
+                approved_avatar_ids=frozenset({"lezhi-default"}),
+            )
+            catalog = load_avatar_catalog(path, expected_sha256=approved_sha)
+            multipart = _Multipart()
+            wrong_digest = AvatarController(
                 database=database,
-                telegram=wrong_telegram,  # type: ignore[arg-type]
-                multipart=_Multipart(),  # type: ignore[arg-type]
-                bot_user_id="bot-2",
-                state_directory=path.parent / "state",
+                telegram=_Telegram(),  # type: ignore[arg-type]
+                multipart=multipart,  # type: ignore[arg-type]
+                bot_user_id="bot-1",
             )
-            with self.assertRaisesRegex(TelegramApiError, "verification_mismatch"):
-                wrong_controller.apply(
+            with self.assertRaisesRegex(ExpressionCatalogError, "avatar_catalog_digest_mismatch"):
+                wrong_digest.apply(
                     catalog,
                     avatar_id="lezhi-default",
                     requested_by="operator",
                     reason_code="initial_default",
+                    authorization_reference="user-confirmed-avatar-apply:test",
                 )
-            connection = database.connect()
-            try:
-                wrong_audit = connection.execute(
-                    "SELECT platform_status, error_code, rollback_status "
-                    "FROM avatar_change_audit WHERE bot_user_id = 'bot-2'"
-                ).fetchone()
-            finally:
-                connection.close()
-            self.assertEqual(("failed", "verification_mismatch", "succeeded"), tuple(wrong_audit))
-            self.assertEqual(1, wrong_telegram.removed)
+            self.assertEqual(0, multipart.uploads)
+
+            wrong_identity = AvatarController(
+                database=database,
+                telegram=_Telegram(bot_id="other-bot"),  # type: ignore[arg-type]
+                multipart=multipart,  # type: ignore[arg-type]
+                bot_user_id="bot-1",
+                approved_catalog_digest=catalog.digest,
+            )
+            with self.assertRaisesRegex(TelegramApiError, "invalid_identity"):
+                wrong_identity.apply(
+                    catalog,
+                    avatar_id="lezhi-default",
+                    requested_by="operator",
+                    reason_code="initial_default",
+                    authorization_reference="user-confirmed-avatar-apply:test",
+                )
+            self.assertEqual(0, multipart.uploads)
 
     @staticmethod
     def _record_verified_default(database, catalog, *, now: datetime) -> None:

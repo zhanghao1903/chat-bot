@@ -17,6 +17,7 @@ from group_llm_agent.continuity import ConversationContinuityDecider
 from group_llm_agent.control import MemoryControlService
 from group_llm_agent.database import SQLiteDatabase
 from group_llm_agent.delivery import SQLiteDeliveryLedger
+from group_llm_agent.effect_bundle import EffectBundleRepository
 from group_llm_agent.effector import EffectorBudgets, WriterEffector
 from group_llm_agent.expression import ExpressionCatalog, load_expression_catalog
 from group_llm_agent.media import MediaLimits, TelegramMediaLoader
@@ -273,6 +274,7 @@ def _persona_runtime(
     )
     memory = MemoryRepository(database)
     runs = RunRepository(database)
+    bundles = EffectBundleRepository(database)
     contexts = ContextAssembler(
         messages=messages,
         memory=memory,
@@ -374,6 +376,7 @@ def _persona_runtime(
         bundle=bundle,
         messages=messages,
         runs=runs,
+        bundles=bundles,
         controls=controls,
         triggers=triggers,
         effector=effector,

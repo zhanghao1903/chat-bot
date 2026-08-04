@@ -14,6 +14,7 @@ from group_llm_agent.events import (
     ExternalEffectKind,
     ExternalEffectStatus,
     FinalEffect,
+    FinalEffectKind,
     MediaKind,
     PersonaSnapshot,
     PersonaTriggerDecision,
@@ -364,7 +365,11 @@ class RunRepository:
         model_call_count: int,
         tool_call_count: int,
     ) -> None:
-        status = EffectRunStatus(effect.kind.value)
+        status = (
+            EffectRunStatus.REPLY
+            if effect.kind is FinalEffectKind.REPLY_WITH_STICKER
+            else EffectRunStatus(effect.kind.value)
+        )
         self._finish_effect_run(
             effect_run_id=effect_run_id,
             status=status,

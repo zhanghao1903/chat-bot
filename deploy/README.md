@@ -114,7 +114,7 @@ Web 与既有上下文工具分别最多 5 次，但共享截止时间和总结�
 `/food_status` 确认群配置和订阅，再等待受控的下一次 occurrence；不要通过修改系统时钟或
 数据库制造真实群消息。
 
-## 图片理解与专属表情 v0.3
+## 图片理解、复合表情回复与默认头像 v0.3.1
 
 图片理解和表情目录均默认关闭。纯图片不会自动抢话；只有既有触发规则已经生成一次 effect
 request，运行时才会下载静态媒体。要试验视觉能力，先配置 `VISION_MODEL`，再显式设置：
@@ -131,18 +131,43 @@ Telegram smoke 引用。映射 carrier 应写入 `/app/data` 或其他受保护�
 
 ```text
 EXPRESSION_CAPABILITY=enabled
-EXPRESSION_CATALOG_PATH=/app/src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/catalog.json
+EXPRESSION_CATALOG_PATH=/app/data/lezhi-expression-v0.3-enabled.json
 EXPRESSION_CATALOG_SHA256=<enabled catalog sha256>
 ```
 
-头像使用同一 operator 入口的 `avatar-approve`、`avatar-apply`、
-`avatar-enable-rotation` 和 `avatar-rotate`。更新对象是 bot 账号公开头像，不是群头像。外部写入
-期间独占锁覆盖 apply、读取验证和旧头像/none 回滚；HUP/INT/TERM 会先走回滚再释放锁。
-自动轮换默认关闭，即使启用也要求至少三次、跨两小时、70% 一致的全局心情证据，并受 72
-小时冷却和滚动 7 天最多两次限制。
+enabled 目录可产生 sticker-only 或一条文本后附一个 sticker；两个组件有独立 claim/outcome，
+重启不会补发迟到的第二组件。查看不含正文的滚动指标：
 
-在用户分别确认 48 枚联系表与目录、生产子集及 Telegram 显示、头像裁切和心情映射以前，
-不得运行上述真实 publish/apply/enable 命令。
+```bash
+group-llm-agent-operator expression-metrics \
+  --database /app/data/telegram-bot.sqlite3 \
+  --bot-user-id <bot id> \
+  --persona-version lezhi-v2.0 \
+  --persona-digest 0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603 \
+  --catalog-version lezhi-expression-v0.3 \
+  --catalog-digest <enabled catalog sha256>
+```
+
+默认头像 apply 使用部署侧批准目录，不修改仓库 candidate。命令必须绑定目录摘要
+`b871161e68c18115893d7aea932dabf1e9101d40278d6ce9168a6eb3735d405a`、图片摘要
+`fd7ec0efafb9dc1e36856461228cecbf7467548c7628454fe2022f7ad607badf`、精确 bot ID 和显式授权引用：
+
+```bash
+group-llm-agent-operator avatar-apply \
+  --catalog /app/data/approved-avatar-catalog.json \
+  --expected-sha256 b871161e68c18115893d7aea932dabf1e9101d40278d6ce9168a6eb3735d405a \
+  --avatar-id lezhi-default \
+  --bot-user-id <bot id> \
+  --database /app/data/telegram-bot.sqlite3 \
+  --requested-by <operator> \
+  --reason-code initial_default_v031 \
+  --authorization-reference user-confirmed-avatar-apply:<release reference>
+```
+
+命令在独占锁内先用 `getMe` 验证 bot，再调用一次 `setMyProfilePhoto`。明确成功记录
+`operation_id=... avatar_status=success`；明确失败为 `failed`，结果未知为 `uncertain`，均不自动
+重试、readback 或回滚。若 Telegram 客户端显示缺失、错误或缓存异常，先人工核对最近 operation
+审计，再决定是否新建一次显式操作。VISION、四张 mood 头像和自动轮换继续关闭。
 
 ## 低频发布乐枝 v2
 

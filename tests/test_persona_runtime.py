@@ -237,7 +237,7 @@ class PersonaRuntimeTests(unittest.TestCase):
             )
             connection = sqlite3.connect(database_path)
             try:
-                effects = connection.execute("SELECT count(*) FROM external_effects").fetchone()[0]
+                effects = connection.execute("SELECT count(*) FROM effect_bundles").fetchone()[0]
                 continuation = connection.execute(
                     """
                     SELECT trigger_category, continuity_anchor_message_id, decision_kind
@@ -404,8 +404,10 @@ class PersonaRuntimeTests(unittest.TestCase):
             try:
                 effect = connection.execute(
                     """
-                    SELECT status, effect_kind, platform_message_id
-                    FROM external_effects
+                    SELECT bundle.status, bundle.requested_form, component.platform_message_id
+                    FROM effect_bundles AS bundle
+                    JOIN effect_bundle_components AS component
+                      ON component.bundle_id = bundle.bundle_id
                     """
                 ).fetchone()
                 run_counts = connection.execute(
@@ -416,7 +418,7 @@ class PersonaRuntimeTests(unittest.TestCase):
                 ).fetchone()
             finally:
                 connection.close()
-            self.assertEqual(("sent", "reply", "901"), effect)
+            self.assertEqual(("completed", "text", "901"), effect)
             self.assertEqual(("reply", 1, 0), run_counts)
 
     def test_full_mode_contextual_fifth_message_calls_trigger_then_writer(self) -> None:
@@ -604,11 +606,15 @@ class PersonaRuntimeTests(unittest.TestCase):
                     external_count = connection.execute(
                         "SELECT count(*) FROM external_effects"
                     ).fetchone()[0]
+                    bundle_count = connection.execute(
+                        "SELECT count(*) FROM effect_bundles"
+                    ).fetchone()[0]
                 finally:
                     connection.close()
                 self.assertLessEqual(effect_run_count, 1)
                 self.assertEqual(
-                    1 if should_resume or state == "external_claimed" else 0, external_count
+                    1 if should_resume or state == "external_claimed" else 0,
+                    external_count + bundle_count,
                 )
 
     def test_internal_writer_content_is_never_sent_to_telegram(self) -> None:

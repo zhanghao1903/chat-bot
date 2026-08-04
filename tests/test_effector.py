@@ -443,7 +443,7 @@ class WriterEffectorTests(unittest.TestCase):
                 self.assertEqual(expected_kind, final.kind)
                 if expected_kind is FinalEffectKind.FAILURE_REPLY:
                     self.assertIsNone(final.sticker_id)
-                    self.assertEqual("sticker_necessary_text_required", final.reason_code)
+                    self.assertEqual("sticker_serious_context", final.reason_code)
                 else:
                     self.assertEqual(selected.semantic_id, final.sticker_id)
 

@@ -50,6 +50,7 @@ class TriggerEvaluationDecisionKind(StrEnum):
 
 class FinalEffectKind(StrEnum):
     REPLY = "reply"
+    REPLY_WITH_STICKER = "reply_with_sticker"
     STICKER = "sticker"
     SILENCE = "silence"
     FAILURE_REPLY = "failure_reply"
@@ -281,6 +282,8 @@ class FinalEffect:
     catalog_version: str | None = None
     catalog_digest: str | None = None
     fallback_text: str | None = None
+    sticker_eligible: bool = False
+    sticker_eligibility_reason: str | None = None
     mood_signal: str | None = None
     used_memory_ids: tuple[str, ...] = ()
     used_tool_call_ids: tuple[int, ...] = ()
