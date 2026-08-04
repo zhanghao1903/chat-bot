@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
@@ -87,21 +86,12 @@ FOOD_WRITER_PROTOCOL = (
     '"reason_tag":"warming|hearty|light|shareable|quick|variety"}]}'
 )
 
-_UNSAFE_SOURCE_TITLE = re.compile(
-    r"(?:https?://|www\.|[\r\n]|[。！？!?；;]|过敏|致敏|放心|安全|无忧|保证|"
-    r"治疗|治愈|诊断|药(?:物|品)?|疾病|病人|患者|减肥|降糖|降压|营养方案|"
-    r"allerg|safe|guarantee|medical|treat|cure|patient)",
-    re.IGNORECASE,
-)
-_TITLE_SEPARATOR = re.compile(r"\s+(?:[-–—|｜])\s+|\s*[_·]\s*")
-
 TextValidator = Callable[[str | None], str | None]
 
 
 @dataclass(frozen=True)
 class FoodCitation:
     url: str
-    title: str
 
 
 @dataclass(frozen=True)
@@ -203,7 +193,7 @@ def _render_sourced_choices(
     keys: list[str] = []
     urls: list[str] = []
     used_ids: set[str] = set()
-    for choice in choices:
+    for index, choice in enumerate(choices, start=1):
         if (
             choice.choice_type != "merchant"
             or choice.generic_dish_id is not None
@@ -214,24 +204,11 @@ def _render_sourced_choices(
         citation = citations.get(choice.source_result_id)
         if citation is None:
             return "food_source_not_current"
-        label = _source_merchant_label(citation.title)
-        if label is None:
-            return "food_source_title_not_entity"
         used_ids.add(choice.source_result_id)
-        labels.append(label)
+        labels.append(("来源商家候选一", "来源商家候选二", "来源商家候选三")[index - 1])
         descriptions.append(FOOD_REASON_TEXT[choice.reason_tag])
         urls.append(citation.url)
         keys.append("merchant:" + hashlib.sha256(citation.url.encode()).hexdigest()[:24])
     if len(set(urls)) != 3:
         return "food_duplicate_sources"
     return tuple(labels), tuple(descriptions), tuple(keys), tuple(urls)
-
-
-def _source_merchant_label(title: str) -> str | None:
-    normalized = " ".join(title.split()).strip()
-    if not normalized or len(normalized) > 80 or _UNSAFE_SOURCE_TITLE.search(normalized):
-        return None
-    candidate = _TITLE_SEPARATOR.split(normalized, maxsplit=1)[0].strip(" ：:,，")
-    if not 2 <= len(candidate) <= 40 or len(candidate.split()) > 6:
-        return None
-    return candidate

@@ -177,6 +177,23 @@ class AutomationSchedulerTests(unittest.TestCase):
                 dinner_time="17:30",
                 location_text=None,
             )
+            refreshed = repository.create_occurrence(
+                bot_user_id="7",
+                config=new_config,
+                local_date=datetime(2026, 8, 3, tzinfo=UTC).date(),
+                slot=MealSlot.LUNCH,
+                persona=_PERSONA,
+            )
+            assert refreshed is not None
+            self.assertIsNone(
+                repository.create_occurrence(
+                    bot_user_id="7",
+                    config=old_config,
+                    local_date=datetime(2026, 8, 3, tzinfo=UTC).date(),
+                    slot=MealSlot.LUNCH,
+                    persona=_PERSONA,
+                )
+            )
             processor = FakeOccurrenceProcessor()
             scheduler = AutomationScheduler(
                 repository=repository,

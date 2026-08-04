@@ -90,10 +90,31 @@ class FoodEffectorTests(unittest.TestCase):
                 ),
                 final.source_urls,
             )
-            self.assertIn("主推：浦东面馆", final.text or "")
+            self.assertIn("主推：来源商家候选一", final.text or "")
             self.assertIn("来源：https://example.com/result-1-1", final.text or "")
             self.assertEqual(1, web.search_calls)
             self.assertEqual([("web", 1)], fixture.tool_budget_rows())
+
+    def test_untrusted_search_titles_never_enter_sourced_recommendation_text(self) -> None:
+        unsafe_titles = (
+            "海底捞对坚果敏感者也完全适合",
+            "老街面馆服药期间也能随便吃",
+            "无需考虑身体状况的安心餐厅",
+        )
+        with food_fixture(
+            _web_call("面馆 午餐 浦东", purpose="find_current_lunch"),
+            _food_result(mode="sourced", source_ids=["web:1", "web:2", "web:3"]),
+            web_client=FakeTavilyClient(titles=unsafe_titles),
+        ) as fixture:
+            final = fixture.effector.execute(request=fixture.request, bundle=fixture.bundle)
+
+            self.assertEqual(FinalEffectKind.REPLY, final.kind, final.reason_code)
+            self.assertIn("主推：来源商家候选一", final.text or "")
+            for title in unsafe_titles:
+                self.assertNotIn(title, final.text or "")
+            self.assertNotIn("坚果敏感", final.text or "")
+            self.assertNotIn("服药期间", final.text or "")
+            self.assertNotIn("身体状况", final.text or "")
 
     def test_web_and_context_budgets_are_independent(self) -> None:
         web = FakeTavilyClient()
@@ -244,8 +265,9 @@ def food_fixture(
 
 
 class FakeTavilyClient:
-    def __init__(self) -> None:
+    def __init__(self, *, titles: tuple[str, str, str] | None = None) -> None:
         self.search_calls = 0
+        self.titles = titles or ("浦东面馆", "浦东饭馆", "浦东小馆")
 
     def search(self, *, query: str, deadline: datetime) -> TavilySearchResponse:
         del query, deadline
@@ -253,7 +275,7 @@ class FakeTavilyClient:
         return TavilySearchResponse(
             results=tuple(
                 TavilySearchResult(
-                    title=("浦东面馆", "浦东饭馆", "浦东小馆")[index - 1],
+                    title=self.titles[index - 1],
                     url=f"https://example.com/result-{self.search_calls}-{index}",
                     content="Bounded current restaurant evidence.",
                     score=0.9,

@@ -265,6 +265,49 @@ class AutomationRepositoryTests(unittest.TestCase):
             self.assertEqual(datetime(2026, 8, 3, 3, 40, tzinfo=UTC), immutable.scheduled_for)
             self.assertEqual(changed_config.config_version, immutable.config_version)
 
+    def test_stale_config_snapshot_cannot_revert_refreshed_due_occurrence(self) -> None:
+        with temporary_database() as database:
+            repository = AutomationRepository(database)
+            stale_config = repository.enable_group(chat_id="-1001")
+            original = repository.create_occurrence(
+                bot_user_id="7",
+                config=stale_config,
+                local_date=date(2026, 8, 3),
+                slot=MealSlot.LUNCH,
+                persona=_PERSONA,
+            )
+            assert original is not None
+            current_config = repository.update_config(
+                chat_id="-1001",
+                timezone="Asia/Shanghai",
+                lunch_time="11:40",
+                dinner_time="17:30",
+                location_text=None,
+            )
+            refreshed = repository.create_occurrence(
+                bot_user_id="7",
+                config=current_config,
+                local_date=date(2026, 8, 3),
+                slot=MealSlot.LUNCH,
+                persona=_PERSONA,
+            )
+            assert refreshed is not None
+
+            self.assertIsNone(
+                repository.create_occurrence(
+                    bot_user_id="7",
+                    config=stale_config,
+                    local_date=date(2026, 8, 3),
+                    slot=MealSlot.LUNCH,
+                    persona=_PERSONA,
+                )
+            )
+            stored = repository.get_occurrence(occurrence_id=original.occurrence_id)
+            assert stored is not None
+            self.assertEqual(OccurrenceStatus.DUE, stored.status)
+            self.assertEqual(current_config.config_version, stored.config_version)
+            self.assertEqual(datetime(2026, 8, 3, 3, 40, tzinfo=UTC), stored.scheduled_for)
+
 
 class ScheduledEffectSourceTests(unittest.TestCase):
     def test_scheduled_request_has_no_fake_telegram_message(self) -> None:

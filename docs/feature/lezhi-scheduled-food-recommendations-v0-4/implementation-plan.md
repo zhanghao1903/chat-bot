@@ -208,8 +208,8 @@
 - compile typed scheduled persona prompt from aggregate preferences/location/history, never fake member text;
 - validate one primary + two distinct alternatives through application-owned generic dish and
   reason registries, with recent-five exclusion and no model-authored recommendation prose;
-- resolve one current-turn source per sourced merchant choice, derive displayed/source identities
-  in the application and render exact stable text with cautious wording;
+- resolve one current-turn source per sourced merchant choice, render only application-owned
+  neutral candidate labels and stable source identities, and keep provider titles out of final text;
 - scheduled failures degrade to generic or silence, never an unsolicited technical failure reply.
 
 ### Checks

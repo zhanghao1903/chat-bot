@@ -405,8 +405,9 @@ alternatives[exactly 2 of the same closed shape]
 The model cannot author a displayed dish/merchant label, description, safety note, current fact or
 raw citation URL. It selects one of the application registry's generic dish IDs or, with an
 authorized location, three distinct opaque successful Web result IDs. The application owns the
-closed reason-tag text, resolves source IDs to current-turn normalized URL/title records, derives
-stable merchant keys and renders the final Telegram text.
+closed reason-tag text, resolves source IDs to current-turn normalized URLs, derives stable merchant
+keys and renders neutral ordinal labels (`来源商家候选一/二/三`). Provider titles remain untrusted
+prompt data and are never copied into the final Telegram text.
 
 The application-owned validator requires:
 
@@ -416,8 +417,8 @@ The application-owned validator requires:
 - `generic` mode consists only of three distinct registered dish IDs and null source IDs, so model
   output cannot introduce a merchant, current fact or health/safety reassurance;
 - `sourced` mode has an authorized group location and three distinct successful current-run source
-  IDs; each displayed merchant label is derived from a bounded entity-like result title and each
-  claim carries its own normalized URL;
+  IDs; each displayed identity is an application-owned neutral ordinal and each candidate carries
+  its own normalized URL, so provider title prose cannot become a recommendation claim;
 - free-form labels, descriptions, freshness/health/medical notes and extra fields are schema errors
   regardless of wording; rendered reasons and cautious source wording are application-owned;
 - source conflict, missing evidence, stale/unsafe content or uncertainty removes the current fact

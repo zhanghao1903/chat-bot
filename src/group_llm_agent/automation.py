@@ -466,6 +466,19 @@ class AutomationRepository:
         )
         now = _utc_now()
         with self.database.transaction() as connection:
+            active = connection.execute(
+                """
+                SELECT config_version
+                FROM automation_group_configs
+                WHERE chat_id = ? AND automation_type = ?
+                """,
+                (config.chat_id, config.automation_type),
+            ).fetchone()
+            # BEGIN IMMEDIATE makes this comparison and the due-row refresh one
+            # serialized operation. A scheduler holding an older snapshot must not
+            # create, return or lease work for a newer active configuration.
+            if active is None or int(active["config_version"]) != config.config_version:
+                return None
             connection.execute(
                 """
                 INSERT OR IGNORE INTO automation_occurrences (
@@ -494,7 +507,8 @@ class AutomationRepository:
             # The stable occurrence key intentionally survives a schedule edit. Until a
             # worker has leased the send right, refresh that row to the active schedule
             # snapshot instead of letting an obsolete unleased row poison the new slot.
-            # Claimed states are immutable and therefore excluded by status='due'.
+            # Claimed states are immutable and therefore excluded by status='due'; the
+            # active-version check above prevents stale snapshots from reverting it.
             connection.execute(
                 """
                 UPDATE automation_occurrences

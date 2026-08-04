@@ -196,7 +196,7 @@ class WebToolSession:
             result_id = f"web:{self._next_result_id}"
             self._next_result_id += 1
             self._urls[result_id] = normalized
-            self._citations[result_id] = FoodCitation(url=normalized, title=result.title)
+            self._citations[result_id] = FoodCitation(url=normalized)
             host = urllib.parse.urlsplit(normalized).hostname
             assert host is not None
             domains.add(host)
