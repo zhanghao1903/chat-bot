@@ -77,8 +77,10 @@ message was performed while closing these findings.
 - Exact second-remediation implementation commit:
   `8f7743804e6116c2214057b3f695650ff6fef483`
 
-The second review retained the original finding IDs. FINDING-003/004 remained fixed. The two open
-induced-risk paths are closed as follows:
+The second review retained the original finding IDs. FINDING-003/004 remained fixed. The second
+remediation changed the two open paths as follows; the subsequent exact-head review confirmed
+FINDING-001 closed but found a later lease boundary still open under FINDING-002, recorded in
+section 1.3:
 
 - **FINDING-001** — `FoodCitation` now contains only the normalized current-turn URL. Provider
   titles remain visible to the Writer as explicitly untrusted tool data but cannot cross the final
@@ -109,6 +111,44 @@ Exact second-remediation commit `8f7743804e6116c2214057b3f695650ff6fef483` passe
 
 The operational boundaries remain unchanged: no real Tavily request, capability enablement,
 subscription, Compose service replacement or Telegram message was performed.
+
+### 1.3 Pre-lease configuration race and third remediation
+
+- Third review dispatch: `b1c0d4c61b93de89ef3f0c0407bae92d56018278b43c979f539ff3b7d55eb8de`
+- Accepted immutable ReviewResult SHA-256:
+  `0060789c90d1be3a032c1e7e36f97cc80bf0dee5fdf10db48834d3322b6aee64`
+- Third reviewed head: `631e73691fab44d622616fd8e5ee154251506bdb`
+- Exact third-remediation implementation commit:
+  `85696ba1ffe6dd09075fa0e431b2106851541a22`
+
+The third review confirmed FINDING-001, FINDING-003 and FINDING-004 fixed and retained only
+FINDING-002. The remaining refresh-commit/admin-update/pre-lease interleaving is closed as follows:
+
+- **FINDING-002** — `lease` now requires the worker's expected config version. Its single
+  `BEGIN IMMEDIATE` update verifies the occurrence version and an enabled active group-config row
+  with that same version before changing `due`/expired-`leased` to `leased`. If an administrator
+  commits config v2 after the v1 refresh but before this update, the v1 worker changes zero rows and
+  does not terminalize the occurrence. A deterministic scheduler regression proves v1 at 11:30
+  loses the lease, the row remains `due`, the v2 worker refreshes it to 11:40 and executes exactly
+  once, and a duplicate worker processes zero work.
+
+Exact third-remediation commit `85696ba1ffe6dd09075fa0e431b2106851541a22` passed:
+
+- `python3 -m compileall -q src tests`
+- `PYTHONPATH=src:tests uv run python -m unittest discover -s tests -q` — **278 tests** in
+  **96.615 seconds**
+- Ruff check — passed; Ruff format check — **96 source/test files already formatted**
+- Mypy — no issues in **49 source files**
+- `sh -n deploy/manage.sh`, `git diff --check` and package build — passed
+- Third-remediation sdist SHA-256:
+  `2ae966e44e13d43469ac00cacb177d20a435b06f07847cd926bd14976ae80e76`
+- Third-remediation wheel SHA-256:
+  `a0aadc11d7fcc59c1ad5674bbb730774de137e1db49676e6b065a43245659ba3`
+
+The local candidate-image build was not executed because its permission review channel rejected the
+command after an approval-service connection interruption. No workaround was attempted, no running
+container was changed, and this remediation does not claim new image evidence. No real Tavily call,
+capability enablement, subscription, Compose service replacement or Telegram message was performed.
 
 ## 2. Implemented contracts
 
