@@ -44,6 +44,7 @@ class WriterDecisionKind(StrEnum):
     REPLY = "reply"
     STICKER = "sticker"
     SILENCE = "silence"
+    FOOD_RECOMMENDATION = "food_recommendation"
 
 
 class RecognitionOperation(StrEnum):
@@ -88,6 +89,14 @@ class StructuredModelResult:
 
 
 @dataclass(frozen=True)
+class FoodChoice:
+    choice_type: str
+    generic_dish_id: str | None
+    source_result_id: str | None
+    reason_tag: str
+
+
+@dataclass(frozen=True)
 class WriterDecision:
     kind: WriterDecisionKind
     reason_code: str
@@ -101,6 +110,9 @@ class WriterDecision:
     tool_arguments: dict[str, Any] | None = None
     tool_purpose_code: str | None = None
     tool_extension_reason_code: str | None = None
+    food_mode: str | None = None
+    food_primary: FoodChoice | None = None
+    food_alternatives: tuple[FoodChoice, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -366,6 +378,30 @@ def parse_writer_decision(
             reason_code=_parse_reason_code(payload["reason_code"]),
             mood_signal=_parse_mood_signal(payload.get("mood_signal")),
         )
+    if kind is WriterDecisionKind.FOOD_RECOMMENDATION:
+        _require_fields(
+            payload,
+            {
+                "kind",
+                "reason_code",
+                "mode",
+                "primary",
+                "alternatives",
+            },
+        )
+        mode = payload["mode"]
+        if mode not in {"generic", "sourced"}:
+            raise ModelResultError("invalid_food_mode")
+        alternatives = payload["alternatives"]
+        if not isinstance(alternatives, list) or len(alternatives) != 2:
+            raise ModelResultError("invalid_food_alternatives")
+        return WriterDecision(
+            kind=kind,
+            reason_code=_parse_reason_code(payload["reason_code"]),
+            food_mode=str(mode),
+            food_primary=_parse_food_choice(payload["primary"]),
+            food_alternatives=tuple(_parse_food_choice(item) for item in alternatives),
+        )
 
     required = {"kind", "reason_code", "tool_name", "tool_arguments", "tool_purpose_code"}
     actual_fields = frozenset(payload)
@@ -571,6 +607,30 @@ def _parse_reason_code(value: Any) -> str:
     if not isinstance(value, str) or _REASON_CODE.fullmatch(value) is None:
         raise ModelResultError("invalid_reason_code")
     return value
+
+
+def _parse_food_choice(value: object) -> FoodChoice:
+    if not isinstance(value, dict):
+        raise ModelResultError("invalid_food_choice")
+    _require_fields(value, {"choice_type", "generic_dish_id", "source_result_id", "reason_tag"})
+    choice_type = value["choice_type"]
+    if choice_type not in {"generic_dish", "merchant"}:
+        raise ModelResultError("invalid_food_choice_type")
+    generic_dish_id = value["generic_dish_id"]
+    if generic_dish_id is not None and not _is_identifier(generic_dish_id, maximum=64):
+        raise ModelResultError("invalid_food_generic_dish_id")
+    source_result_id = value["source_result_id"]
+    if source_result_id is not None and not _is_identifier(source_result_id, maximum=32):
+        raise ModelResultError("invalid_food_source_result_id")
+    reason_tag = value["reason_tag"]
+    if reason_tag not in {"warming", "hearty", "light", "shareable", "quick", "variety"}:
+        raise ModelResultError("invalid_food_reason_tag")
+    return FoodChoice(
+        choice_type=str(choice_type),
+        generic_dish_id=str(generic_dish_id) if generic_dish_id is not None else None,
+        source_result_id=str(source_result_id) if source_result_id is not None else None,
+        reason_tag=str(reason_tag),
+    )
 
 
 def _parse_text(value: Any, *, maximum: int, category: str) -> str:

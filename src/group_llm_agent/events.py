@@ -21,6 +21,7 @@ class PersonaTriggerKind(StrEnum):
 class TriggerPath(StrEnum):
     DIRECT = "direct"
     CONTEXTUAL = "contextual"
+    SCHEDULED = "scheduled"
 
 
 class TriggerCategory(StrEnum):
@@ -28,6 +29,7 @@ class TriggerCategory(StrEnum):
     DIRECT_PERSONA_NAME = "direct_persona_name"
     CONVERSATION_CONTINUITY = "conversation_continuity"
     ORDINARY_CONTEXTUAL = "ordinary_contextual"
+    SCHEDULED_AUTOMATION = "scheduled_automation"
     CONTROL = "control"
     IGNORED = "ignored"
 
@@ -117,6 +119,11 @@ class ModelErrorCode(StrEnum):
     BUDGET_EXHAUSTED = "budget_exhausted"
 
 
+class EffectSourceKind(StrEnum):
+    INBOUND = "inbound"
+    SCHEDULED = "scheduled"
+
+
 @dataclass(frozen=True)
 class InboundMedia:
     kind: MediaKind
@@ -162,6 +169,35 @@ class PersonaSnapshot:
 
 
 @dataclass(frozen=True)
+class ScheduledOccurrenceSource:
+    occurrence_id: str
+    occurrence_key: str
+    chat_id: str
+    automation_type: str
+    local_date: str
+    meal_slot: str
+    scheduled_for: datetime
+    timezone: str
+    config_version: int
+    subscriber_count: int
+    preference_summary: tuple[str, ...] = ()
+    location_text: str | None = None
+    recent_primary_keys: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.occurrence_id or not self.occurrence_key:
+            raise ValueError("scheduled occurrence identity must not be empty")
+        if not self.chat_id or not self.automation_type:
+            raise ValueError("scheduled occurrence scope must not be empty")
+        if self.scheduled_for.tzinfo is None:
+            raise ValueError("scheduled_for must be timezone-aware")
+        if self.config_version < 1:
+            raise ValueError("config_version must be positive")
+        if self.subscriber_count < 1:
+            raise ValueError("subscriber_count must be positive")
+
+
+@dataclass(frozen=True)
 class PlatformTriggerDecision:
     kind: PlatformTriggerKind
     reason_code: str
@@ -190,9 +226,49 @@ class EffectRequest:
     trigger_path: TriggerPath
     trigger_category: TriggerCategory
     trigger_reason: str
-    message: TelegramTextMessage
+    message: TelegramTextMessage | None
     persona: PersonaSnapshot
     deadline_at: datetime
+    scheduled: ScheduledOccurrenceSource | None = None
+
+    def __post_init__(self) -> None:
+        if (self.message is None) == (self.scheduled is None):
+            raise ValueError("effect request requires exactly one source")
+        if self.deadline_at.tzinfo is None:
+            raise ValueError("deadline_at must be timezone-aware")
+        if self.message is None:
+            if self.trigger_path is not TriggerPath.SCHEDULED:
+                raise ValueError("scheduled source requires scheduled trigger path")
+            if self.trigger_category is not TriggerCategory.SCHEDULED_AUTOMATION:
+                raise ValueError("scheduled source requires scheduled trigger category")
+        elif self.trigger_path is TriggerPath.SCHEDULED:
+            raise ValueError("inbound source cannot use scheduled trigger path")
+
+    @property
+    def source_kind(self) -> EffectSourceKind:
+        if self.scheduled is not None:
+            return EffectSourceKind.SCHEDULED
+        return EffectSourceKind.INBOUND
+
+    @property
+    def chat_id(self) -> str:
+        if self.scheduled is not None:
+            return self.scheduled.chat_id
+        assert self.message is not None
+        return self.message.group_id
+
+    @property
+    def trigger_event_id(self) -> str:
+        if self.scheduled is not None:
+            return self.scheduled.occurrence_id
+        assert self.message is not None
+        return self.message.event_id
+
+    @property
+    def trigger_message_id(self) -> str | None:
+        if self.message is None:
+            return None
+        return self.message.message_id
 
 
 @dataclass(frozen=True)
@@ -208,3 +284,5 @@ class FinalEffect:
     mood_signal: str | None = None
     used_memory_ids: tuple[str, ...] = ()
     used_tool_call_ids: tuple[int, ...] = ()
+    primary_key: str | None = None
+    source_urls: tuple[str, ...] = ()

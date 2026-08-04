@@ -3,7 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from group_llm_agent.events import PersonaSnapshot, TelegramTextMessage, TriggerPath
+from group_llm_agent.events import (
+    PersonaSnapshot,
+    ScheduledOccurrenceSource,
+    TelegramTextMessage,
+    TriggerPath,
+)
 from group_llm_agent.memory import MemberMemoryItem, MemoryRepository
 from group_llm_agent.messages import MessageRepository, StoredGroupMessage
 from group_llm_agent.persona import CharacterBundle, CompiledCharacterView
@@ -31,12 +36,14 @@ class TriggerContext:
 class EffectContext:
     persona: PersonaSnapshot
     character: CompiledCharacterView
-    current_message: TelegramTextMessage
+    current_message: TelegramTextMessage | None
+    scheduled: ScheduledOccurrenceSource | None
     recent_scene: tuple[StoredGroupMessage, ...]
     member_memory: tuple[MemberMemoryContext, ...]
     trigger_path: TriggerPath
     model_calls_remaining: int
     tool_calls_remaining: int
+    web_tool_calls_remaining: int
     deadline_at: datetime
     vision_evidence: VisionEvidence | None = None
     vision_error_code: str | None = None
@@ -106,8 +113,8 @@ class ContextAssembler:
         vision_error_code: str | None = None,
         at: datetime | None = None,
     ) -> EffectContext:
-        if not 1 <= model_calls_remaining <= 6:
-            raise ValueError("model_calls_remaining must be in [1, 6]")
+        if not 1 <= model_calls_remaining <= 11:
+            raise ValueError("model_calls_remaining must be in [1, 11]")
         if not 0 <= tool_calls_remaining <= 5:
             raise ValueError("tool_calls_remaining must be in [0, 5]")
         if deadline_at.tzinfo is None:
@@ -116,6 +123,7 @@ class ContextAssembler:
             persona=bundle.snapshot,
             character=bundle.views.effector,
             current_message=message,
+            scheduled=None,
             recent_scene=self.messages.recent(chat_id=message.group_id, limit=20),
             member_memory=self._member_context(
                 message=message,
@@ -125,9 +133,42 @@ class ContextAssembler:
             trigger_path=trigger_path,
             model_calls_remaining=model_calls_remaining,
             tool_calls_remaining=tool_calls_remaining,
+            web_tool_calls_remaining=0,
             deadline_at=deadline_at,
             vision_evidence=vision_evidence,
             vision_error_code=vision_error_code,
+        )
+
+    def scheduled_effect_context(
+        self,
+        *,
+        bundle: CharacterBundle,
+        scheduled: ScheduledOccurrenceSource,
+        model_calls_remaining: int,
+        tool_calls_remaining: int,
+        web_tool_calls_remaining: int,
+        deadline_at: datetime,
+    ) -> EffectContext:
+        if not 1 <= model_calls_remaining <= 11:
+            raise ValueError("model_calls_remaining must be in [1, 11]")
+        if not 0 <= tool_calls_remaining <= 5:
+            raise ValueError("tool_calls_remaining must be in [0, 5]")
+        if not 0 <= web_tool_calls_remaining <= 5:
+            raise ValueError("web_tool_calls_remaining must be in [0, 5]")
+        if deadline_at.tzinfo is None:
+            raise ValueError("deadline_at must be timezone-aware")
+        return EffectContext(
+            persona=bundle.snapshot,
+            character=bundle.views.effector,
+            current_message=None,
+            scheduled=scheduled,
+            recent_scene=self.messages.recent(chat_id=scheduled.chat_id, limit=20),
+            member_memory=(),
+            trigger_path=TriggerPath.SCHEDULED,
+            model_calls_remaining=model_calls_remaining,
+            tool_calls_remaining=tool_calls_remaining,
+            web_tool_calls_remaining=web_tool_calls_remaining,
+            deadline_at=deadline_at,
         )
 
     def _member_context(

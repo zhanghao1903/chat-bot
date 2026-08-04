@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from group_llm_agent.addressing import AddressMatchKind, match_persona_address
+from group_llm_agent.automation_control import FOOD_CONTROL_COMMANDS
 from group_llm_agent.context import ContextAssembler, TriggerContext
 from group_llm_agent.continuity import (
     ConversationContinuityDecider,
@@ -43,7 +44,7 @@ _CONTROL_COMMANDS = {
     "/memory_forget_me",
     "/memory_forget_member",
     "/memory_forget_group",
-}
+} | set(FOOD_CONTROL_COMMANDS)
 _TRIGGER_RESPONSE_SCHEMA = {
     "type": "object",
     "additionalProperties": False,

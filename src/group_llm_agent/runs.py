@@ -41,7 +41,7 @@ class ExternalEffectRecord:
     id: int
     chat_id: str
     trigger_event_id: str
-    trigger_message_id: str
+    trigger_message_id: str | None
     effect_kind: ExternalEffectKind
     requested_effect_kind: ExternalEffectKind
     delivered_effect_kind: ExternalEffectKind | None
@@ -154,7 +154,7 @@ class RunRepository:
                 SELECT 1 FROM external_effects
                 WHERE chat_id = ? AND trigger_event_id = ?
                 """,
-                (request.message.group_id, request.message.event_id),
+                (request.chat_id, request.trigger_event_id),
             ).fetchone()
             if claimed is not None:
                 raise ValueError("External effect already claimed")
@@ -163,15 +163,18 @@ class RunRepository:
                 INSERT INTO effect_runs (
                     request_id, chat_id, trigger_event_id, trigger_message_id,
                     trigger_path, trigger_category, persona_id, persona_version,
-                    persona_digest, status, deadline_at, created_at, updated_at
+                    persona_digest, source_kind, scheduled_occurrence_id,
+                    status, deadline_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)
                 ON CONFLICT(request_id) DO UPDATE SET
                     chat_id = excluded.chat_id,
                     trigger_event_id = excluded.trigger_event_id,
                     trigger_message_id = excluded.trigger_message_id,
                     trigger_path = excluded.trigger_path,
                     trigger_category = excluded.trigger_category,
+                    source_kind = excluded.source_kind,
+                    scheduled_occurrence_id = excluded.scheduled_occurrence_id,
                     persona_id = excluded.persona_id,
                     persona_version = excluded.persona_version,
                     persona_digest = excluded.persona_digest,
@@ -185,14 +188,16 @@ class RunRepository:
                 """,
                 (
                     request.request_id,
-                    request.message.group_id,
-                    request.message.event_id,
-                    request.message.message_id,
+                    request.chat_id,
+                    request.trigger_event_id,
+                    request.trigger_message_id,
                     request.trigger_path.value,
                     request.trigger_category.value,
                     request.persona.persona_id,
                     request.persona.persona_version,
                     request.persona.persona_digest,
+                    request.source_kind.value,
+                    request.scheduled.occurrence_id if request.scheduled is not None else None,
                     request.deadline_at.isoformat(),
                     now,
                     now,
@@ -402,6 +407,12 @@ class RunRepository:
         budget_ordinal: int = 0,
         extension_reason_code: str | None = None,
         result_novel: bool = False,
+        budget_kind: Literal["context", "web"] = "context",
+        provider_request_id: str | None = None,
+        provider_credits: float | None = None,
+        source_domains_json: str | None = None,
+        retrieved_at: datetime | None = None,
+        provider_error_code: str | None = None,
     ) -> int:
         if min(latency_ms, result_count, result_char_count, budget_ordinal) < 0:
             raise ValueError("Audit counts must be non-negative")
@@ -412,9 +423,11 @@ class RunRepository:
                     owner_kind, owner_id, chat_id, capability, purpose_code,
                     source_scope, status, latency_ms, result_count,
                     result_char_count, budget_ordinal, extension_reason_code,
-                    result_novel, created_at
+                    result_novel, budget_kind, provider_request_id,
+                    provider_credits, source_domains_json, retrieved_at,
+                    provider_error_code, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     owner_kind,
@@ -430,6 +443,12 @@ class RunRepository:
                     budget_ordinal,
                     extension_reason_code,
                     int(result_novel),
+                    budget_kind,
+                    provider_request_id,
+                    provider_credits,
+                    source_domains_json,
+                    retrieved_at.isoformat() if retrieved_at is not None else None,
+                    provider_error_code,
                     _utc_now(),
                 ),
             )
@@ -669,7 +688,9 @@ class RunRepository:
             id=int(row["id"]),
             chat_id=str(row["chat_id"]),
             trigger_event_id=str(row["trigger_event_id"]),
-            trigger_message_id=str(row["trigger_message_id"]),
+            trigger_message_id=(
+                str(row["trigger_message_id"]) if row["trigger_message_id"] is not None else None
+            ),
             effect_kind=ExternalEffectKind(str(row["effect_kind"])),
             requested_effect_kind=ExternalEffectKind(str(row["requested_effect_kind"])),
             delivered_effect_kind=(

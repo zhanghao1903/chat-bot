@@ -24,6 +24,14 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.bot_mode, "fixed")
         self.assertIsNone(settings.model_api_key)
         self.assertEqual(settings.member_memory_capability, "disabled")
+        self.assertEqual(settings.automation_capability, "disabled")
+        self.assertEqual(settings.automation_tick_seconds, 15)
+        self.assertEqual(settings.scheduled_effect_deadline_seconds, 60)
+        self.assertEqual(settings.tavily_web_capability, "disabled")
+        self.assertIsNone(settings.tavily_api_key)
+        self.assertEqual(11, settings.effect_max_model_calls)
+        self.assertEqual(5, settings.web_tool_limit)
+        self.assertEqual(16_384, settings.tool_result_total_chars)
         self.assertNotIn("123456:test-token", repr(settings))
 
     def test_missing_token_is_safe_and_actionable(self) -> None:
@@ -79,6 +87,8 @@ class SettingsTests(unittest.TestCase):
                 "RAW_MESSAGE_RETENTION_DAYS": "5",
                 "EFFECT_MAX_MODEL_CALLS": "2",
                 "EFFECT_MAX_TOOL_CALLS": "1",
+                "WEB_TOOL_LIMIT": "4",
+                "TOOL_RESULT_TOTAL_CHARS": "4096",
                 "EFFECT_DEADLINE_SECONDS": "18",
                 "TRIGGER_DECISION_TIMEOUT_SECONDS": "4",
                 "RECOGNITION_TIMEOUT_SECONDS": "20",
@@ -99,6 +109,8 @@ class SettingsTests(unittest.TestCase):
             (settings.effect_max_model_calls, settings.effect_max_tool_calls),
             (2, 1),
         )
+        self.assertEqual(4, settings.web_tool_limit)
+        self.assertEqual(4096, settings.tool_result_total_chars)
         self.assertNotIn("model-secret", repr(settings))
 
     def test_persona_mode_rejects_missing_or_unsafe_secret_without_echo(self) -> None:
@@ -122,6 +134,46 @@ class SettingsTests(unittest.TestCase):
             Settings.from_env(env)
 
         self.assertEqual(caught.exception.setting, "EFFECT_MAX_TOOL_CALLS")
+
+    def test_automation_capability_and_schedule_bounds_are_strict(self) -> None:
+        env = _persona_env()
+        env.update(
+            {
+                "AUTOMATION_CAPABILITY": "available",
+                "AUTOMATION_TICK_SECONDS": "5",
+                "SCHEDULED_EFFECT_DEADLINE_SECONDS": "90",
+            }
+        )
+        settings = Settings.from_env(env)
+        self.assertEqual("available", settings.automation_capability)
+        self.assertEqual(5, settings.automation_tick_seconds)
+        self.assertEqual(90, settings.scheduled_effect_deadline_seconds)
+
+        env["AUTOMATION_TICK_SECONDS"] = "4"
+        with self.assertRaises(ConfigError) as caught:
+            Settings.from_env(env)
+        self.assertEqual("AUTOMATION_TICK_SECONDS", caught.exception.setting)
+
+    def test_tavily_settings_are_bounded_and_secret_is_redacted(self) -> None:
+        env = _persona_env()
+        env.update(
+            {
+                "TAVILY_WEB_CAPABILITY": "available",
+                "TAVILY_API_KEY": "tavily-secret",
+                "TAVILY_PROJECT_ID": "project-1",
+                "TAVILY_TIMEOUT_SECONDS": "3",
+            }
+        )
+        settings = Settings.from_env(env)
+        self.assertEqual("available", settings.tavily_web_capability)
+        self.assertEqual("tavily-secret", settings.tavily_api_key)
+        self.assertEqual("project-1", settings.tavily_project_id)
+        self.assertEqual(3, settings.tavily_timeout_seconds)
+        self.assertNotIn("tavily-secret", repr(settings))
+
+        env["TAVILY_API_KEY"] = "unsafe key"
+        unavailable = Settings.from_env(env)
+        self.assertIsNone(unavailable.tavily_api_key)
 
 
 def _persona_env() -> dict[str, str]:
