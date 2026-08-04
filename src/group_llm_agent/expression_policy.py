@@ -35,18 +35,65 @@ _CHINESE_PREFIX_MODIFIER_TERM = (
     r"真的|真|到底|还|再|也|都)"
 )
 _CHINESE_PREFIX_MODIFIER = rf"(?:{_CHINESE_PREFIX_MODIFIER_TERM}\s*)*"
-_CHINESE_DIRECT_PREFIX_TOKEN = (
-    r"(?:可以不可以|应该不应该|应不应该|愿不愿意|答不答应|可不可以|"
-    r"能不能|会不会|肯不肯|从今以后|从现在起|拜托|麻烦|恳请|为什么|"
-    r"怎么可以|怎么能|是不是|愿意|答应|可以|能否|是否|应该|会|肯|"
-    r"请|求|以后|今后|将来|现在|永远|一直|始终|往后|真的|真|到底|"
-    r"还|再|也|都)"
-)
-_CHINESE_DIRECT_PREFIX = re.compile(
-    rf"(?:{_CHINESE_DIRECT_PREFIX_TOKEN}\s*)*"
-    rf"(?:(?:你|乐枝(?:你)?)\s*)?"
-    rf"(?:{_CHINESE_DIRECT_PREFIX_TOKEN}\s*)*",
-    re.IGNORECASE,
+_CHINESE_DIRECT_PREFIX_TOKENS = tuple(
+    sorted(
+        {
+            "可以不可以",
+            "应该不应该",
+            "应不应该",
+            "愿不愿意",
+            "答不答应",
+            "可不可以",
+            "能不能",
+            "会不会",
+            "肯不肯",
+            "从今以后",
+            "从现在起",
+            "拜托",
+            "麻烦",
+            "恳请",
+            "为什么",
+            "怎么可以",
+            "怎么能",
+            "是不是",
+            "愿意",
+            "答应",
+            "可以",
+            "能否",
+            "是否",
+            "应该",
+            "必须",
+            "务必",
+            "一定",
+            "会",
+            "肯",
+            "请",
+            "求",
+            "以后",
+            "今后",
+            "将来",
+            "现在",
+            "永远",
+            "一直",
+            "始终",
+            "往后",
+            "从此",
+            "真的",
+            "真",
+            "到底",
+            "要",
+            "得",
+            "还",
+            "再",
+            "也",
+            "都",
+            "乐枝你",
+            "乐枝",
+            "你",
+        },
+        key=len,
+        reverse=True,
+    )
 )
 _CHINESE_TO_ME_ACTION = (
     r"(?:"
@@ -76,20 +123,72 @@ _ENGLISH_PREFIX_MODIFIER = (
     r"maybe|perhaps|just|from now on|going forward|in the future)\s*)*"
 )
 _ENGLISH_POST_ONLY_MODIFIER = r"(?:(?:ever|always|really|truly|just)\s+)*"
-_ENGLISH_DIRECT_PREFIX_TOKEN = (
-    r"(?:from now on|going forward|in the future|how come|need to|have to|"
-    r"would like|can['’]t|couldn['’]t|wouldn['’]t|won['’]t|shouldn['’]t|"
-    r"don['’]t|doesn['’]t|didn['’]t|aren['’]t|isn['’]t|"
-    r"please|kindly|maybe|perhaps|just|always|forever|ever|still|now|really|"
-    r"truly|actually|why|can|could|would|will|should|may|might|must|do|does|"
-    r"did|are|is|was|were|shall|need|have|am|allowed|permitted|supposed|"
-    r"expected|to)"
-)
-_ENGLISH_DIRECT_PREFIX = re.compile(
-    rf"(?:{_ENGLISH_DIRECT_PREFIX_TOKEN}\s+)*"
-    rf"(?:(?:you|lezhi)(?:\s+|$))?"
-    rf"(?:{_ENGLISH_DIRECT_PREFIX_TOKEN}(?:\s+|$))*",
-    re.IGNORECASE,
+_ENGLISH_DIRECT_PREFIX_TOKENS = tuple(
+    sorted(
+        {
+            "from now on",
+            "going forward",
+            "in the future",
+            "how come",
+            "need to",
+            "have to",
+            "would like",
+            "at least",
+            "can't",
+            "couldn't",
+            "wouldn't",
+            "won't",
+            "shouldn't",
+            "don't",
+            "doesn't",
+            "didn't",
+            "aren't",
+            "isn't",
+            "please",
+            "kindly",
+            "maybe",
+            "perhaps",
+            "possibly",
+            "just",
+            "always",
+            "forever",
+            "ever",
+            "still",
+            "now",
+            "really",
+            "truly",
+            "actually",
+            "why",
+            "can",
+            "could",
+            "would",
+            "will",
+            "should",
+            "may",
+            "might",
+            "must",
+            "do",
+            "does",
+            "did",
+            "are",
+            "is",
+            "was",
+            "were",
+            "shall",
+            "need",
+            "have",
+            "am",
+            "allowed",
+            "permitted",
+            "supposed",
+            "expected",
+            "to",
+            "you",
+            "lezhi",
+        },
+        key=len,
+        reverse=True,
+    )
 )
 _RELATIONSHIP_CLAUSE_BREAK = re.compile(r"[，,。.!！？?；;\n]")
 _RELATIONSHIP_EXCLUSIVITY_NEGATIONS = (
@@ -298,7 +397,7 @@ def _relationship_match_has_direct_subject(text: str, match: re.Match[str]) -> b
     matched_text = match.group(0)
     if re.search(r"[\u3400-\u9fff]", matched_text):
         prefix = re.sub(r"^(?:但|但是|不过|而且|所以|然后)\s*", "", prefix)
-        if _CHINESE_DIRECT_PREFIX.fullmatch(prefix):
+        if _is_chinese_direct_prefix(prefix):
             return True
         if prefix in {"你", "乐枝", "乐枝你", "请", "请你", "拜托", "拜托你"}:
             return True
@@ -341,7 +440,7 @@ def _relationship_match_has_direct_subject(text: str, match: re.Match[str]) -> b
         )
 
     normalized = re.sub(r"^(?:but|and|so|then)\s+", "", prefix.lower())
-    if _ENGLISH_DIRECT_PREFIX.fullmatch(normalized):
+    if _is_english_direct_prefix(normalized):
         return True
     if re.match(r"only\s+(?:you|lezhi)\b", matched_text, re.IGNORECASE) and re.fullmatch(
         r"(?:(?:why|how come)\s+)?(?:can|could|would|will|should|may|might|must)",
@@ -369,6 +468,42 @@ def _relationship_match_has_direct_subject(text: str, match: re.Match[str]) -> b
         )
         is not None
     )
+
+
+def _is_chinese_direct_prefix(prefix: str) -> bool:
+    compact = re.sub(r"\s+", "", prefix)
+    return _consume_prefix_tokens(compact, _CHINESE_DIRECT_PREFIX_TOKENS, spaced=False)
+
+
+def _is_english_direct_prefix(prefix: str) -> bool:
+    normalized = re.sub(r"\s+", " ", prefix.replace("’", "'").strip().lower())
+    return _consume_prefix_tokens(normalized, _ENGLISH_DIRECT_PREFIX_TOKENS, spaced=True)
+
+
+def _consume_prefix_tokens(
+    value: str,
+    tokens: tuple[str, ...],
+    *,
+    spaced: bool,
+) -> bool:
+    if not value:
+        return False
+    position = 0
+    while position < len(value):
+        for token in tokens:
+            if not value.startswith(token, position):
+                continue
+            end = position + len(token)
+            if spaced and end < len(value) and value[end] != " ":
+                continue
+            position = end
+            if spaced:
+                while position < len(value) and value[position] == " ":
+                    position += 1
+            break
+        else:
+            return False
+    return True
 
 
 def _rhetorical_exclusivity_negation(text: str, match: re.Match[str]) -> bool:

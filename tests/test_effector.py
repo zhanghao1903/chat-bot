@@ -575,6 +575,9 @@ class WriterEffectorTests(unittest.TestCase):
             "请永远只爱我",
             "拜托你永远只爱我",
             "麻烦你以后只爱我",
+            "你必须永远只爱我",
+            "请务必一直只爱我",
+            "从此你只爱我",
             "How come you can only love me?",
             "你一定要只喜欢我",
             "你只能喜欢我好吗",
@@ -609,6 +612,8 @@ class WriterEffectorTests(unittest.TestCase):
             "Could you kindly only love me?",
             "Would you maybe love only me?",
             "Can you just love only me?",
+            "Could you possibly only love me?",
+            "Could you at least only love me?",
             "You are only allowed to love me.",
             "You may only love me.",
             "You must love me alone.",
@@ -675,8 +680,12 @@ class WriterEffectorTests(unittest.TestCase):
             "Will this app always support only me?",
             "以后这个应用只支持我",
             "请这个应用永远只支持我",
+            "这个应用必须永远只支持我",
+            "请这个应用务必一直只支持我",
             "From now on this app can only support me.",
             "Could this app kindly support only me?",
+            "Could this app possibly only support me?",
+            "Could this app at least only support me?",
         ):
             for decision_kind in ("sticker", "reply_with_sticker"):
                 payload = {
