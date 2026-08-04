@@ -331,6 +331,32 @@ The configured-provider report is unchanged at SHA-256
 `cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`.
 No provider call or production/external operation occurred.
 
+Sixth re-review dispatch
+`0eec11650c05d29ba47656dde4f10f671419d02e47f823df861b920e76c4e7ca`
+retained FINDING-002 because otherwise-direct relationship requests with
+bounded temporal, degree, or politeness modifiers were excluded by exact
+prefix matching. The exact reproductions covered Chinese `只会`,
+`以后`/`今后`/`永远`, and English `always`/`forever`/`please`/`really`
+forms for both the direct persona and formal name.
+
+Implementation snapshot `db50acbe4252b93ec6abda80826f81fb80e5a3e2`
+models bounded modifier sequences inside the direct-subject grammar rather
+than enumerating whole utterances. Modifiers are accepted only after an
+application-owned `你`/`乐枝` or `you`/`Lezhi` direct subject, a recognized
+question structure, or a bounded explicit request. Technical and third-party
+subjects remain ineligible for relationship classification. Chinese `只会`
+and English post-`only` modifiers are handled in the exclusivity grammar.
+
+The regression matrix covers every exact reproduction through direct policy,
+Writer `sticker`, and Writer `reply_with_sticker` validation, plus technical
+subjects carrying the same modifiers. The focused suite passes 19 tests; the
+full discovery suite passes 303 tests in 98.945 seconds. Ruff check/format
+passes all 104 source/test files, targeted Mypy passes
+`expression_policy.py`, and compileall, shell syntax, and diff checks pass.
+The provider report remains byte-identical at SHA-256
+`cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`;
+no provider or production/external operation occurred.
+
 - Independent exact-head merge review is still required.
 - On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
   `mergeOnApprove` policy to be set to `true` temporarily, only to re-review
