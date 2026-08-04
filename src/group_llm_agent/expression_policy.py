@@ -29,6 +29,7 @@ _CHINESE_EXCLUSIVITY_MARKER = (
     r"(?:要|得)\s*只|只能够|只能|只允许|只可以|只需要|只用|只可|只准|"
     r"只许|只要|仅限|仅|只)\s*"
 )
+_CHINESE_ADDRESSEE = r"(?:你|乐枝)\s*"
 _CHINESE_TO_ME_ACTION = (
     r"(?:"
     r"对我(?:(?:一个人?|一人)?好|撒(?:个)?娇|亲昵|偏心)"
@@ -59,7 +60,9 @@ _RELATIONSHIP_EXCLUSIVITY_NEGATIONS = (
         r"不用|不需要|无需|没必要|没有必要|不许|不准)(?:再|再去)?\s*"
         r"(?:(?:说|要求|让|希望)\s*)?(?:你\s*)?"
         + _CHINESE_EXCLUSIVITY_MARKER
-        + r"(?:你\s*)?"
+        + r"(?:"
+        + _CHINESE_ADDRESSEE
+        + r")?"
         + _CHINESE_TO_ME_ACTION,
         re.IGNORECASE,
     ),
@@ -99,12 +102,12 @@ _RELATIONSHIP_EXCLUSIVITY_NEGATIONS = (
 )
 _RELATIONSHIP_STICKER_FORBIDDEN = (
     re.compile(
-        _CHINESE_EXCLUSIVITY_MARKER + r"(?:你\s*)?" + _CHINESE_TO_ME_ACTION,
+        _CHINESE_EXCLUSIVITY_MARKER + r"(?:" + _CHINESE_ADDRESSEE + r")?" + _CHINESE_TO_ME_ACTION,
         re.IGNORECASE,
     ),
     re.compile(
         r"(?:不许|不准|不允许|不要|不能|不可以|不该|不应该|别)(?:再)?"
-        r"(?:你\s*)?"
+        r"(?:" + _CHINESE_ADDRESSEE + r")?"
         r"(?:"
         r"站(?:在)?(?:别人|其他人|任何其他人)(?:那边|一边)?|"
         r"(?:跟|和)(?:别人|其他人|任何其他人)(?:玩|聊天|说话)|"
@@ -125,8 +128,11 @@ _RELATIONSHIP_STICKER_FORBIDDEN = (
             + r"\s+only\s+me|"
             + _ENGLISH_TO_ME_ACTION
             + r"\s+(?:alone|exclusively)|"
-            r"only\s+you(?:\s+(?:can|could|may|might|must|should|will|would|"
-            r"shall))?\s+" + _ENGLISH_TO_ME_ACTION + r"|"
+            r"only\s+(?:you|lezhi)(?:\s+(?:can|could|may|might|must|should|"
+            r"will|would|shall))?\s+" + _ENGLISH_TO_ME_ACTION + r"|"
+            r"(?:am|are|is)\s+you\s+only\s+(?:allowed|permitted)\s+to\s+"
+            + _ENGLISH_TO_ME_ACTION
+            + r"|"
             r"(?:side|stand)\s+only\s+with\s+me|"
             r"(?:take|be on|stay on)\s+(?:only\s+)?my\s+side|"
             r"(?:do not|don['’]t|cannot|can not|can['’]t|must not|mustn['’]t|"
@@ -253,6 +259,14 @@ def _relationship_match_has_direct_subject(text: str, match: re.Match[str]) -> b
         prefix = re.sub(r"^(?:但|但是|不过|而且|所以|然后)\s*", "", prefix)
         if prefix in {"你", "乐枝", "乐枝你", "请", "请你", "拜托", "拜托你"}:
             return True
+        if re.fullmatch(
+            r"(?:(?:你|乐枝)\s*)?(?:能不能|可不可以|可以不可以|能否|是否|"
+            r"愿不愿意|愿意|会不会|会|肯不肯|肯|答不答应|答应|"
+            r"应该不应该|应不应该|为什么|凭什么|怎么能|怎么可以|能|可以|"
+            r"是不是)",
+            prefix,
+        ):
+            return True
         if re.fullmatch(r"我(?:希望|想让|要|要求|只想让)你", prefix):
             return True
         if prefix == "我" and re.match(
@@ -261,15 +275,36 @@ def _relationship_match_has_direct_subject(text: str, match: re.Match[str]) -> b
         ):
             return True
         return _rhetorical_exclusivity_negation(text, match) and (
-            prefix.endswith("不是说")
-            or any(marker in prefix for marker in ("难道", "难不成", "岂不是"))
+            re.fullmatch(
+                r"(?:我|你)?不是(?:说|要求|让|希望)(?:你|乐枝)?",
+                prefix,
+            )
+            is not None
+            or re.fullmatch(
+                r"(?:难道|难不成|岂不是)(?:你|乐枝).+",
+                prefix,
+            )
+            is not None
         )
 
     normalized = re.sub(r"^(?:but|and|so|then)\s+", "", prefix.lower())
+    if re.match(r"only\s+(?:you|lezhi)\b", matched_text, re.IGNORECASE) and re.fullmatch(
+        r"(?:(?:why|how come)\s+)?(?:can|could|would|will|should|may|might|must)",
+        normalized,
+    ):
+        return True
     return (
         re.fullmatch(
-            r"(?:please|you(?:\s+(?:can|could|may|might|must|should|will|would|"
-            r"shall|need to|have to|are allowed to|are permitted to))?|"
+            r"(?:please|(?:you|lezhi)(?:\s+(?:can|could|may|might|must|should|"
+            r"will|would|shall|need to|have to|are allowed to|are permitted to))?|"
+            r"(?:(?:why|how come)\s+)?(?:can|could|would|will|should|may|might|"
+            r"must|do|does|did|are|is|was|were|can['’]t|couldn['’]t|"
+            r"wouldn['’]t|won['’]t|shouldn['’]t|don['’]t|doesn['’]t|"
+            r"didn['’]t|aren['’]t|isn['’]t)\s+(?:you|lezhi)"
+            r"(?:\s+(?:allowed|permitted|"
+            r"supposed|expected)\s+to)?|"
+            r"(?:why|how come)\s+(?:you|lezhi)|"
+            r"(?:didn['’]t|did not)\s+you\s+(?:say|tell me)\s+you|"
             r"(?:i|we)\s+(?:want|need|expect|ask|require|would like)\s+you(?:\s+to)?)",
             normalized,
         )
