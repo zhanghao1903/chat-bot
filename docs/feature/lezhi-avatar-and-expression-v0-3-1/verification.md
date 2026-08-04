@@ -1,6 +1,6 @@
 # Verification: 乐枝默认头像部署与复合表情回复 v0.3.1
 
-- Status: FINDING-001 remediated; exact-head re-review and production release pending
+- Status: Exact implementation approved; one-time guarded merge review pending
 - Verified at: 2026-08-04
 - Safe-forward baseline: `88c775c8ef0be7d1c63fd71b5924334b12492d75`
 - Exact implementation snapshot: `2bbbb3824c856ed5fe199a36fc32c3e814828b33`
@@ -166,8 +166,17 @@ configuration, and production state were not changed.
 
 ## Release Gates And Limitations
 
-- Independent exact-head re-review and merge are still required. This document
-  does not authorize merge.
+- Independent exact-head merge review is still required.
+- On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
+  `mergeOnApprove` policy to be set to `true` temporarily, only to re-review
+  and squash merge PR #7. The merge review must require the exact head, use no
+  admin or auto merge, preserve the feature branch, and return immutable merge
+  traceability.
+- Main must restore the global `mergeOnApprove` policy to `false` immediately
+  after accepting the merged ReviewResult. The temporary authorization does
+  not permit deployment, Compose/container changes, SQLite migration,
+  expression or avatar operations, Telegram messages, or provider/Tavily
+  calls.
 - Production SQLite backup, immutable-copy `PRAGMA quick_check`, migration,
   Compose replacement, and post-start verification remain post-merge release
   steps; no production database or container was changed during verification.
