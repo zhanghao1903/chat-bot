@@ -30,11 +30,6 @@ _CHINESE_EXCLUSIVITY_MARKER = (
     r"只许|只要|只会|仅限|仅|只)\s*"
 )
 _CHINESE_ADDRESSEE = r"(?:你|乐枝)\s*"
-_CHINESE_PREFIX_MODIFIER_TERM = (
-    r"(?:从今以后|从现在起|以后|今后|将来|现在|永远|一直|始终|往后|"
-    r"真的|真|到底|还|再|也|都)"
-)
-_CHINESE_PREFIX_MODIFIER = rf"(?:{_CHINESE_PREFIX_MODIFIER_TERM}\s*)*"
 _CHINESE_DIRECT_PREFIX_TOKENS = tuple(
     sorted(
         {
@@ -49,6 +44,7 @@ _CHINESE_DIRECT_PREFIX_TOKENS = tuple(
             "肯不肯",
             "从今以后",
             "从现在起",
+            "从现在开始",
             "拜托",
             "麻烦",
             "恳请",
@@ -185,6 +181,100 @@ _ENGLISH_DIRECT_PREFIX_TOKENS = tuple(
             "to",
             "you",
             "lezhi",
+        },
+        key=len,
+        reverse=True,
+    )
+)
+_CHINESE_BENIGN_RELATIONSHIP_SUBJECTS = tuple(
+    sorted(
+        {
+            *(
+                f"{determiner}{noun}"
+                for determiner in ("这个", "该", "本", "那个", "此")
+                for noun in (
+                    "应用",
+                    "程序",
+                    "软件",
+                    "功能",
+                    "系统",
+                    "设备",
+                    "服务",
+                    "接口",
+                    "工具",
+                    "平台",
+                    "账号",
+                    "账户",
+                    "版本",
+                    "方案",
+                    "模块",
+                    "代码",
+                    "文档",
+                )
+            ),
+            "他",
+            "她",
+            "他们",
+            "她们",
+            "其他人",
+            "别人",
+            "某人",
+            "这位成员",
+            "那位成员",
+            "其他成员",
+            "另一位成员",
+            "我爸",
+            "我妈",
+            "我爸爸",
+            "我妈妈",
+            "我的朋友",
+            "我的同事",
+            "我的家人",
+        },
+        key=len,
+        reverse=True,
+    )
+)
+_ENGLISH_BENIGN_RELATIONSHIP_SUBJECTS = tuple(
+    sorted(
+        {
+            *(
+                f"{determiner} {noun}"
+                for determiner in ("this", "that", "the", "an", "another")
+                for noun in (
+                    "app",
+                    "application",
+                    "program",
+                    "feature",
+                    "function",
+                    "system",
+                    "device",
+                    "service",
+                    "interface",
+                    "tool",
+                    "platform",
+                    "account",
+                    "version",
+                    "plan",
+                    "module",
+                    "code",
+                    "document",
+                )
+            ),
+            "he",
+            "she",
+            "they",
+            "this member",
+            "that member",
+            "the member",
+            "another member",
+            "other members",
+            "someone else",
+            "my father",
+            "my mother",
+            "my friend",
+            "my colleague",
+            "my family",
         },
         key=len,
         reverse=True,
@@ -378,106 +468,37 @@ def _relationship_sticker_forbidden(context: EffectContext) -> bool:
     )
     for pattern in _RELATIONSHIP_STICKER_FORBIDDEN:
         for match in pattern.finditer(text):
-            if not _relationship_match_has_direct_subject(text, match):
-                continue
-            if not any(
+            if any(
                 match.start() < negated_end and match.end() > negated_start
                 for negated_start, negated_end in negated_spans
             ):
-                return True
+                continue
+            if _relationship_match_has_benign_subject(text, match):
+                continue
+            return True
     return False
 
 
-def _relationship_match_has_direct_subject(text: str, match: re.Match[str]) -> bool:
+def _relationship_match_has_benign_subject(text: str, match: re.Match[str]) -> bool:
     prefix = _RELATIONSHIP_CLAUSE_BREAK.split(text[: match.start()])[-1]
     prefix = prefix.strip(" \t\r\"'“”‘’（）()【】[]")
     if not prefix:
-        return True
-
-    matched_text = match.group(0)
-    if re.search(r"[\u3400-\u9fff]", matched_text):
-        prefix = re.sub(r"^(?:但|但是|不过|而且|所以|然后)\s*", "", prefix)
-        if _is_chinese_direct_prefix(prefix):
-            return True
-        if prefix in {"你", "乐枝", "乐枝你", "请", "请你", "拜托", "拜托你"}:
-            return True
-        if re.fullmatch(
-            r"(?:你|乐枝)\s*" + _CHINESE_PREFIX_MODIFIER,
-            prefix,
-        ):
-            return True
-        if re.fullmatch(
-            r"(?:(?:你|乐枝)\s*)?"
-            + _CHINESE_PREFIX_MODIFIER
-            + r"(?:能不能|可不可以|可以不可以|能否|是否|"
-            r"愿不愿意|愿意|会不会|会|肯不肯|肯|答不答应|答应|"
-            r"应该不应该|应不应该|为什么|凭什么|怎么能|怎么可以|能|可以|"
-            r"是不是)" + _CHINESE_PREFIX_MODIFIER,
-            prefix,
-        ):
-            return True
-        if re.fullmatch(
-            r"我(?:希望|想让|要|要求|只想让)你" + _CHINESE_PREFIX_MODIFIER,
-            prefix,
-        ):
-            return True
-        if prefix == "我" and re.match(
-            r"(?:不许|不准|不允许|不要|不能|不可以|不该|不应该|别)(?:再)?你",
-            matched_text,
-        ):
-            return True
-        return _rhetorical_exclusivity_negation(text, match) and (
-            re.fullmatch(
-                r"(?:我|你)?不是(?:说|要求|让|希望)(?:你|乐枝)?" + _CHINESE_PREFIX_MODIFIER,
-                prefix,
-            )
-            is not None
-            or re.fullmatch(
-                r"(?:难道|难不成|岂不是)(?:你|乐枝).+",
-                prefix,
-            )
-            is not None
+        return False
+    if re.search(r"[\u3400-\u9fff]", match.group(0)):
+        compact = re.sub(r"\s+", "", prefix)
+        return _has_bounded_benign_subject(
+            compact,
+            _CHINESE_BENIGN_RELATIONSHIP_SUBJECTS,
+            _CHINESE_DIRECT_PREFIX_TOKENS,
+            spaced=False,
         )
-
-    normalized = re.sub(r"^(?:but|and|so|then)\s+", "", prefix.lower())
-    if _is_english_direct_prefix(normalized):
-        return True
-    if re.match(r"only\s+(?:you|lezhi)\b", matched_text, re.IGNORECASE) and re.fullmatch(
-        r"(?:(?:why|how come)\s+)?(?:can|could|would|will|should|may|might|must)",
-        normalized,
-    ):
-        return True
-    return (
-        re.fullmatch(
-            r"(?:please|(?:you|lezhi)(?:\s+(?:can|could|may|might|must|should|"
-            r"will|would|shall|need to|have to|are|is))?\s*"
-            + _ENGLISH_PREFIX_MODIFIER
-            + r"(?:(?:allowed|permitted|supposed|expected)\s+to)?|"
-            r"(?:(?:why|how come)\s+)?(?:can|could|would|will|should|may|might|"
-            r"must|do|does|did|are|is|was|were|can['’]t|couldn['’]t|"
-            r"wouldn['’]t|won['’]t|shouldn['’]t|don['’]t|doesn['’]t|"
-            r"didn['’]t|aren['’]t|isn['’]t)\s+(?:you|lezhi)"
-            r"\s*"
-            + _ENGLISH_PREFIX_MODIFIER
-            + r"(?:(?:allowed|permitted|supposed|expected)\s+to)?|"
-            r"(?:why|how come)\s+(?:you|lezhi)\s*" + _ENGLISH_PREFIX_MODIFIER + r"|"
-            r"(?:didn['’]t|did not)\s+you\s+(?:say|tell me)\s+you|"
-            r"(?:i|we)\s+(?:want|need|expect|ask|require|would like)\s+you"
-            r"(?:\s+to)?\s*" + _ENGLISH_PREFIX_MODIFIER + r")",
-            normalized,
-        )
-        is not None
-    )
-
-
-def _is_chinese_direct_prefix(prefix: str) -> bool:
-    compact = re.sub(r"\s+", "", prefix)
-    return _consume_prefix_tokens(compact, _CHINESE_DIRECT_PREFIX_TOKENS, spaced=False)
-
-
-def _is_english_direct_prefix(prefix: str) -> bool:
     normalized = re.sub(r"\s+", " ", prefix.replace("’", "'").strip().lower())
-    return _consume_prefix_tokens(normalized, _ENGLISH_DIRECT_PREFIX_TOKENS, spaced=True)
+    return _has_bounded_benign_subject(
+        normalized,
+        _ENGLISH_BENIGN_RELATIONSHIP_SUBJECTS,
+        _ENGLISH_DIRECT_PREFIX_TOKENS,
+        spaced=True,
+    )
 
 
 def _consume_prefix_tokens(
@@ -506,10 +527,44 @@ def _consume_prefix_tokens(
     return True
 
 
+def _has_bounded_benign_subject(
+    value: str,
+    subjects: tuple[str, ...],
+    prefix_tokens: tuple[str, ...],
+    *,
+    spaced: bool,
+) -> bool:
+    for subject in subjects:
+        search_from = 0
+        while True:
+            start = value.find(subject, search_from)
+            if start < 0:
+                break
+            end = start + len(subject)
+            search_from = start + 1
+            if spaced and (
+                (start > 0 and value[start - 1] != " ") or (end < len(value) and value[end] != " ")
+            ):
+                continue
+            before = value[:start].strip()
+            after = value[end:].strip()
+            if (not before or _consume_prefix_tokens(before, prefix_tokens, spaced=spaced)) and (
+                not after or _consume_prefix_tokens(after, prefix_tokens, spaced=spaced)
+            ):
+                return True
+    return False
+
+
 def _rhetorical_exclusivity_negation(text: str, match: re.Match[str]) -> bool:
     clause_prefix = _RELATIONSHIP_CLAUSE_BREAK.split(text[: match.start()])[-1]
     if any(marker in clause_prefix for marker in ("难道", "难不成", "岂不是")):
         return True
+    if re.search(r"(?:我|你)?不是说(?:你|乐枝)?\s*$", clause_prefix) and re.match(
+        r"(?:别|不要|不可以|不该|不应该|不应|不必|不用|不需要|无需|"
+        r"没必要|没有必要)",
+        match.group(0),
+    ):
+        return False
     suffix = text[match.end() :].lstrip()
     return suffix.startswith(("吗", "嘛", "？", "?"))
 

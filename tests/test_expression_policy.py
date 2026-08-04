@@ -162,6 +162,9 @@ class ExpressionPolicyTests(unittest.TestCase):
             "你得一直只爱我",
             "请务必一直只爱我",
             "从此你只爱我",
+            "从现在开始你只爱我",
+            "你必须永远地只爱我",
+            "请继续永远只爱我",
             "How come you can only love me?",
             "Why should only you love me?",
             "Will you always love only me?",
@@ -183,6 +186,9 @@ class ExpressionPolicyTests(unittest.TestCase):
             "Can you just love only me?",
             "Could you possibly only love me?",
             "Could you at least only love me?",
+            "Could you for once only love me?",
+            "Could you please continue to love only me?",
+            "You must from this point on only love me.",
             "You will only ever love me.",
             "你一定要只喜欢我",
             "你得只喜欢我",
@@ -300,6 +306,10 @@ class ExpressionPolicyTests(unittest.TestCase):
             "Would that service maybe support only me?",
             "Could this app possibly only support me?",
             "Could this app at least only support me?",
+            "他只能喜欢我",
+            "从现在开始他只爱我",
+            "She can only love me.",
+            "Could she possibly only love me?",
         ):
             with self.subTest(text=text):
                 benign = cast(
@@ -343,7 +353,7 @@ class ExpressionPolicyTests(unittest.TestCase):
         eligibility = classify_sticker_eligibility(context, catalog)
         elapsed = time.perf_counter() - started
 
-        self.assertTrue(eligibility.eligible)
+        self.assertFalse(eligibility.eligible)
         self.assertLess(elapsed, 0.25)
 
     def test_last_sticker_survives_intervening_text_only_reply(self) -> None:
