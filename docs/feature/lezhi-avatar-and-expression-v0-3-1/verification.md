@@ -450,6 +450,33 @@ checks pass. The provider report remains byte-identical at SHA-256
 `cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`;
 no provider or production/external operation occurred.
 
+Tenth re-review dispatch
+`6bcf4d0d5305a735016e6b229ba085d0b3b88f08f7632420749d787baef8f7d8`
+retained FINDING-002 because the benign-subject exemption did not prove that
+the allowlisted entity governed the exclusivity action. A technical or
+third-party entity followed by an embedded `要求你` or `would like you to`
+persona instruction therefore still exempted the direct relationship clause.
+FINDING-003 remained independently closed under larger performance probes.
+
+Implementation snapshot `75f78bd3d442d8757c9bbfdd4aef822ac03040d1`
+binds the exemption to the subject immediately governing the action: after a
+candidate benign technical or third-party subject, any bounded direct
+addressee `你`/`乐枝` or `you`/`Lezhi` invalidates the exemption. The
+underlying fail-closed default remains unchanged, so reporting, control,
+request, and intent constructions that introduce the persona cannot reuse an
+earlier benign entity as a pass token.
+
+Direct policy and end-to-end regressions cover all four exact tenth-review
+cases for Writer `sticker` and `reply_with_sticker`, while simple app/service
+and explicit third-party statements plus every possessive, anti-exclusivity,
+inclusive-correction, and multi-span control remain green. The focused suite
+passes 20 tests in 8.698 seconds and full discovery passes 304 tests in
+107.477 seconds. Ruff check/format passes all 104 source/test files, targeted
+Mypy passes `expression_policy.py`, and compileall, shell syntax, and diff
+checks pass. The provider report remains byte-identical at SHA-256
+`cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`;
+no provider or production/external operation occurred.
+
 - Independent exact-head merge review is still required.
 - On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
   `mergeOnApprove` policy to be set to `true` temporarily, only to re-review
