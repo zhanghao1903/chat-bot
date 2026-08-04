@@ -538,6 +538,25 @@ class AutomationRepository:
             ).fetchone()
         return _occurrence_from_row(row) if row is not None else None
 
+    def list_expired_leases(
+        self, *, now: datetime, limit: int = 32
+    ) -> tuple[AutomationOccurrence, ...]:
+        _require_aware(now)
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be in [1, 100]")
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM automation_occurrences
+                WHERE status = 'leased'
+                  AND julianday(lease_expires_at) < julianday(?)
+                ORDER BY julianday(lease_expires_at), occurrence_id
+                LIMIT ?
+                """,
+                (now.isoformat(), limit),
+            ).fetchall()
+        return tuple(_occurrence_from_row(row) for row in rows)
+
     def lease(
         self,
         *,

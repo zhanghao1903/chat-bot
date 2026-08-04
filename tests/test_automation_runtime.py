@@ -348,6 +348,67 @@ class AutomationSchedulerTests(unittest.TestCase):
             self.assertEqual(original_config.config_version, stored.config_version)
             self.assertEqual(datetime(2026, 8, 3, 3, 30, tzinfo=UTC), stored.scheduled_for)
 
+    def test_timezone_date_jump_still_discovers_and_terminalizes_expired_lease(self) -> None:
+        with temporary_database() as database:
+            repository = AutomationRepository(database)
+            original_config = repository.enable_group(
+                chat_id="-1001",
+                timezone="Etc/GMT+12",
+                lunch_time="23:59",
+                dinner_time="12:00",
+            )
+            repository.subscribe(chat_id="-1001", member_user_id="member-1")
+            occurrence = repository.create_occurrence(
+                bot_user_id="7",
+                config=original_config,
+                local_date=datetime(2026, 8, 3, tzinfo=UTC).date(),
+                slot=MealSlot.LUNCH,
+                persona=_PERSONA,
+            )
+            assert occurrence is not None
+            self.assertEqual(datetime(2026, 8, 4, 11, 59, tzinfo=UTC), occurrence.scheduled_for)
+            leased = repository.lease(
+                occurrence_id=occurrence.occurrence_id,
+                worker_id="crashed-worker",
+                now=occurrence.scheduled_for,
+                expected_config_version=occurrence.config_version,
+            )
+            assert leased is not None
+            changed_config = repository.update_config(
+                chat_id="-1001",
+                timezone="Pacific/Kiritimati",
+                lunch_time="23:59",
+                dinner_time="12:00",
+                location_text=None,
+            )
+            self.assertEqual(original_config.config_version + 1, changed_config.config_version)
+
+            processor = FakeOccurrenceProcessor()
+            recovery_scheduler = AutomationScheduler(
+                repository=repository,
+                processor=processor,
+                bot_user_id="7",
+                persona=_PERSONA,
+                clock=lambda: datetime(2026, 8, 4, 12, 2, tzinfo=UTC),
+            )
+            self.assertEqual(1, recovery_scheduler.run_once(worker_id="recovery-worker"))
+            self.assertEqual(0, recovery_scheduler.run_once(worker_id="duplicate-worker"))
+            self.assertEqual(0, len(processor.sources))
+            with database.connect() as connection:
+                effect_count = connection.execute(
+                    "SELECT COUNT(*) AS count FROM external_effects WHERE scheduled_occurrence_id = ?",
+                    (occurrence.occurrence_id,),
+                ).fetchone()
+            assert effect_count is not None
+            self.assertEqual(0, int(effect_count["count"]))
+
+            stored = repository.get_occurrence(occurrence_id=occurrence.occurrence_id)
+            assert stored is not None
+            self.assertEqual(OccurrenceStatus.DEFINITE_FAILURE, stored.status)
+            self.assertEqual("definite_failure", stored.reason_code)
+            self.assertEqual(original_config.config_version, stored.config_version)
+            self.assertEqual("2026-08-03", stored.local_date)
+
     def test_next_schedule_skips_weekend(self) -> None:
         with temporary_database() as database:
             repository = AutomationRepository(database)

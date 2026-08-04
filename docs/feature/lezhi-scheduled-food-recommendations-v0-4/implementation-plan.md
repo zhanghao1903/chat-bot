@@ -127,6 +127,8 @@
 
 - implement IANA timezone validation, weekday two-slot calculation and deterministic DST policy;
 - implement current/previous-slot tick, 30-minute catch-up and no correctness-critical cursor;
+- scan a bounded, deterministically ordered durable queue of expired leases before current-slot
+  projection so timezone/date edits cannot hide pre-prepare recovery work;
 - pre-work and pre-claim rechecks for enabled/paused/subscriber/config/persona/deadline state;
 - run scheduler in an independent daemon lifecycle with its own SQLite connections;
 - implement closed `/food_*` command grammar, authenticated bot target and admin/self authorization;
@@ -141,6 +143,8 @@
   refresh-commit/admin-update/pre-lease interleaving;
 - lease-v1/admin-config-v2/crash-before-prepare recovery reaches one bounded definite-failure
   outcome with no processor call, external effect, duplicate or stranded lease;
+- an `Etc/GMT+12` to `Pacific/Kiritimati` edit that crosses more than one local date still discovers
+  and terminalizes the old expired lease once;
 - 0/1/20 subscribers still produces 0/1/1 occurrence effects;
 - command addressed to foreign bot, non-admin mutation and cross-member operation are rejected;
 - disable deletes active subscription preferences; pause does not stop ordinary replies;

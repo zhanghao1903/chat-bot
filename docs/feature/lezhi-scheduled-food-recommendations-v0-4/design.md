@@ -260,11 +260,14 @@ stateDiagram-v2
     skipped_late --> [*]
 ```
 
-At each bounded tick the worker enumerates enabled registry/config pairs and only the current and
-immediately previous local slot. It inserts the deterministic row if absent. If the same stable
-date/slot row is still unleased `due` after a schedule edit, the same transaction refreshes its
-scheduled instant, grace deadline, config version and persona snapshot; leased, prepared, claimed
-and terminal rows are immutable. The worker then atomically leases one eligible row only when the
+At each bounded tick the worker first queries up to 32 durable expired `leased` rows, ordered by
+lease expiry and occurrence ID, independently of the active timezone and current local-date
+projection. Each is competitively reclaimed and passed through the same pre-claim terminalization
+policy. The worker then enumerates enabled registry/config pairs and only the current and immediately
+previous local slot. It inserts the deterministic row if absent. If the same stable date/slot row is
+still unleased `due` after a schedule edit, the same transaction refreshes its scheduled instant,
+grace deadline, config version and persona snapshot; leased, prepared, claimed and terminal rows are
+immutable. The worker then atomically leases one eligible row only when the
 occurrence version and the active group-config version both equal the worker's expected snapshot in
 the same `BEGIN IMMEDIATE` transaction. A config edit committed after refresh but before lease makes
 the stale worker lose the lease without terminalizing the `due` row, so the current worker can
@@ -276,7 +279,8 @@ A crash before `prepared` releases through lease expiry. Recovery of that alread
 bound to the immutable occurrence version rather than the later active-config version: unchanged
 configuration may recompute, while a post-lease config change is detected by the pre-claim policy
 and produces one bounded `definite_failure` without a model call or external effect. It never leaves
-an expired row stranded in `leased`. A crash after `prepared` reuses the same stored payload/text.
+an expired row stranded in `leased`, even when a timezone edit moves the active local date by more
+than one day. A crash after `prepared` reuses the same stored payload/text.
 Recovery joins the occurrence to its durable external effect: `sent` acknowledgement reconciles the
 occurrence to `sent`, `failed` to definite failure, and only an ambiguous `sending`, `uncertain` or
 missing effect becomes `uncertain`.

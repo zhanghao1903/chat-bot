@@ -53,6 +53,17 @@ class AutomationScheduler:
         if now.tzinfo is None:
             raise ValueError("scheduler clock must be timezone-aware")
         processed = 0
+        for expired in self.repository.list_expired_leases(now=now):
+            leased = self.repository.lease(
+                occurrence_id=expired.occurrence_id,
+                worker_id=worker_id,
+                now=now,
+                expected_config_version=expired.config_version,
+            )
+            if leased is None:
+                continue
+            self._process_leased(leased=leased, worker_id=worker_id, now=now)
+            processed += 1
         for config in self.repository.list_configs():
             for local_date, slot in _due_candidates(config=config, now=now):
                 occurrence = self.repository.create_occurrence(
@@ -97,39 +108,49 @@ class AutomationScheduler:
                 )
                 if leased is None:
                     continue
-                try:
-                    current = self.repository.get_config(chat_id=config.chat_id)
-                    if current is None or not current.enabled or current.paused:
-                        result = OccurrenceStatus.SKIPPED_DISABLED
-                    elif current.config_version != leased.config_version:
-                        result = OccurrenceStatus.DEFINITE_FAILURE
-                    else:
-                        aggregate = self.repository.aggregate_preferences(chat_id=config.chat_id)
-                        if aggregate.subscriber_count == 0:
-                            result = OccurrenceStatus.SKIPPED_NO_SUBSCRIBERS
-                        elif now > leased.grace_deadline:
-                            result = OccurrenceStatus.SKIPPED_LATE
-                        else:
-                            source = self.repository.scheduled_source(occurrence=leased)
-                            result = self.processor.process(
-                                occurrence=leased,
-                                source=source,
-                                worker_id=worker_id,
-                            )
-                except Exception:
-                    logger.exception(
-                        "automation_occurrence_failed occurrence_id=%s",
-                        leased.occurrence_id,
-                    )
-                    result = OccurrenceStatus.DEFINITE_FAILURE
-                if result not in {OccurrenceStatus.PREPARED, OccurrenceStatus.SENDING}:
-                    self.repository.mark_occurrence(
-                        occurrence_id=leased.occurrence_id,
-                        status=result,
-                        reason_code=result.value,
-                    )
+                self._process_leased(leased=leased, worker_id=worker_id, now=now)
                 processed += 1
         return processed
+
+    def _process_leased(
+        self,
+        *,
+        leased: AutomationOccurrence,
+        worker_id: str,
+        now: datetime,
+    ) -> OccurrenceStatus:
+        try:
+            current = self.repository.get_config(chat_id=leased.chat_id)
+            if current is None or not current.enabled or current.paused:
+                result = OccurrenceStatus.SKIPPED_DISABLED
+            elif current.config_version != leased.config_version:
+                result = OccurrenceStatus.DEFINITE_FAILURE
+            else:
+                aggregate = self.repository.aggregate_preferences(chat_id=leased.chat_id)
+                if aggregate.subscriber_count == 0:
+                    result = OccurrenceStatus.SKIPPED_NO_SUBSCRIBERS
+                elif now > leased.grace_deadline:
+                    result = OccurrenceStatus.SKIPPED_LATE
+                else:
+                    source = self.repository.scheduled_source(occurrence=leased)
+                    result = self.processor.process(
+                        occurrence=leased,
+                        source=source,
+                        worker_id=worker_id,
+                    )
+        except Exception:
+            logger.exception(
+                "automation_occurrence_failed occurrence_id=%s",
+                leased.occurrence_id,
+            )
+            result = OccurrenceStatus.DEFINITE_FAILURE
+        if result not in {OccurrenceStatus.PREPARED, OccurrenceStatus.SENDING}:
+            self.repository.mark_occurrence(
+                occurrence_id=leased.occurrence_id,
+                status=result,
+                reason_code=result.value,
+            )
+        return result
 
     def _eligibility(
         self,
