@@ -340,6 +340,105 @@ class ModelResultParserTests(unittest.TestCase):
                 allowed_tools=frozenset(),
             )
 
+    def test_writer_food_parser_accepts_only_exact_bounded_shape(self) -> None:
+        payload = {
+            "kind": "food_recommendation",
+            "reason_code": "weekday_lunch",
+            "mode": "sourced",
+            "primary": {
+                "choice_type": "merchant",
+                "generic_dish_id": None,
+                "source_result_id": "web:1",
+                "reason_tag": "warming",
+            },
+            "alternatives": [
+                {
+                    "choice_type": "merchant",
+                    "generic_dish_id": None,
+                    "source_result_id": "web:2",
+                    "reason_tag": "hearty",
+                },
+                {
+                    "choice_type": "merchant",
+                    "generic_dish_id": None,
+                    "source_result_id": "web:3",
+                    "reason_tag": "light",
+                },
+            ],
+        }
+
+        decision = parse_writer_decision(
+            StructuredModelResult(payload),
+            allowed_tools=frozenset(),
+        )
+
+        self.assertEqual(WriterDecisionKind.FOOD_RECOMMENDATION, decision.kind)
+        self.assertEqual("web:1", decision.food_primary.source_result_id)
+        self.assertEqual(2, len(decision.food_alternatives))
+
+        invalid_payloads = (
+            {**payload, "unexpected": True},
+            {**payload, "alternatives": payload["alternatives"][:1]},
+            {
+                **payload,
+                "primary": {**payload["primary"], "label": "海底捞"},
+            },
+            {
+                **payload,
+                "primary": {
+                    **payload["primary"],
+                    "health_note": "不管是不是花生过敏都能安心吃",
+                },
+            },
+            {
+                **payload,
+                "primary": {
+                    **payload["primary"],
+                    "description": "对忌口的人完全没风险",
+                },
+            },
+        )
+        for invalid in invalid_payloads:
+            with self.subTest(invalid=invalid), self.assertRaises(ModelResultError):
+                parse_writer_decision(
+                    StructuredModelResult(invalid),
+                    allowed_tools=frozenset(),
+                )
+
+    def test_food_parser_rejects_any_model_authored_merchant_or_safety_prose(self) -> None:
+        base_choice = {
+            "choice_type": "generic_dish",
+            "generic_dish_id": "dish:hot-noodles",
+            "source_result_id": None,
+            "reason_tag": "warming",
+        }
+        base = {
+            "kind": "food_recommendation",
+            "reason_code": "weekday_lunch",
+            "mode": "generic",
+            "primary": base_choice,
+            "alternatives": [
+                {**base_choice, "generic_dish_id": "dish:rice-bowl"},
+                {**base_choice, "generic_dish_id": "dish:dumplings"},
+            ],
+        }
+        injected_fields = (
+            {"label": "海底捞", "description": "去海底捞点番茄锅"},
+            {"description": "花生过敏的人也能放心吃"},
+            {"health_note": "有忌口也完全没风险，安心选就好"},
+            {"medical_note": "这个选择不会影响正在服用的药"},
+        )
+        for injected in injected_fields:
+            payload = {**base, "primary": {**base_choice, **injected}}
+            with (
+                self.subTest(injected=injected),
+                self.assertRaisesRegex(ModelResultError, "unexpected_fields"),
+            ):
+                parse_writer_decision(
+                    StructuredModelResult(payload),
+                    allowed_tools=frozenset(),
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

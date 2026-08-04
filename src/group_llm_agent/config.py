@@ -13,6 +13,8 @@ _BOT_MODES = {"fixed", "persona_direct", "persona_full"}
 _MEMORY_CAPABILITIES = {"disabled", "available"}
 _VISION_CAPABILITIES = {"disabled", "available"}
 _EXPRESSION_CAPABILITIES = {"disabled", "enabled"}
+_AUTOMATION_CAPABILITIES = {"disabled", "available"}
+_TAVILY_WEB_CAPABILITIES = {"disabled", "available"}
 _MODEL_PROVIDERS = {"openai_compatible"}
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -49,6 +51,17 @@ def _secret(env: Mapping[str, str], name: str) -> str:
         or any(ord(character) < 33 or ord(character) == 127 for character in value)
     ):
         raise ConfigError(name, "has an invalid format")
+    return value
+
+
+def _optional_secret(env: Mapping[str, str], name: str) -> str | None:
+    value = env.get(name, "")
+    if not value:
+        return None
+    if value != value.strip() or any(
+        ord(character) < 33 or ord(character) == 127 for character in value
+    ):
+        return None
     return value
 
 
@@ -107,6 +120,8 @@ class Settings:
     effect_max_model_calls: int
     effect_ordinary_tool_calls: int
     effect_max_tool_calls: int
+    web_tool_limit: int
+    tool_result_total_chars: int
     effect_deadline_seconds: int
     trigger_decision_timeout_seconds: int
     recognition_timeout_seconds: int
@@ -119,6 +134,13 @@ class Settings:
     expression_capability: str
     expression_catalog_path: Path | None
     expression_catalog_sha256: str | None
+    automation_capability: str
+    automation_tick_seconds: int
+    scheduled_effect_deadline_seconds: int
+    tavily_web_capability: str
+    tavily_api_key: str | None = field(repr=False)
+    tavily_project_id: str | None
+    tavily_timeout_seconds: int
 
     @classmethod
     def from_env(cls, environ: Mapping[str, str] | None = None) -> Settings:
@@ -172,6 +194,25 @@ class Settings:
             default="disabled",
             choices=_EXPRESSION_CAPABILITIES,
         )
+        automation_capability = _choice(
+            env,
+            "AUTOMATION_CAPABILITY",
+            default="disabled",
+            choices=_AUTOMATION_CAPABILITIES,
+        )
+        tavily_web_capability = _choice(
+            env,
+            "TAVILY_WEB_CAPABILITY",
+            default="disabled",
+            choices=_TAVILY_WEB_CAPABILITIES,
+        )
+        tavily_api_key = _optional_secret(env, "TAVILY_API_KEY")
+        tavily_project_id = env.get("TAVILY_PROJECT_ID", "").strip() or None
+        if tavily_project_id is not None and (
+            len(tavily_project_id) > 128
+            or any(ord(character) < 33 for character in tavily_project_id)
+        ):
+            raise ConfigError("TAVILY_PROJECT_ID", "has an invalid format")
         expression_catalog_path: Path | None = None
         expression_catalog_sha256: str | None = None
         if bot_mode != "fixed":
@@ -207,9 +248,9 @@ class Settings:
         effect_max_model_calls = _integer(
             env,
             "EFFECT_MAX_MODEL_CALLS",
-            default=6,
+            default=11,
             minimum=1,
-            maximum=6,
+            maximum=11,
         )
         effect_max_tool_calls = _integer(
             env,
@@ -275,6 +316,20 @@ class Settings:
             effect_max_model_calls=effect_max_model_calls,
             effect_ordinary_tool_calls=effect_ordinary_tool_calls,
             effect_max_tool_calls=effect_max_tool_calls,
+            web_tool_limit=_integer(
+                env,
+                "WEB_TOOL_LIMIT",
+                default=5,
+                minimum=0,
+                maximum=5,
+            ),
+            tool_result_total_chars=_integer(
+                env,
+                "TOOL_RESULT_TOTAL_CHARS",
+                default=16_384,
+                minimum=1_024,
+                maximum=16_384,
+            ),
             effect_deadline_seconds=_integer(
                 env,
                 "EFFECT_DEADLINE_SECONDS",
@@ -329,4 +384,29 @@ class Settings:
             expression_capability=expression_capability,
             expression_catalog_path=expression_catalog_path,
             expression_catalog_sha256=expression_catalog_sha256,
+            automation_capability=automation_capability,
+            automation_tick_seconds=_integer(
+                env,
+                "AUTOMATION_TICK_SECONDS",
+                default=15,
+                minimum=5,
+                maximum=60,
+            ),
+            scheduled_effect_deadline_seconds=_integer(
+                env,
+                "SCHEDULED_EFFECT_DEADLINE_SECONDS",
+                default=60,
+                minimum=15,
+                maximum=90,
+            ),
+            tavily_web_capability=tavily_web_capability,
+            tavily_api_key=tavily_api_key,
+            tavily_project_id=tavily_project_id,
+            tavily_timeout_seconds=_integer(
+                env,
+                "TAVILY_TIMEOUT_SECONDS",
+                default=8,
+                minimum=3,
+                maximum=10,
+            ),
         )

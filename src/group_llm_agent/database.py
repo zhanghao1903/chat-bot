@@ -479,6 +479,236 @@ _MIGRATIONS: tuple[tuple[int, str, str], ...] = (
             );
         """,
     ),
+    (
+        5,
+        "scheduled_food_automation_v0_4",
+        """
+        ALTER TABLE effect_runs RENAME TO effect_runs_v4;
+        DROP INDEX IF EXISTS idx_effect_runs_chat_event;
+        CREATE TABLE effect_runs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id TEXT NOT NULL UNIQUE,
+            chat_id TEXT NOT NULL,
+            trigger_event_id TEXT NOT NULL,
+            trigger_message_id TEXT,
+            trigger_path TEXT NOT NULL
+                CHECK (trigger_path IN ('direct', 'contextual', 'scheduled')),
+            trigger_category TEXT NOT NULL DEFAULT 'ordinary_contextual'
+                CHECK (
+                    trigger_category IN (
+                        'direct_platform', 'direct_persona_name',
+                        'conversation_continuity', 'ordinary_contextual',
+                        'scheduled_automation'
+                    )
+                ),
+            source_kind TEXT NOT NULL DEFAULT 'inbound'
+                CHECK (source_kind IN ('inbound', 'scheduled')),
+            scheduled_occurrence_id TEXT,
+            persona_id TEXT NOT NULL,
+            persona_version TEXT NOT NULL,
+            persona_digest TEXT NOT NULL,
+            status TEXT NOT NULL
+                CHECK (
+                    status IN (
+                        'processing', 'reply', 'sticker', 'silence',
+                        'failure_reply', 'failed'
+                    )
+                ),
+            model_call_count INTEGER NOT NULL DEFAULT 0,
+            tool_call_count INTEGER NOT NULL DEFAULT 0,
+            reason_code TEXT,
+            error_code TEXT,
+            deadline_at TEXT NOT NULL,
+            vision_status TEXT NOT NULL DEFAULT 'not_called'
+                CHECK (vision_status IN ('not_called', 'completed', 'failed')),
+            vision_model TEXT,
+            catalog_version TEXT,
+            catalog_digest TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            CHECK (
+                (source_kind = 'inbound' AND trigger_message_id IS NOT NULL
+                    AND scheduled_occurrence_id IS NULL)
+                OR
+                (source_kind = 'scheduled' AND trigger_message_id IS NULL
+                    AND scheduled_occurrence_id IS NOT NULL)
+            )
+        );
+        INSERT INTO effect_runs (
+            id, request_id, chat_id, trigger_event_id, trigger_message_id,
+            trigger_path, trigger_category, source_kind, scheduled_occurrence_id,
+            persona_id, persona_version, persona_digest, status,
+            model_call_count, tool_call_count, reason_code, error_code,
+            deadline_at, vision_status, vision_model, catalog_version,
+            catalog_digest, created_at, updated_at
+        )
+        SELECT
+            id, request_id, chat_id, trigger_event_id, trigger_message_id,
+            trigger_path, trigger_category, 'inbound', NULL,
+            persona_id, persona_version, persona_digest, status,
+            model_call_count, tool_call_count, reason_code, error_code,
+            deadline_at, vision_status, vision_model, catalog_version,
+            catalog_digest, created_at, updated_at
+        FROM effect_runs_v4;
+        DROP TABLE effect_runs_v4;
+        CREATE INDEX idx_effect_runs_chat_event
+            ON effect_runs(chat_id, trigger_event_id);
+
+        ALTER TABLE external_effects RENAME TO external_effects_v4;
+        CREATE TABLE external_effects (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            trigger_event_id TEXT NOT NULL,
+            trigger_message_id TEXT,
+            effect_kind TEXT NOT NULL
+                CHECK (effect_kind IN ('reply', 'sticker', 'failure_reply', 'control_ack')),
+            requested_effect_kind TEXT NOT NULL
+                CHECK (
+                    requested_effect_kind IN (
+                        'reply', 'sticker', 'failure_reply', 'control_ack'
+                    )
+                ),
+            delivered_effect_kind TEXT
+                CHECK (
+                    delivered_effect_kind IS NULL OR delivered_effect_kind IN (
+                        'reply', 'sticker', 'failure_reply', 'control_ack'
+                    )
+                ),
+            asset_semantic_id TEXT,
+            status TEXT NOT NULL
+                CHECK (status IN ('sending', 'sent', 'failed', 'uncertain')),
+            persona_version TEXT,
+            persona_digest TEXT,
+            platform_message_id TEXT,
+            error_code TEXT,
+            source_kind TEXT NOT NULL DEFAULT 'inbound'
+                CHECK (source_kind IN ('inbound', 'scheduled')),
+            scheduled_occurrence_id TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(chat_id, trigger_event_id),
+            CHECK (
+                (source_kind = 'inbound' AND trigger_message_id IS NOT NULL
+                    AND scheduled_occurrence_id IS NULL)
+                OR
+                (source_kind = 'scheduled' AND trigger_message_id IS NULL
+                    AND scheduled_occurrence_id IS NOT NULL)
+            )
+        );
+        INSERT INTO external_effects (
+            id, chat_id, trigger_event_id, trigger_message_id, effect_kind,
+            requested_effect_kind, delivered_effect_kind, asset_semantic_id,
+            status, persona_version, persona_digest, platform_message_id,
+            error_code, source_kind, scheduled_occurrence_id, created_at, updated_at
+        )
+        SELECT
+            id, chat_id, trigger_event_id, trigger_message_id, effect_kind,
+            requested_effect_kind, delivered_effect_kind, asset_semantic_id,
+            status, persona_version, persona_digest, platform_message_id,
+            error_code, 'inbound', NULL, created_at, updated_at
+        FROM external_effects_v4;
+        DROP TABLE external_effects_v4;
+
+        ALTER TABLE tool_call_audit ADD COLUMN budget_kind TEXT NOT NULL DEFAULT 'context'
+            CHECK (budget_kind IN ('context', 'web'));
+        ALTER TABLE tool_call_audit ADD COLUMN provider_request_id TEXT;
+        ALTER TABLE tool_call_audit ADD COLUMN provider_credits REAL;
+        ALTER TABLE tool_call_audit ADD COLUMN source_domains_json TEXT;
+        ALTER TABLE tool_call_audit ADD COLUMN retrieved_at TEXT;
+        ALTER TABLE tool_call_audit ADD COLUMN provider_error_code TEXT;
+
+        CREATE TABLE automation_group_configs (
+            chat_id TEXT NOT NULL,
+            automation_type TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 0 CHECK (enabled IN (0, 1)),
+            paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0, 1)),
+            timezone TEXT NOT NULL,
+            lunch_time TEXT NOT NULL,
+            dinner_time TEXT NOT NULL,
+            location_text TEXT,
+            config_version INTEGER NOT NULL DEFAULT 1 CHECK (config_version >= 1),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (chat_id, automation_type)
+        );
+
+        CREATE TABLE automation_subscriptions (
+            chat_id TEXT NOT NULL,
+            automation_type TEXT NOT NULL,
+            member_user_id TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+            cuisine_tags_json TEXT NOT NULL DEFAULT '[]',
+            budget_band TEXT,
+            dietary_tags_json TEXT NOT NULL DEFAULT '[]',
+            avoid_items_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY (chat_id, automation_type, member_user_id),
+            FOREIGN KEY (chat_id, automation_type)
+                REFERENCES automation_group_configs(chat_id, automation_type)
+                ON DELETE CASCADE
+        );
+        CREATE INDEX idx_automation_subscriptions_active
+            ON automation_subscriptions(chat_id, automation_type, active);
+
+        CREATE TABLE automation_occurrences (
+            occurrence_id TEXT PRIMARY KEY,
+            occurrence_key TEXT NOT NULL UNIQUE,
+            chat_id TEXT NOT NULL,
+            automation_type TEXT NOT NULL,
+            local_date TEXT NOT NULL,
+            slot TEXT NOT NULL CHECK (slot IN ('lunch', 'dinner')),
+            scheduled_for TEXT NOT NULL,
+            grace_deadline TEXT NOT NULL,
+            config_version INTEGER NOT NULL CHECK (config_version >= 1),
+            persona_id TEXT NOT NULL,
+            persona_version TEXT NOT NULL,
+            persona_digest TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'due'
+                CHECK (
+                    status IN (
+                        'due', 'leased', 'prepared', 'sending', 'sent',
+                        'skipped_no_subscribers', 'skipped_disabled',
+                        'skipped_late', 'tool_degraded', 'definite_failure',
+                        'uncertain'
+                    )
+                ),
+            lease_owner TEXT,
+            lease_expires_at TEXT,
+            effect_request_id TEXT,
+            prepared_primary_key TEXT,
+            prepared_payload_json TEXT,
+            prepared_text TEXT,
+            external_effect_id INTEGER,
+            reason_code TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(chat_id, automation_type, local_date, slot),
+            FOREIGN KEY (chat_id, automation_type)
+                REFERENCES automation_group_configs(chat_id, automation_type)
+        );
+        CREATE INDEX idx_automation_occurrences_due
+            ON automation_occurrences(status, scheduled_for, lease_expires_at);
+        CREATE INDEX idx_automation_occurrences_chat_history
+            ON automation_occurrences(chat_id, automation_type, status, scheduled_for DESC);
+
+        CREATE TABLE automation_action_audit (
+            action_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id TEXT NOT NULL,
+            automation_type TEXT NOT NULL,
+            actor_user_id TEXT NOT NULL,
+            actor_role TEXT NOT NULL,
+            action_kind TEXT NOT NULL,
+            result_kind TEXT NOT NULL,
+            reason_code TEXT NOT NULL,
+            config_version INTEGER,
+            created_at TEXT NOT NULL,
+            purge_after TEXT NOT NULL
+        );
+        CREATE INDEX idx_automation_action_audit_purge
+            ON automation_action_audit(purge_after);
+        """,
+    ),
 )
 
 

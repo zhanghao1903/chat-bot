@@ -51,9 +51,9 @@
 保持不变，作为精确回滚点。人格版本不能原地覆盖；每次低频更新都必须使用新目录、新摘要
 和独立评测证据。
 
-Trigger、Recognition 和 Effector 都从同一不可变人格快照编译。作家效应器默认最多
-调用模型 6 次；普通轮次可调用 3 次只读工具，只有前序新证据仍留下明确缺口时才可扩展
-到第 4–5 次，第 6 次工具调用不存在。工具仅包括：
+Trigger、Recognition 和 Effector 都从同一不可变人格快照编译。普通轮次可调用 3 次
+既有群上下文工具，只有前序新证据仍留下明确缺口时才可扩展到第 4–5 次，第 6 次上下文
+工具调用不存在。工具包括：
 
 - 查询当前场景内成员在当前群的有效认识；
 - 检索当前群保留期内的近期消息。
@@ -61,6 +61,11 @@ Trigger、Recognition 和 Effector 都从同一不可变人格快照编译。作
 模型不能指定群范围、凭据、外部写操作或任意工具。只有 Telegram 回复提交器可以发送
 消息；模型失败时 Telegram 显式直接触发和正式名称呼会给出一次安全失败回复，连续性
 判断/回复和选择性群聊触发则安全降级或保持静默。
+
+v0.4 把模型调用硬上限提高到 11，以容纳两个互不借用额度的只读工具预算：既有群上下文
+仍为普通 3 次、复杂轮次最多 5 次；Tavily Web 工具独立最多 5 次。两类工具共享整个 effect
+截止时间、16 KiB 已接纳结果上限和最终回复保留位，因此理论上的 `5 + 5 + 1` 不是最低
+调用次数，也不是无限 loop。
 
 v2 的 37 条真实模型评测证据见
 [provider-evaluation.json](docs/feature/lezhi-persona-v2-release/provider-evaluation.json)，发布与
@@ -82,6 +87,30 @@ v2 的 37 条真实模型评测证据见
 完成。群消息、Writer 和只读工具都没有上传、启用或改头像权限。当前仓库只包含候选资产；
 在用户单独确认联系表、完整目录、生产子集、头像圆形裁切和心情映射前，生产表情与自动头像
 轮换必须保持关闭。
+
+## 订阅式工作日美食推荐 v0.4
+
+自动化和 Tavily 默认均关闭。部署者把 `AUTOMATION_CAPABILITY` 设为 `available` 只会加载
+调度与控制能力，不会替任何群启用功能，也不会自动创建订阅。随后必须由目标群管理员发送
+`/food_enable`，再由至少一名成员发送 `/food_subscribe`。默认使用 `Asia/Shanghai`，仅在工作日
+11:30 和 17:30 各形成一个稳定 occurrence，并只在 30 分钟宽限期内处理；多个订阅者合并为
+一条群级推荐。
+
+| 命令 | 权限与效果 |
+| --- | --- |
+| `/food_enable` | 管理员；启用当前群默认工作日午/晚餐计划 |
+| `/food_disable CONFIRM` | 管理员；关闭并清除当前订阅 |
+| `/food_pause` / `/food_resume` | 管理员；暂停或恢复，不影响普通聊天 |
+| `/food_config timezone=... lunch=HH:MM dinner=HH:MM location=...` | 管理员；更新有界配置并生成新版本 |
+| `/food_subscribe` / `/food_unsubscribe` | 成员；订阅或退订自己 |
+| `/food_preferences cuisine=... budget=... dietary=... avoid=...` | 已订阅成员；更新有限、非敏感偏好 |
+| `/food_status` | 成员；查看状态、订阅数、自己的订阅状态和下一次时间 |
+
+`TAVILY_WEB_CAPABILITY=available` 且外部安全配置存在有效 `TAVILY_API_KEY` 时，Writer 才能
+使用 Tavily Search/Extract 对应的 `web_search` / `web_fetch`。它只能 fetch 本轮搜索产生且
+通过 URL 安全校验的候选，不使用 Crawl、Map、Research、登录、Cookie、脚本或网页写操作。
+Tavily 不可用时会降级为不声称实时商家状态的通用推荐，或安全跳过；普通 Telegram 聊天
+继续工作。发送结果不确定时 occurrence 标为 `uncertain`，不会自动补发。
 
 ## 成员认识与透明控制
 
@@ -149,6 +178,8 @@ RECOGNITION_MODEL=<model id>
 MEMBER_MEMORY_CAPABILITY=disabled
 VISION_CAPABILITY=disabled
 EXPRESSION_CAPABILITY=disabled
+AUTOMATION_CAPABILITY=disabled
+TAVILY_WEB_CAPABILITY=disabled
 ```
 
 `TRIGGER_MODEL` 和 `RECOGNITION_MODEL` 留空时会使用 `WRITER_MODEL`。要在完成评测和群内说明
@@ -202,13 +233,22 @@ PYTHONPATH=src python3 -m group_llm_agent
 | `EXPRESSION_CATALOG_SHA256` | 表情启用时必需 | 无 | 精确目录摘要；不匹配则联网前失败 |
 | `MEMBER_MEMORY_CAPABILITY` | 可选 | `disabled` | `available` 仍需群管理员公开启用 |
 | `RAW_MESSAGE_RETENTION_DAYS` | 可选 | `7`，范围 `1..7` | 启用认识后的原文保留期 |
-| `EFFECT_MAX_MODEL_CALLS` | 可选 | `6`，范围 `1..6` | 每次效应器最大模型调用 |
+| `EFFECT_MAX_MODEL_CALLS` | 可选 | `11`，范围 `1..11` | 每次效应器最大模型调用，含最终回复保留位 |
 | `EFFECT_ORDINARY_TOOL_CALLS` | 可选 | `3`，范围 `0..3` | 普通轮次只读工具上限 |
 | `EFFECT_MAX_TOOL_CALLS` | 可选 | `5`，范围 `0..5` | 复杂轮次绝对上限，必须小于模型调用上限 |
+| `WEB_TOOL_LIMIT` | 可选 | `5`，范围 `0..5` | 独立 Tavily Web 工具尝试上限，不借用上下文额度 |
+| `TOOL_RESULT_TOTAL_CHARS` | 可选 | `16384`，范围 `1024..16384` | 两类工具共同的已接纳结果字符上限 |
 | `EFFECT_DEADLINE_SECONDS` | 可选 | `20`，范围 `5..30` | 整个效应器截止时间 |
 | `TRIGGER_DECISION_TIMEOUT_SECONDS` | 可选 | `5`，范围 `2..10` | Trigger 调用时限 |
 | `RECOGNITION_TIMEOUT_SECONDS` | 可选 | `15`，范围 `5..30` | Recognition 调用时限 |
 | `RECOGNITION_MAX_ATTEMPTS` | 可选 | `3`，范围 `1..3` | 后台认识最大尝试次数 |
+| `AUTOMATION_CAPABILITY` | 可选 | `disabled` | `available` 只加载调度/控制，仍需管理员启用群 |
+| `AUTOMATION_TICK_SECONDS` | 可选 | `15`，范围 `5..60` | 后台到期扫描间隔 |
+| `SCHEDULED_EFFECT_DEADLINE_SECONDS` | 可选 | `60`，范围 `15..90` | 单个调度推荐共享截止时间 |
+| `TAVILY_WEB_CAPABILITY` | 可选 | `disabled` | `available` 才注册 Tavily Search/Extract |
+| `TAVILY_API_KEY` | Web 启用时运行所需 | 无 | 外部秘密；不进入提示、审计或日志 |
+| `TAVILY_PROJECT_ID` | 可选 | 无 | 有界部署项目标识 |
+| `TAVILY_TIMEOUT_SECONDS` | 可选 | `8`，范围 `3..10` | 每次 Tavily 请求时限，无隐藏重试 |
 | `TELEGRAM_POLLING_TIMEOUT_SECONDS` | 可选 | `25`，范围 `1..50` | Telegram 长轮询 |
 | `TELEGRAM_RETRY_DELAY_SECONDS` | 可选 | `2`，范围 `1..60` | 拉取失败后的等待 |
 | `LOG_LEVEL` | 可选 | `INFO` | Python 标准日志级别 |
@@ -222,6 +262,8 @@ PYTHONPATH=src python3 -m group_llm_agent
 - 模型/工具有截止时间和固定预算，不存在无限 loop。
 - 选择性 Trigger 失败即静默；Recognition 失败按上限退避重试，最终进入 dead 状态。
 - 发送结果不确定时记为 `uncertain`，不会盲目重发造成重复外部效果。
+- 调度在群关闭、暂停、无订阅、周末或超过 30 分钟宽限时不调用 Writer/Tavily，也不发送；
+  `prepared` 可安全恢复，已 claim 的 `sending` 在重启后变为 `uncertain` 而不重发。
 - 日志不记录 token、模型密钥、完整 prompt、工具结果或原始 provider body。
 - 所有持久数据按单一公开群隔离；模型参数不能扩大范围。
 - 人格发布失败使用 `deploy/manage.sh persona-rollback` 恢复精确 v1 路径与摘要；不要删除
@@ -241,7 +283,7 @@ docker compose -f deploy/compose.yaml config
 ```
 
 完整证据、验收矩阵和未执行的外部证明见
-[verification.md](docs/feature/lezhi-sticker-expression-v0-3/verification.md)。部署步骤见
+[verification.md](docs/feature/lezhi-scheduled-food-recommendations-v0-4/verification.md)。部署步骤见
 [deploy/README.md](deploy/README.md)。
 
 ## 生命周期文档
@@ -256,6 +298,10 @@ docker compose -f deploy/compose.yaml config
 - [Conversation trigger v0.2 design](docs/feature/lezhi-conversation-triggers-v0-2/design.md)
 - [Conversation trigger v0.2 implementation plan](docs/feature/lezhi-conversation-triggers-v0-2/implementation-plan.md)
 - [Conversation trigger v0.2 verification](docs/feature/lezhi-conversation-triggers-v0-2/verification.md)
+- [Scheduled food v0.4 requirements](docs/feature/lezhi-scheduled-food-recommendations-v0-4/requirements.md)
+- [Scheduled food v0.4 design](docs/feature/lezhi-scheduled-food-recommendations-v0-4/design.md)
+- [Scheduled food v0.4 implementation plan](docs/feature/lezhi-scheduled-food-recommendations-v0-4/implementation-plan.md)
+- [Scheduled food v0.4 verification](docs/feature/lezhi-scheduled-food-recommendations-v0-4/verification.md)
 - [Lezhi persona v2 requirements](docs/feature/lezhi-persona-v2-release/requirements.md)
 - [Lezhi persona v2 design](docs/feature/lezhi-persona-v2-release/design.md)
 - [Lezhi persona v2 implementation plan](docs/feature/lezhi-persona-v2-release/implementation-plan.md)

@@ -6,7 +6,9 @@ services:
     env_file:
       - ${TELEGRAM_BOT_ENV_FILE:-.env}
     environment:
+      AUTOMATION_CAPABILITY: ${AUTOMATION_CAPABILITY:-disabled}
       DATABASE_PATH: ${DATABASE_PATH:-/app/data/telegram_bot.sqlite3}
+      TAVILY_WEB_CAPABILITY: ${TAVILY_WEB_CAPABILITY:-disabled}
     init: true
     read_only: true
     restart: unless-stopped

@@ -7,6 +7,7 @@ from threading import Event, Thread
 from time import sleep as default_sleep
 from typing import Protocol
 
+from group_llm_agent.automation_control import AutomationControlService
 from group_llm_agent.control import MemoryControlService
 from group_llm_agent.delivery import SQLiteDeliveryLedger
 from group_llm_agent.effect_delivery import ExternalEffectDelivery
@@ -212,6 +213,7 @@ class PersonaMessageProcessor:
         controls: MemoryControlService,
         triggers: TriggerCoordinator,
         effector: WriterEffector,
+        automation_controls: AutomationControlService | None = None,
         media_loader: TelegramMediaLoader | None = None,
         vision: VisionModelPort | None = None,
         expression_catalog_provider: Callable[[], ExpressionCatalog] | None = None,
@@ -228,6 +230,7 @@ class PersonaMessageProcessor:
         self.messages = messages
         self.runs = runs
         self.controls = controls
+        self.automation_controls = automation_controls
         self.triggers = triggers
         self.effector = effector
         self.visuals = VisualEvidenceService(
@@ -264,6 +267,17 @@ class PersonaMessageProcessor:
                 bundle=self.bundle,
                 allow_ordinary_contextual=False,
             )
+            if self.automation_controls is not None:
+                automation_outcome = self.automation_controls.handle(
+                    event,
+                    persona=self.bundle.snapshot,
+                )
+                if automation_outcome.consumed:
+                    return ProcessingOutcome(
+                        automation_outcome.status,
+                        event.group_id,
+                        event.message_id,
+                    )
             outcome = self.controls.handle(event, persona=self.bundle.snapshot)
             return ProcessingOutcome(outcome.status, event.group_id, event.message_id)
         if platform.reason_code in {"other_group", "self_message"}:
