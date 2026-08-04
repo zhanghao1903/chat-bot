@@ -1,9 +1,10 @@
 # Verification: 乐枝默认头像部署与复合表情回复 v0.3.1
 
-- Status: Implementation verified; independent review and production release pending
+- Status: FINDING-001 remediated; exact-head re-review and production release pending
 - Verified at: 2026-08-04
 - Safe-forward baseline: `88c775c8ef0be7d1c63fd71b5924334b12492d75`
 - Exact implementation snapshot: `2bbbb3824c856ed5fe199a36fc32c3e814828b33`
+- Exact FINDING-001 remediation snapshot: `ace5be1713b31bbd956cb5af5d1f415578cc8819`
 - Requirements commit: `86ace06b0704da458646747e3ca0468456235851`
 - Requirements SHA-256: `66b82b3db77ffba968d26b651a2cccfc7a85e500b36a79a8aa41722a6b67593d`
 - Fixed evaluation SHA-256: `6ea34402129e92e10c571dce77c8005c5bd0aa7d607641954e6da429a32a769b`
@@ -126,9 +127,46 @@ Read-only inspection confirmed user `app`, command `group-llm-agent`, Pillow
 modules. A read-only no-credential run returned the expected safe exit code 2.
 No running service was replaced or restarted.
 
+## FINDING-001 Remediation Evidence
+
+The first independent review examined carrier
+`3785b17d8d2d2e2c4f78d359f504778d32d47985` and found that explicit
+Chinese and English safety-incident language could remain sticker-eligible.
+Remediation snapshot `ace5be1713b31bbd956cb5af5d1f415578cc8819`
+extends the application-owned serious-context classifier with bounded
+safety-incident, safety-accident, workplace/industrial-accident, and Chinese
+incident/accident terms. The Writer cannot override this classification.
+
+Direct policy regressions prove `发生安全事故了`, `现场出现安全险情`,
+`A safety incident happened.`, and `There was a workplace accident.` are all
+ineligible for stickers, while a benign light interaction remains eligible.
+End-to-end effector regressions prove that, for both the Chinese and English
+literal cases:
+
+- a Writer `sticker` result becomes a direct-path failure reply with no
+  sticker; and
+- a Writer `reply_with_sticker` result becomes the already-validated text-only
+  reply with no sticker.
+
+The following checks ran from a clean `git archive` of the exact remediation
+snapshot:
+
+| Check | Result |
+| --- | --- |
+| Focused policy and effector suite | Passed 16 tests in 0.767 seconds |
+| Full unit discovery suite | Passed 300 tests in 98.836 seconds |
+| `python3 -m compileall -q src tests` | Passed |
+
+The byte-identical implementation tree also passed Ruff check and format
+(`103` files), Mypy (`52` source files), `sh -n deploy/manage.sh`,
+`git diff --check`, and offline wheel/sdist build. The remediation changed only
+`expression_policy.py`, `test_expression_policy.py`, and `test_effector.py`;
+v0.4 source paths, expression assets, avatar assets, mappings, deployment
+configuration, and production state were not changed.
+
 ## Release Gates And Limitations
 
-- Independent exact-head review and merge are still required. This document
+- Independent exact-head re-review and merge are still required. This document
   does not authorize merge.
 - Production SQLite backup, immutable-copy `PRAGMA quick_check`, migration,
   Compose replacement, and post-start verification remain post-merge release
