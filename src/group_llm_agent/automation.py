@@ -539,15 +539,31 @@ class AutomationRepository:
         return _occurrence_from_row(row) if row is not None else None
 
     def lease(
-        self, *, occurrence_id: str, worker_id: str, now: datetime
+        self,
+        *,
+        occurrence_id: str,
+        worker_id: str,
+        now: datetime,
+        expected_config_version: int,
     ) -> AutomationOccurrence | None:
         _require_aware(now)
+        if expected_config_version < 1:
+            raise ValueError("expected_config_version must be positive")
         with self.database.transaction() as connection:
             cursor = connection.execute(
                 """
                 UPDATE automation_occurrences
                 SET status = 'leased', lease_owner = ?, lease_expires_at = ?, updated_at = ?
                 WHERE occurrence_id = ?
+                  AND config_version = ?
+                  AND EXISTS (
+                    SELECT 1
+                    FROM automation_group_configs AS active
+                    WHERE active.chat_id = automation_occurrences.chat_id
+                      AND active.automation_type = automation_occurrences.automation_type
+                      AND active.enabled = 1
+                      AND active.config_version = ?
+                  )
                   AND (
                     status = 'due'
                     OR (status = 'leased' AND lease_expires_at < ?)
@@ -558,6 +574,8 @@ class AutomationRepository:
                     (now + _LEASE).isoformat(),
                     now.isoformat(),
                     occurrence_id,
+                    expected_config_version,
+                    expected_config_version,
                     now.isoformat(),
                 ),
             )

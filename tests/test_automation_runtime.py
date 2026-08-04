@@ -2,14 +2,17 @@ from __future__ import annotations
 
 import unittest
 from datetime import UTC, datetime
+from unittest.mock import patch
 
 from helpers import temporary_database
 
 from group_llm_agent.automation import (
     AutomationOccurrence,
     AutomationRepository,
+    GroupAutomationConfig,
     MealSlot,
     OccurrenceStatus,
+    occurrence_identity,
 )
 from group_llm_agent.automation_runtime import AutomationScheduler, next_scheduled
 from group_llm_agent.events import PersonaSnapshot, ScheduledOccurrenceSource
@@ -128,6 +131,7 @@ class AutomationSchedulerTests(unittest.TestCase):
                 occurrence_id=occurrence.occurrence_id,
                 worker_id="dead-worker",
                 now=occurrence.scheduled_for,
+                expected_config_version=config.config_version,
             )
             assert leased is not None
             self.assertTrue(
@@ -211,6 +215,83 @@ class AutomationSchedulerTests(unittest.TestCase):
             self.assertEqual(OccurrenceStatus.SENT, refreshed.status)
             self.assertEqual(datetime(2026, 8, 3, 3, 40, tzinfo=UTC), refreshed.scheduled_for)
             self.assertEqual(new_config.config_version, refreshed.config_version)
+
+    def test_config_change_after_refresh_before_lease_preserves_and_runs_new_slot_once(
+        self,
+    ) -> None:
+        with temporary_database() as database:
+            repository = AutomationRepository(database)
+            original_config = repository.enable_group(chat_id="-1001")
+            repository.subscribe(chat_id="-1001", member_user_id="member-1")
+            processor = FakeOccurrenceProcessor()
+            original_scheduler = AutomationScheduler(
+                repository=repository,
+                processor=processor,
+                bot_user_id="7",
+                persona=_PERSONA,
+                clock=lambda: datetime(2026, 8, 3, 3, 30, tzinfo=UTC),
+            )
+            real_lease = repository.lease
+            changed_configs: list[GroupAutomationConfig] = []
+
+            def change_config_before_lease(
+                *,
+                occurrence_id: str,
+                worker_id: str,
+                now: datetime,
+                expected_config_version: int,
+            ) -> AutomationOccurrence | None:
+                changed_configs.append(
+                    repository.update_config(
+                        chat_id="-1001",
+                        timezone="Asia/Shanghai",
+                        lunch_time="11:40",
+                        dinner_time="17:30",
+                        location_text=None,
+                    )
+                )
+                return real_lease(
+                    occurrence_id=occurrence_id,
+                    worker_id=worker_id,
+                    now=now,
+                    expected_config_version=expected_config_version,
+                )
+
+            with patch.object(repository, "lease", side_effect=change_config_before_lease):
+                self.assertEqual(0, original_scheduler.run_once(worker_id="stale-worker"))
+
+            self.assertEqual(1, len(changed_configs))
+            changed_config = changed_configs[0]
+            self.assertEqual(original_config.config_version + 1, changed_config.config_version)
+            occurrence_id, _ = occurrence_identity(
+                bot_user_id="7",
+                chat_id="-1001",
+                local_date=datetime(2026, 8, 3, tzinfo=UTC).date(),
+                slot=MealSlot.LUNCH,
+            )
+            stale_due = repository.get_occurrence(occurrence_id=occurrence_id)
+            assert stale_due is not None
+            self.assertEqual(OccurrenceStatus.DUE, stale_due.status)
+            self.assertEqual(original_config.config_version, stale_due.config_version)
+            self.assertEqual(datetime(2026, 8, 3, 3, 30, tzinfo=UTC), stale_due.scheduled_for)
+            self.assertEqual(0, len(processor.sources))
+
+            current_scheduler = AutomationScheduler(
+                repository=repository,
+                processor=processor,
+                bot_user_id="7",
+                persona=_PERSONA,
+                clock=lambda: datetime(2026, 8, 3, 3, 40, tzinfo=UTC),
+            )
+            self.assertEqual(1, current_scheduler.run_once(worker_id="current-worker"))
+            self.assertEqual(0, current_scheduler.run_once(worker_id="duplicate-worker"))
+            self.assertEqual(1, len(processor.sources))
+            stored = repository.get_occurrence(occurrence_id=occurrence_id)
+            assert stored is not None
+            self.assertEqual(OccurrenceStatus.SENT, stored.status)
+            self.assertEqual("sent", stored.reason_code)
+            self.assertEqual(changed_config.config_version, stored.config_version)
+            self.assertEqual(datetime(2026, 8, 3, 3, 40, tzinfo=UTC), stored.scheduled_for)
 
     def test_next_schedule_skips_weekend(self) -> None:
         with temporary_database() as database:

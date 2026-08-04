@@ -161,12 +161,18 @@ class AutomationRepositoryTests(unittest.TestCase):
             )
             now = occurrence.scheduled_for
             leased = repository.lease(
-                occurrence_id=occurrence.occurrence_id, worker_id="worker-a", now=now
+                occurrence_id=occurrence.occurrence_id,
+                worker_id="worker-a",
+                now=now,
+                expected_config_version=config.config_version,
             )
             self.assertIsNotNone(leased)
             self.assertIsNone(
                 repository.lease(
-                    occurrence_id=occurrence.occurrence_id, worker_id="worker-b", now=now
+                    occurrence_id=occurrence.occurrence_id,
+                    worker_id="worker-b",
+                    now=now,
+                    expected_config_version=config.config_version,
                 )
             )
             self.assertTrue(
@@ -198,12 +204,18 @@ class AutomationRepositoryTests(unittest.TestCase):
             assert occurrence is not None
             now = occurrence.scheduled_for
             self.assertIsNotNone(
-                repository.lease(occurrence_id=occurrence.occurrence_id, worker_id="dead", now=now)
+                repository.lease(
+                    occurrence_id=occurrence.occurrence_id,
+                    worker_id="dead",
+                    now=now,
+                    expected_config_version=config.config_version,
+                )
             )
             recovered = repository.lease(
                 occurrence_id=occurrence.occurrence_id,
                 worker_id="new",
                 now=now + timedelta(minutes=3),
+                expected_config_version=config.config_version,
             )
             self.assertIsNotNone(recovered)
 
@@ -244,6 +256,7 @@ class AutomationRepositoryTests(unittest.TestCase):
                 occurrence_id=refreshed.occurrence_id,
                 worker_id="worker-a",
                 now=refreshed.scheduled_for,
+                expected_config_version=changed_config.config_version,
             )
             assert leased is not None
             later_config = repository.update_config(

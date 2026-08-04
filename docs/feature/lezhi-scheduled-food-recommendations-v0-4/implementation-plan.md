@@ -90,7 +90,8 @@
 - extend effect/tool audit with source and budget metadata using safe defaults for existing rows;
 - implement exact allowlisted registry and versioned stable occurrence key;
 - implement group-isolated repository operations, atomic idempotent subscription and deletion;
-- implement occurrence insertion, bounded lease, prepared payload/text, claim linkage and terminal outcomes;
+- implement occurrence insertion, active-config/version-bound atomic lease, prepared payload/text,
+  claim linkage and terminal outcomes;
 - ensure plaintext prompt, Web body, secret and subscriber list are never stored.
 
 ### Checks
@@ -99,7 +100,8 @@
 - exactly one source arm; scheduled has no fake sender/message text;
 - duplicate subscription and occurrence converge to one row;
 - other chat cannot read config, preferences, history or occurrence;
-- lease expiry only recovers pre-claim work; post-claim replay cannot resend;
+- lease expiry only recovers pre-claim work; a config edit between refresh and lease makes the stale
+  worker lose without terminalizing the due row; post-claim replay cannot resend;
 - diff check, compileall, targeted unittest, Ruff and Mypy.
 
 ### Commit intent
@@ -134,12 +136,14 @@
 ### Checks
 
 - controlled clocks: Monday/Saturday, Shanghai defaults, two meal slots, timezone/DST edge;
-- config change affects only unleased future occurrence;
+- config change affects only unleased future occurrence, including the deterministic
+  refresh-commit/admin-update/pre-lease interleaving;
 - 0/1/20 subscribers still produces 0/1/1 occurrence effects;
 - command addressed to foreign bot, non-admin mutation and cross-member operation are rejected;
 - disable deletes active subscription preferences; pause does not stop ordinary replies;
 - restarts at +20/+40 minutes execute once/skip late;
-- two workers and same tick acquire one lease;
+- two workers and same tick acquire one lease; a stale-version worker acquires none and the current
+  version refreshes and executes once;
 - scheduler exception leaves Telegram polling and recognition alive.
 
 ### Commit intent

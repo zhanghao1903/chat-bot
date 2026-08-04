@@ -264,8 +264,11 @@ At each bounded tick the worker enumerates enabled registry/config pairs and onl
 immediately previous local slot. It inserts the deterministic row if absent. If the same stable
 date/slot row is still unleased `due` after a schedule edit, the same transaction refreshes its
 scheduled instant, grace deadline, config version and persona snapshot; leased, prepared, claimed
-and terminal rows are immutable. The worker then atomically leases one eligible row. Before
-expensive work it rechecks enabled/paused state, at least one
+and terminal rows are immutable. The worker then atomically leases one eligible row only when the
+occurrence version and the active group-config version both equal the worker's expected snapshot in
+the same `BEGIN IMMEDIATE` transaction. A config edit committed after refresh but before lease makes
+the stale worker lose the lease without terminalizing the `due` row, so the current worker can
+refresh and execute the new slot once. Before expensive work it rechecks enabled/paused state, at least one
 subscription, config version, grace deadline, persona snapshot and absence of an external-effect
 claim.
 

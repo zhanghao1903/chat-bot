@@ -295,6 +295,7 @@ class ScheduledFixtureContext:
             occurrence_id=occurrence.occurrence_id,
             worker_id="worker-a",
             now=now,
+            expected_config_version=config.config_version,
         )
         assert leased is not None
         source = repository.scheduled_source(occurrence=leased)
