@@ -166,6 +166,35 @@ configuration, and production state were not changed.
 
 ## Release Gates And Limitations
 
+## Post-Merge Provider-Gate Remediation
+
+Production release validation exposed two real-provider failures after PR #7:
+
+- the first exact 48-case run produced 30/40 sticker-bearing eligible cases
+  (`0.75`) and allowed a sticker for relationship guard `V031-048`; the
+  minimal report SHA-256 was
+  `b6847d375437764132f9e5013300af0204a949bb1eb01d31f320796800cb69ab`;
+- the first prompt remediation closed every guard but overcorrected to 14/40
+  (`0.35`); the minimal report SHA-256 was
+  `c0d58f2590c415b5c7f0c05a956fbdc956aed22300ac807310d2ec0ab72409bd`.
+
+The follow-up narrows the Writer instruction to a 60% midpoint without making
+either output form the default. It also adds an application-owned relationship
+boundary for exclusive affection, favoritism, and one-member-side requests.
+The final user-authorized configured-provider run used `gpt-5.6-sol` and
+produced 26/40 sticker-bearing eligible cases (`0.65`). All three
+necessary-text cases and all five hard/relationship guard cases returned text
+only. The canonical minimal report is
+`provider-evaluation-gpt-5.6-sol.json`, SHA-256
+`cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`.
+
+Local verification for the follow-up passed 302 unit tests, 18 focused policy,
+prompt, and effector tests, Ruff check/format, targeted Mypy for both changed
+runtime modules, compileall, and git diff check. The full-tree Mypy invocation
+continues to report the pre-existing Pillow `ImagingCore.__iter__` typing
+incompatibility in unchanged `asset_pipeline.py`; neither runtime behavior nor
+this follow-up touches that file.
+
 - Independent exact-head merge review is still required.
 - On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
   `mergeOnApprove` policy to be set to `true` temporarily, only to re-review

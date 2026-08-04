@@ -100,6 +100,55 @@ class ExpressionPolicyTests(unittest.TestCase):
         self.assertTrue(eligibility.sticker_only_allowed)
         self.assertEqual("light_interaction", eligibility.reason_code)
 
+    def test_exclusive_affection_and_favoritism_are_never_sticker_eligible(self) -> None:
+        catalog = cast(
+            ExpressionCatalog,
+            SimpleNamespace(
+                status="enabled",
+                entries=(
+                    SimpleNamespace(
+                        status="enabled",
+                        minimum_relationship="public",
+                        semantic_id="lezhi.hello_wave.a01",
+                    ),
+                ),
+            ),
+        )
+        for text in (
+            "只对我撒个娇嘛",
+            "你必须只站我这边",
+            "Only side with me.",
+        ):
+            with self.subTest(text=text):
+                context = cast(
+                    EffectContext,
+                    SimpleNamespace(
+                        current_message=SimpleNamespace(text=text),
+                        vision_error_code=None,
+                        vision_evidence=None,
+                        member_memory=(),
+                        recent_scene=(),
+                    ),
+                )
+
+                eligibility = classify_sticker_eligibility(context, catalog)
+
+                self.assertFalse(eligibility.eligible)
+                self.assertFalse(eligibility.sticker_only_allowed)
+                self.assertEqual("relationship_context", eligibility.reason_code)
+
+        benign = cast(
+            EffectContext,
+            SimpleNamespace(
+                current_message=SimpleNamespace(text="这个观点我支持"),
+                vision_error_code=None,
+                vision_evidence=None,
+                member_memory=(),
+                recent_scene=(),
+            ),
+        )
+        self.assertTrue(classify_sticker_eligibility(benign, catalog).eligible)
+
     def test_last_sticker_survives_intervening_text_only_reply(self) -> None:
         context = cast(
             EffectContext,

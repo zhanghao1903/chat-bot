@@ -24,6 +24,12 @@ _TEXT_REQUIRED = re.compile(
     r"steps?|how (?:do|to)|why|explain|instructions?|address|when|price)",
     re.IGNORECASE,
 )
+_RELATIONSHIP_STICKER_FORBIDDEN = re.compile(
+    r"(?:只对我(?:撒(?:个)?娇|亲昵|偏心)|"
+    r"(?:必须|只能|只准)?只?(?:站我这边|站我一边|支持我|偏袒我|偏心我)|"
+    r"(?:take|be on|stay on) only my side|only side with me)",
+    re.IGNORECASE,
+)
 _STICKER_ONLY_SAFE_VISION_FLAGS = frozenset({"known_enabled_sticker"})
 
 
@@ -42,6 +48,8 @@ def classify_sticker_eligibility(
         return StickerEligibility(False, False, "catalog_unavailable")
     if _hard_forbidden_context(context):
         return StickerEligibility(False, False, "serious_context")
+    if _relationship_sticker_forbidden(context):
+        return StickerEligibility(False, False, "relationship_context")
 
     relationship_rank = _relationship_rank(context)
     last_sticker = _last_outbound_sticker(context)
@@ -98,6 +106,13 @@ def _context_requires_text(context: EffectContext) -> bool:
     if context.current_message is not None and _TEXT_REQUIRED.search(context.current_message.text):
         return True
     return _TEXT_REQUIRED.search(_vision_text(context)) is not None
+
+
+def _relationship_sticker_forbidden(context: EffectContext) -> bool:
+    return (
+        context.current_message is not None
+        and _RELATIONSHIP_STICKER_FORBIDDEN.search(context.current_message.text) is not None
+    )
 
 
 def _vision_text(context: EffectContext) -> str:
