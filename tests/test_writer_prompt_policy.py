@@ -10,7 +10,7 @@ from group_llm_agent.writer_prompt import build_writer_model_messages
 
 
 class WriterPromptPolicyTests(unittest.TestCase):
-    def test_sticker_frequency_instruction_targets_bounded_midpoint(self) -> None:
+    def test_writer_owns_semantic_reply_form_without_rate_target(self) -> None:
         context = cast(
             EffectContext,
             SimpleNamespace(
@@ -41,12 +41,15 @@ class WriterPromptPolicyTests(unittest.TestCase):
         )
 
         system = messages[0].content
-        self.assertIn("aim near 60%", system)
+        self.assertIn("sole semantic decision-maker for the final reply form", system)
         self.assertIn(
-            "Do not choose either text-only or sticker-bearing solely to maximize one output form",
-            system,
+            "complete conversation, relationship, member-memory, and vision context", system
         )
-        self.assertIn("exclusive affection, favoritism", system)
+        self.assertIn("naturally adds emotion or action", system)
+        self.assertIn("exclusive-affection, favoritism", system)
+        self.assertIn("Never choose a form to hit a rate, target, quota, or metric", system)
+        self.assertNotIn("aim near 60%", system)
+        self.assertNotIn("40-70%", system)
 
 
 if __name__ == "__main__":

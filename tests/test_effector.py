@@ -20,7 +20,12 @@ from group_llm_agent.events import (
     TriggerCategory,
     TriggerPath,
 )
-from group_llm_agent.expression import ExpressionCatalog, file_sha256, load_expression_catalog
+from group_llm_agent.expression import (
+    ExpressionCatalog,
+    ExpressionEntry,
+    file_sha256,
+    load_expression_catalog,
+)
 from group_llm_agent.memory import MemoryRepository
 from group_llm_agent.messages import MessageRepository
 from group_llm_agent.model import (
@@ -101,7 +106,7 @@ class WriterEffectorTests(unittest.TestCase):
             self.assertEqual(("reply", 2, 1), fixture.effect_run_summary())
             self.assertEqual(["unknown_tool"], fixture.tool_statuses())
 
-    def test_third_tool_request_cannot_exceed_budget_and_direct_degrades_once(self) -> None:
+    def test_tool_request_after_budget_fails_closed_to_silence(self) -> None:
         with EffectorFixtureContext(
             _tool_result("search_recent_group_messages", {"query": "needle"}),
             _tool_result("lookup_member_memory", {"member_user_id": "member-a"}),
@@ -112,11 +117,11 @@ class WriterEffectorTests(unittest.TestCase):
                 bundle=fixture.bundle,
             )
 
-            self.assertEqual(FinalEffectKind.FAILURE_REPLY, final.kind)
-            self.assertTrue(final.text)
+            self.assertEqual(FinalEffectKind.SILENCE, final.kind)
+            self.assertIsNone(final.text)
             self.assertEqual(3, len(fixture.model.calls))
             self.assertEqual(2, len(final.used_tool_call_ids))
-            self.assertEqual(("failure_reply", 3, 2), fixture.effect_run_summary())
+            self.assertEqual(("silence", 3, 2), fixture.effect_run_summary())
 
     def test_model_failure_is_failure_reply_for_direct_and_silence_for_contextual(self) -> None:
         for path, expected in (
@@ -265,7 +270,7 @@ class WriterEffectorTests(unittest.TestCase):
 
             final = fixture.effector.execute(request=fixture.request, bundle=fixture.bundle)
 
-            self.assertEqual(FinalEffectKind.FAILURE_REPLY, final.kind)
+            self.assertEqual(FinalEffectKind.SILENCE, final.kind)
             connection = fixture.database.connect()
             try:
                 audits = connection.execute(
@@ -334,402 +339,145 @@ class WriterEffectorTests(unittest.TestCase):
             self.assertEqual(selected.semantic_id, final.sticker_id)
             self.assertEqual("joyful", final.mood_signal)
 
-    def test_serious_visual_evidence_cannot_become_sticker_only_effect(self) -> None:
-        catalog_path = (
-            Path(__file__).parents[1]
-            / "src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/catalog.json"
-        )
-        candidate = load_expression_catalog(
-            catalog_path,
-            expected_sha256=file_sha256(catalog_path),
-            allowed_statuses=frozenset({"candidate"}),
-        )
-        selected = next(
-            entry for entry in candidate.entries if entry.minimum_relationship == "public"
-        )
-        cases = (
-            (
-                "schema_serious_synonyms",
-                VisionEvidence(
-                    summary="A deep gash with red liquid beside two tablets.",
-                    visible_text=(),
-                    observations=("The skin is split and red fluid is visible.",),
-                    inferences=(),
-                    uncertainties=(),
-                    safety_flags=("graphic_content", "health_concern"),
-                    media_sha256="a" * 64,
-                    model_id="vision-test",
-                ),
-                None,
-                FinalEffectKind.FAILURE_REPLY,
-            ),
-            (
-                "unknown_flag_defense_in_depth",
-                VisionEvidence(
-                    summary="The image needs additional review.",
-                    visible_text=(),
-                    observations=(),
-                    inferences=(),
-                    uncertainties=("Risk classification is uncertain.",),
-                    safety_flags=("unknown_provider_label",),
-                    media_sha256="b" * 64,
-                    model_id="vision-test",
-                ),
-                None,
-                FinalEffectKind.FAILURE_REPLY,
-            ),
-            (
-                "unknown_flag_parser_failure",
-                None,
-                "invalid_safety_flag",
-                FinalEffectKind.FAILURE_REPLY,
-            ),
-            (
-                "benign_image",
-                VisionEvidence(
-                    summary="A blue cup is on a table.",
-                    visible_text=(),
-                    observations=("The cup is centered in the image.",),
-                    inferences=(),
-                    uncertainties=(),
-                    safety_flags=(),
-                    media_sha256="c" * 64,
-                    model_id="vision-test",
-                ),
-                None,
-                FinalEffectKind.STICKER,
-            ),
-        )
-        for label, evidence, error_code, expected_kind in cases:
-            with (
-                self.subTest(label=label),
-                EffectorFixtureContext(
-                    StructuredModelResult(
-                        {
-                            "kind": "sticker",
-                            "reason_code": "light_reaction",
-                            "sticker_id": selected.semantic_id,
-                            "catalog_version": candidate.catalog_version,
-                            "catalog_digest": candidate.digest,
-                            "fallback_text": "我看到了。",
-                            "mood_signal": "gentle",
-                        }
+    def test_message_and_vision_language_do_not_override_model_reply_form(self) -> None:
+        candidate, selected = _candidate_catalog_and_public_entry()
+        for message_text in (
+            "发生安全事故了",
+            "你只能爱我",
+            "Please always love only me.",
+            "普通轻松闲聊",
+        ):
+            for decision_kind in ("sticker", "reply_with_sticker"):
+                payload: dict[str, object] = {
+                    "kind": decision_kind,
+                    "reason_code": "model_context_decision",
+                    "sticker_id": selected.semantic_id,
+                    "catalog_version": candidate.catalog_version,
+                    "catalog_digest": candidate.digest,
+                    "mood_signal": "gentle",
+                }
+                if decision_kind == "sticker":
+                    payload["fallback_text"] = "我在。"
+                else:
+                    payload["text"] = "我认真听着。"
+                with (
+                    self.subTest(message_text=message_text, decision_kind=decision_kind),
+                    EffectorFixtureContext(
+                        StructuredModelResult(payload),
+                        current_message_text=message_text,
+                    ) as fixture,
+                ):
+                    fixture.effector.expression_catalog_provider = lambda: _enabled_catalog(
+                        fixture,
+                        candidate,
                     )
-                ) as fixture,
+                    final = fixture.effector.execute(
+                        request=fixture.request,
+                        bundle=fixture.bundle,
+                        vision_evidence=VisionEvidence(
+                            summary="A provider-authored serious description.",
+                            visible_text=(),
+                            observations=(),
+                            inferences=(),
+                            uncertainties=(),
+                            safety_flags=("medical",),
+                            media_sha256="a" * 64,
+                            model_id="vision-test",
+                        ),
+                        vision_error_code="provider_uncertain",
+                    )
+                    self.assertEqual(FinalEffectKind(decision_kind), final.kind)
+                    self.assertEqual(selected.semantic_id, final.sticker_id)
+                    self.assertEqual(
+                        "model_selected_nonsemantic_valid",
+                        final.sticker_eligibility_reason,
+                    )
+
+    def test_invalid_sticker_degrades_composite_to_text_and_sticker_only_to_silence(
+        self,
+    ) -> None:
+        candidate, selected = _candidate_catalog_and_public_entry()
+        for decision_kind, expected_kind in (
+            ("reply_with_sticker", FinalEffectKind.REPLY),
+            ("sticker", FinalEffectKind.SILENCE),
+        ):
+            payload: dict[str, object] = {
+                "kind": decision_kind,
+                "reason_code": "model_context_decision",
+                "sticker_id": selected.semantic_id,
+                "catalog_version": "wrong-version",
+                "catalog_digest": candidate.digest,
+                "mood_signal": "gentle",
+            }
+            if decision_kind == "sticker":
+                payload["fallback_text"] = "我在。"
+            else:
+                payload["text"] = "保留这条已验证文字。"
+            with (
+                self.subTest(decision_kind=decision_kind),
+                EffectorFixtureContext(StructuredModelResult(payload)) as fixture,
             ):
-                fixture.effector.expression_catalog_provider = lambda: replace(
+                fixture.effector.expression_catalog_provider = lambda: _enabled_catalog(
+                    fixture,
                     candidate,
-                    status="enabled",
-                    persona_id=fixture.bundle.snapshot.persona_id,
-                    persona_version=fixture.bundle.snapshot.persona_version,
-                    persona_digest=fixture.bundle.snapshot.persona_digest,
-                    entries=tuple(
-                        replace(
-                            entry,
-                            status="enabled",
-                            telegram_file_id=f"file-{entry.semantic_id}",
-                            telegram_file_unique_id=f"unique-{entry.semantic_id}",
-                        )
-                        for entry in candidate.entries
-                    ),
                 )
                 final = fixture.effector.execute(
                     request=fixture.request,
                     bundle=fixture.bundle,
-                    vision_evidence=evidence,
-                    vision_error_code=error_code,
                 )
-
                 self.assertEqual(expected_kind, final.kind)
-                if expected_kind is FinalEffectKind.FAILURE_REPLY:
-                    self.assertIsNone(final.sticker_id)
-                    self.assertEqual("sticker_serious_context", final.reason_code)
+                self.assertIsNone(final.sticker_id)
+                self.assertEqual("sticker_catalog_snapshot_mismatch", final.reason_code)
+                if decision_kind == "reply_with_sticker":
+                    self.assertEqual(payload["text"], final.text)
                 else:
-                    self.assertEqual(selected.semantic_id, final.sticker_id)
+                    self.assertIsNone(final.text)
 
-    def test_safety_incidents_reject_sticker_only_and_composite_effects(self) -> None:
-        catalog_path = (
-            Path(__file__).parents[1]
-            / "src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/catalog.json"
-        )
-        candidate = load_expression_catalog(
-            catalog_path,
-            expected_sha256=file_sha256(catalog_path),
-            allowed_statuses=frozenset({"candidate"}),
-        )
-        selected = next(
-            entry for entry in candidate.entries if entry.minimum_relationship == "public"
-        )
-        for message_text in ("发生安全事故了", "A safety incident happened."):
-            for decision_kind in ("sticker", "reply_with_sticker"):
-                payload: dict[str, object] = {
-                    "kind": decision_kind,
-                    "reason_code": "light_reaction",
-                    "sticker_id": selected.semantic_id,
-                    "catalog_version": candidate.catalog_version,
-                    "catalog_digest": candidate.digest,
-                    "mood_signal": "gentle",
-                }
-                if decision_kind == "sticker":
-                    payload["fallback_text"] = "我先认真听你说。"
-                else:
-                    payload["text"] = "先确认人身安全，需要的话立即联系现场负责人。"
-                with (
-                    self.subTest(message_text=message_text, decision_kind=decision_kind),
-                    EffectorFixtureContext(
-                        StructuredModelResult(payload),
-                        current_message_text=message_text,
-                    ) as fixture,
-                ):
-                    fixture.effector.expression_catalog_provider = lambda: replace(
-                        candidate,
-                        status="enabled",
-                        persona_id=fixture.bundle.snapshot.persona_id,
-                        persona_version=fixture.bundle.snapshot.persona_version,
-                        persona_digest=fixture.bundle.snapshot.persona_digest,
-                        entries=tuple(
-                            replace(
-                                entry,
-                                status="enabled",
-                                telegram_file_id=f"file-{entry.semantic_id}",
-                                telegram_file_unique_id=f"unique-{entry.semantic_id}",
-                            )
-                            for entry in candidate.entries
-                        ),
-                    )
-
-                    final = fixture.effector.execute(
-                        request=fixture.request,
-                        bundle=fixture.bundle,
-                    )
-
-                    self.assertIsNone(final.sticker_id)
-                    self.assertEqual("sticker_serious_context", final.reason_code)
-                    if decision_kind == "sticker":
-                        self.assertEqual(FinalEffectKind.FAILURE_REPLY, final.kind)
-                    else:
-                        self.assertEqual(FinalEffectKind.REPLY, final.kind)
-                        self.assertEqual(payload["text"], final.text)
-
-    def test_relationship_boundary_rejects_exclusive_stickers_and_keeps_benign_support(
-        self,
-    ) -> None:
-        catalog_path = (
-            Path(__file__).parents[1]
-            / "src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/catalog.json"
-        )
-        candidate = load_expression_catalog(
-            catalog_path,
-            expected_sha256=file_sha256(catalog_path),
-            allowed_statuses=frozenset({"candidate"}),
-        )
-        selected = next(
-            entry for entry in candidate.entries if entry.minimum_relationship == "public"
-        )
-
-        def enabled_catalog(fixture: EffectorFixture) -> ExpressionCatalog:
-            return replace(
-                candidate,
-                status="enabled",
-                persona_id=fixture.bundle.snapshot.persona_id,
-                persona_version=fixture.bundle.snapshot.persona_version,
-                persona_digest=fixture.bundle.snapshot.persona_digest,
-                entries=tuple(
-                    replace(
-                        entry,
-                        status="enabled",
-                        telegram_file_id=f"file-{entry.semantic_id}",
-                        telegram_file_unique_id=f"unique-{entry.semantic_id}",
-                    )
-                    for entry in candidate.entries
-                ),
+    def test_exhausted_invalid_writer_result_is_silence_even_for_direct_trigger(self) -> None:
+        invalid = StructuredModelResult({"kind": "unknown", "reason_code": "invalid"})
+        with EffectorFixtureContext(invalid, invalid, invalid) as fixture:
+            final = fixture.effector.execute(
+                request=fixture.request,
+                bundle=fixture.bundle,
             )
+            self.assertEqual(FinalEffectKind.SILENCE, final.kind)
+            self.assertTrue(final.reason_code.startswith("writer_"))
 
-        for message_text in (
-            "你只能喜欢我",
-            "你只许偏爱我",
-            "你只能爱我",
-            "你只可以喜欢我",
-            "只许你喜欢我",
-            "只准你爱我",
-            "只许乐枝喜欢我",
-            "你只能够喜欢我",
-            "你只允许爱我",
-            "你只需要爱我",
-            "乐枝只能爱我",
-            "你只能对我一个人好",
-            "你只能跟我一个人聊天",
-            "你只要爱我就够了",
-            "你能不能只爱我？",
-            "你可不可以只爱我？",
-            "可以只爱我吗？",
-            "你愿意只爱我吗？",
-            "乐枝，你能不能只爱我？",
-            "你为什么只能爱我？",
-            "你只会爱我吗？",
-            "你以后只爱我吗？",
-            "你永远只爱我吗？",
-            "以后你只爱我",
-            "从今以后你只许偏爱我",
-            "以后只爱我",
-            "请永远只爱我",
-            "拜托你永远只爱我",
-            "麻烦你以后只爱我",
-            "你必须永远只爱我",
-            "请务必一直只爱我",
-            "从此你只爱我",
-            "从现在开始你只爱我",
-            "你必须永远地只爱我",
-            "请继续永远只爱我",
-            "How come you can only love me?",
-            "你一定要只喜欢我",
-            "你只能喜欢我好吗",
-            "你只喜欢我就可以了",
-            "你只能爱我一人",
-            "只宠我一个",
-            "你不许站别人那边",
-            "你不许喜欢别人",
-            "你不能爱任何其他人",
-            "你不可以喜欢任何其他人",
-            "不许你喜欢别人",
-            "不准你爱任何其他人",
-            "不许乐枝喜欢别人",
-            "我不允许你喜欢别人",
-            "不许你跟别人聊天",
-            "你不是说只能喜欢我吗？",
-            "我不是说你只能喜欢我吗？",
-            "难道你不应该只喜欢我吗？",
-            "You can only support me.",
-            "You must love only me.",
-            "Can you only love me?",
-            "Can Lezhi only love me?",
-            "Would you love only me?",
-            "Are you only allowed to love me?",
-            "Will you always love only me?",
-            "Can you please only love me?",
-            "Can you really only love me?",
-            "Lezhi will forever love only me.",
-            "Please always love only me.",
-            "Always love only me.",
-            "From now on you can only love me.",
-            "Could you kindly only love me?",
-            "Would you maybe love only me?",
-            "Can you just love only me?",
-            "Could you possibly only love me?",
-            "Could you at least only love me?",
-            "Could you for once only love me?",
-            "Could you please continue to love only me?",
-            "You must from this point on only love me.",
-            "我的朋友要求你只能爱我",
-            "这个应用要求你只能爱我",
-            "My friend would like you to only love me.",
-            "This app would like you to only love me.",
-            "You are only allowed to love me.",
-            "You may only love me.",
-            "You must love me alone.",
-            "You can't love anyone else.",
-            "Don't love anyone else.",
-            "Love me and nobody else.",
-        ):
-            for decision_kind in ("sticker", "reply_with_sticker"):
-                payload: dict[str, object] = {
-                    "kind": decision_kind,
-                    "reason_code": "light_reaction",
-                    "sticker_id": selected.semantic_id,
-                    "catalog_version": candidate.catalog_version,
-                    "catalog_digest": candidate.digest,
-                    "mood_signal": "gentle",
-                }
-                if decision_kind == "sticker":
-                    payload["fallback_text"] = "我先认真听你说。"
-                else:
-                    payload["text"] = "我会认真听，但不会偏向任何一位成员。"
-                with (
-                    self.subTest(message_text=message_text, decision_kind=decision_kind),
-                    EffectorFixtureContext(
-                        StructuredModelResult(payload),
-                        current_message_text=message_text,
-                    ) as fixture,
-                ):
-                    fixture.effector.expression_catalog_provider = lambda: enabled_catalog(fixture)
 
-                    final = fixture.effector.execute(
-                        request=fixture.request,
-                        bundle=fixture.bundle,
-                    )
+def _candidate_catalog_and_public_entry() -> tuple[ExpressionCatalog, ExpressionEntry]:
+    catalog_path = (
+        Path(__file__).parents[1]
+        / "src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/catalog.json"
+    )
+    candidate = load_expression_catalog(
+        catalog_path,
+        expected_sha256=file_sha256(catalog_path),
+        allowed_statuses=frozenset({"candidate"}),
+    )
+    selected = next(entry for entry in candidate.entries if entry.minimum_relationship == "public")
+    return candidate, selected
 
-                    self.assertIsNone(final.sticker_id)
-                    self.assertEqual("sticker_relationship_context", final.reason_code)
-                    if decision_kind == "sticker":
-                        self.assertEqual(FinalEffectKind.FAILURE_REPLY, final.kind)
-                    else:
-                        self.assertEqual(FinalEffectKind.REPLY, final.kind)
-                        self.assertEqual(payload["text"], final.text)
 
-        for message_text in (
-            "谢谢大家支持我们",
-            "谢谢你一直支持我",
-            "这个功能只支持我的设备吗",
-            "我只喜欢我的新头像",
-            "别只支持我，大家都需要支持",
-            "不是只能喜欢我，大家都值得被喜欢",
-            "我不是说你只能喜欢我，大家都值得被喜欢",
-            "你不用只喜欢我，大家都值得被喜欢",
-            "不应该只支持我，其他人也需要支持",
-            "Do not only support me; support everyone.",
-            "Do not take only my side; hear everyone out.",
-            "Do not love only me; love everyone.",
-            "You cannot only love me; love everyone too.",
-            "You don't have to love only me.",
-            "You aren't required to love only me.",
-            "你不是说不要只喜欢我吗？",
-            "我不是说你不要只喜欢我吗？",
-            "This app can only support me.",
-            "This app supports only me.",
-            "Can this app only support me?",
-            "Will this app always support only me?",
-            "以后这个应用只支持我",
-            "请这个应用永远只支持我",
-            "这个应用必须永远只支持我",
-            "请这个应用务必一直只支持我",
-            "From now on this app can only support me.",
-            "Could this app kindly support only me?",
-            "Could this app possibly only support me?",
-            "Could this app at least only support me?",
-            "他只能喜欢我",
-            "从现在开始他只爱我",
-            "She can only love me.",
-            "Could she possibly only love me?",
-        ):
-            for decision_kind in ("sticker", "reply_with_sticker"):
-                payload = {
-                    "kind": decision_kind,
-                    "reason_code": "light_reaction",
-                    "sticker_id": selected.semantic_id,
-                    "catalog_version": candidate.catalog_version,
-                    "catalog_digest": candidate.digest,
-                    "mood_signal": "gentle",
-                }
-                if decision_kind == "sticker":
-                    payload["fallback_text"] = "谢谢。"
-                else:
-                    payload["text"] = "谢谢你把话说清楚。"
-                with (
-                    self.subTest(message_text=message_text, decision_kind=decision_kind),
-                    EffectorFixtureContext(
-                        StructuredModelResult(payload),
-                        current_message_text=message_text,
-                    ) as fixture,
-                ):
-                    fixture.effector.expression_catalog_provider = lambda: enabled_catalog(fixture)
-
-                    final = fixture.effector.execute(
-                        request=fixture.request,
-                        bundle=fixture.bundle,
-                    )
-
-                    self.assertEqual(FinalEffectKind(decision_kind), final.kind)
-                    self.assertEqual(selected.semantic_id, final.sticker_id)
+def _enabled_catalog(
+    fixture: EffectorFixture,
+    candidate: ExpressionCatalog,
+) -> ExpressionCatalog:
+    return replace(
+        candidate,
+        status="enabled",
+        persona_id=fixture.bundle.snapshot.persona_id,
+        persona_version=fixture.bundle.snapshot.persona_version,
+        persona_digest=fixture.bundle.snapshot.persona_digest,
+        entries=tuple(
+            replace(
+                entry,
+                status="enabled",
+                telegram_file_id=f"file-{entry.semantic_id}",
+                telegram_file_unique_id=f"unique-{entry.semantic_id}",
+            )
+            for entry in candidate.entries
+        ),
+    )
 
 
 class EffectorFixture:

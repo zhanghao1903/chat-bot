@@ -14,7 +14,6 @@ from group_llm_agent.avatar import (
     load_avatar_catalog,
 )
 from group_llm_agent.database import SQLiteDatabase
-from group_llm_agent.effect_bundle import EffectBundleRepository
 from group_llm_agent.expression import (
     ExpressionCatalogError,
     canonical_json_bytes,
@@ -79,15 +78,6 @@ def _parser() -> argparse.ArgumentParser:
     _catalog_digest_arguments(enable)
     enable.add_argument("--activation-reference", required=True)
     enable.set_defaults(handler=_expression_enable)
-
-    metrics = commands.add_parser("expression-metrics")
-    metrics.add_argument("--database", type=Path, required=True)
-    metrics.add_argument("--bot-user-id", required=True)
-    metrics.add_argument("--persona-version", required=True)
-    metrics.add_argument("--persona-digest", required=True)
-    metrics.add_argument("--catalog-version", required=True)
-    metrics.add_argument("--catalog-digest", required=True)
-    metrics.set_defaults(handler=_expression_metrics)
 
     avatar_approve = commands.add_parser("avatar-approve")
     _catalog_digest_arguments(avatar_approve)
@@ -192,39 +182,6 @@ def _expression_enable(args: argparse.Namespace) -> str:
             expected_telegram_ready_sha256=args.expected_sha256,
             activation_reference=args.activation_reference,
         )
-
-
-def _expression_metrics(args: argparse.Namespace) -> str:
-    database = SQLiteDatabase(args.database)
-    database.initialize()
-    metrics = EffectBundleRepository(database).metrics(
-        bot_user_id=args.bot_user_id,
-        persona_version=args.persona_version,
-        persona_digest=args.persona_digest,
-        catalog_version=args.catalog_version,
-        catalog_digest=args.catalog_digest,
-    )
-    rate = (
-        "unavailable"
-        if metrics.sticker_bearing_rate is None
-        else str(round(metrics.sticker_bearing_rate, 6))
-    )
-    return " ".join(
-        (
-            f"metrics_status={metrics.status}",
-            f"sample_count={metrics.sample_count}",
-            f"sticker_bearing_count={metrics.sticker_bearing_count}",
-            f"text_only_count={metrics.text_only_count}",
-            f"sticker_bearing_rate={rate}",
-            f"window_started_at={metrics.window_started_at.isoformat()}",
-            f"window_ended_at={metrics.window_ended_at.isoformat()}",
-            f"bot_user_id={metrics.bot_user_id}",
-            f"persona_version={metrics.persona_version}",
-            f"persona_digest={metrics.persona_digest}",
-            f"catalog_version={metrics.catalog_version}",
-            f"catalog_digest={metrics.catalog_digest}",
-        )
-    )
 
 
 def _avatar_approve(args: argparse.Namespace) -> str:

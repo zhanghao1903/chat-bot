@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import uuid4
 
@@ -61,22 +61,6 @@ class EffectBundleRecord:
     status: BundleStatus
     error_code: str | None
     components: tuple[BundleComponent, ...]
-
-
-@dataclass(frozen=True)
-class StickerBearingMetrics:
-    status: str
-    bot_user_id: str
-    persona_version: str
-    persona_digest: str
-    catalog_version: str
-    catalog_digest: str
-    window_started_at: datetime
-    window_ended_at: datetime
-    sample_count: int
-    sticker_bearing_count: int
-    text_only_count: int
-    sticker_bearing_rate: float | None
 
 
 class EffectBundleRepository:
@@ -296,73 +280,6 @@ class EffectBundleRepository:
                     error_code="restart_reconciled",
                 )
             return len(rows)
-
-    def metrics(
-        self,
-        *,
-        bot_user_id: str,
-        persona_version: str,
-        persona_digest: str,
-        catalog_version: str,
-        catalog_digest: str,
-        now: datetime | None = None,
-    ) -> StickerBearingMetrics:
-        current = _aware(now or datetime.now(UTC))
-        since = current - timedelta(days=7)
-        connection = self.database.connect()
-        try:
-            rows = connection.execute(
-                """
-                SELECT bundle.bundle_id,
-                       EXISTS(
-                           SELECT 1 FROM effect_bundle_components AS component
-                           WHERE component.bundle_id = bundle.bundle_id
-                             AND component.status = 'sent'
-                             AND component.component_kind = 'sticker'
-                       ) AS sticker_sent
-                FROM effect_bundles AS bundle
-                WHERE bundle.bot_user_id = ?
-                  AND bundle.persona_version = ?
-                  AND bundle.persona_digest = ?
-                  AND bundle.catalog_version = ?
-                  AND bundle.catalog_digest = ?
-                  AND bundle.sticker_eligible = 1
-                  AND bundle.completed_at >= ?
-                  AND EXISTS(
-                      SELECT 1 FROM effect_bundle_components AS visible
-                      WHERE visible.bundle_id = bundle.bundle_id
-                        AND visible.status = 'sent'
-                  )
-                ORDER BY bundle.completed_at DESC, bundle.id DESC
-                LIMIT 100
-                """,
-                (
-                    bot_user_id,
-                    persona_version,
-                    persona_digest,
-                    catalog_version,
-                    catalog_digest,
-                    since.isoformat(),
-                ),
-            ).fetchall()
-        finally:
-            connection.close()
-        sample_count = len(rows)
-        bearing = sum(bool(row["sticker_sent"]) for row in rows)
-        return StickerBearingMetrics(
-            status="ready" if sample_count >= 30 else "insufficient_data",
-            bot_user_id=bot_user_id,
-            persona_version=persona_version,
-            persona_digest=persona_digest,
-            catalog_version=catalog_version,
-            catalog_digest=catalog_digest,
-            window_started_at=since,
-            window_ended_at=current,
-            sample_count=sample_count,
-            sticker_bearing_count=bearing,
-            text_only_count=sample_count - bearing,
-            sticker_bearing_rate=(bearing / sample_count if sample_count >= 30 else None),
-        )
 
     def _terminal_component(
         self,

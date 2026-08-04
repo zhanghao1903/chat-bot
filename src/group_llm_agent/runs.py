@@ -64,27 +64,6 @@ class TriggerEvaluationRecord:
     continuity_anchor_message_id: str | None
 
 
-@dataclass(frozen=True)
-class ExpressionUsageMetrics:
-    visible_effect_count: int
-    sticker_requested_count: int
-    sticker_sent_count: int
-    repeated_sticker_count: int
-    degraded_sticker_count: int
-
-    @property
-    def sticker_visible_rate(self) -> float:
-        if self.visible_effect_count == 0:
-            return 0.0
-        return self.sticker_sent_count / self.visible_effect_count
-
-    @property
-    def sticker_degradation_rate(self) -> float:
-        if self.sticker_requested_count == 0:
-            return 0.0
-        return self.degraded_sticker_count / self.sticker_requested_count
-
-
 class RunRepository:
     """Persists run metadata without message, prompt, or model-response content."""
 
@@ -717,70 +696,6 @@ class RunRepository:
                 str(row["platform_message_id"]) if row["platform_message_id"] is not None else None
             ),
             error_code=str(row["error_code"]) if row["error_code"] is not None else None,
-        )
-
-    def expression_usage_metrics(
-        self,
-        *,
-        chat_id: str,
-        since: datetime,
-    ) -> ExpressionUsageMetrics:
-        """Aggregate expression outcomes without reading or returning message bodies."""
-
-        if not chat_id or since.tzinfo is None:
-            raise ValueError("chat_id and timezone-aware since are required")
-        connection = self.database.connect()
-        try:
-            rows = connection.execute(
-                """
-                SELECT requested_effect_kind, delivered_effect_kind,
-                       asset_semantic_id, status
-                FROM external_effects
-                WHERE chat_id = ? AND created_at >= ?
-                ORDER BY id
-                """,
-                (chat_id, since.isoformat()),
-            ).fetchall()
-        finally:
-            connection.close()
-
-        visible = 0
-        requested = 0
-        sent = 0
-        repeated = 0
-        degraded = 0
-        previous_visible_sticker: str | None = None
-        for row in rows:
-            requested_kind = str(row["requested_effect_kind"])
-            delivered = (
-                str(row["delivered_effect_kind"])
-                if row["delivered_effect_kind"] is not None
-                else None
-            )
-            status = str(row["status"])
-            semantic_id = (
-                str(row["asset_semantic_id"]) if row["asset_semantic_id"] is not None else None
-            )
-            if requested_kind == ExternalEffectKind.STICKER.value:
-                requested += 1
-                if status != ExternalEffectStatus.SENT.value or delivered != "sticker":
-                    degraded += 1
-            if status != ExternalEffectStatus.SENT.value or delivered is None:
-                continue
-            visible += 1
-            if delivered == ExternalEffectKind.STICKER.value:
-                sent += 1
-                if semantic_id is not None and semantic_id == previous_visible_sticker:
-                    repeated += 1
-                previous_visible_sticker = semantic_id
-            else:
-                previous_visible_sticker = None
-        return ExpressionUsageMetrics(
-            visible_effect_count=visible,
-            sticker_requested_count=requested,
-            sticker_sent_count=sent,
-            repeated_sticker_count=repeated,
-            degraded_sticker_count=degraded,
         )
 
     def _finish_effect_run(
