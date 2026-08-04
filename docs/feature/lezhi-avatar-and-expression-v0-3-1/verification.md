@@ -388,6 +388,36 @@ pass. The configured-provider report remains byte-identical at SHA-256
 no provider, deployment, container, Telegram, Tavily, SQLite, sticker, or
 avatar operation occurred.
 
+Eighth re-review dispatch
+`c321f37af41e76680f85e531667f08d13b637284a86b8181bbff82e71eaf36c1`
+retained FINDING-002 for Chinese exclusivity modals separated from `只` by a
+temporal modifier and English `possibly`/`at least` variants. It also opened
+FINDING-003 because the previous English prefix regex allowed overlapping
+`need to` versus `need` + `to` parses inside nested repetitions, causing
+exponential backtracking on short member-controlled input.
+
+Implementation snapshot `2b7131dadd142bb957348ffc39faad6e794984fe`
+adds the exact bounded Chinese and English modifier families while replacing
+the ambiguous direct-prefix regex with deterministic longest-token
+consumption. The parser advances monotonically through a closed token
+registry and stops immediately on an unknown technical or third-party token;
+it has no recursive or alternative backtracking path. The same deterministic
+parser is used for Chinese prefix recognition to avoid an equivalent induced
+risk there.
+
+Direct policy and end-to-end regressions cover all eighth-review semantic
+reproductions for Writer `sticker` and `reply_with_sticker`, while equivalent
+app/service subjects remain eligible. An adversarial regression classifies 64
+repeated `need to` prefixes plus an unknown token under 0.25 seconds; an
+independent 2,062-character/256-repeat probe completed in about 0.004 seconds.
+The focused suite passes 20 tests in 7.166 seconds and final full discovery
+passes 304 tests in 106.060 seconds. Ruff check/format passes all 104
+source/test files, targeted Mypy passes `expression_policy.py`, and
+compileall, shell syntax, and diff checks pass. The provider report remains
+byte-identical at SHA-256
+`cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`;
+no provider or production/external operation occurred.
+
 - Independent exact-head merge review is still required.
 - On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
   `mergeOnApprove` policy to be set to `true` temporarily, only to re-review
