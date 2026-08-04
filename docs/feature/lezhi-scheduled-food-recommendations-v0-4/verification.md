@@ -27,13 +27,15 @@ was not cleaned or rewritten; all work and proof used an isolated worktree.
 - First reviewed head: `4de7259e22a2dfb4ce7eafa5876961b2b5f3a74e`
 - Exact remediation implementation commit: `2be0122454414c47173f8499222f50c01b150922`
 
-The accepted ReviewResult requested four changes. Exact remediation closes them as follows:
+The accepted ReviewResult requested four changes. The first remediation addressed them as follows;
+the next exact-head review confirmed FINDING-003/004 closed and found induced gaps in
+FINDING-001/002, recorded in section 1.2:
 
 - **FINDING-001** — the model no longer authors displayed dish/merchant labels, descriptions,
   current facts, caution notes or safety prose. Generic choices resolve only through a closed
   application dish/reason registry. A sourced choice must bind each of three merchant choices to a
-  distinct current-turn Web result, and the application derives the display identity, stable key,
-  URL list and cautious wording. Extra free-form merchant, allergy, medical and paraphrased
+  distinct current-turn Web result, and the application derives the stable key, URL list and
+  cautious wording. Extra free-form merchant, allergy, medical and paraphrased
   reassurance fields fail schema parsing independent of their vocabulary.
 - **FINDING-002** — deterministic date/slot identity is retained, but a still-unleased `due` row is
   atomically refreshed to the active scheduled instant, grace deadline, config version and persona
@@ -65,6 +67,48 @@ Exact remediation commit `2be0122454414c47173f8499222f50c01b150922` passed:
 
 No real Tavily call, Compose service replacement, automation enablement, subscription or Telegram
 message was performed while closing these findings.
+
+### 1.2 Induced-risk review and second remediation
+
+- Second review dispatch: `d678fedd948334101d651ed7392a50f331623a432d6b00efe67f1df2a603b538`
+- Accepted immutable ReviewResult SHA-256:
+  `d07dcb98ef1c3528473df775e2b0e6374c6a6ab70666b4319064c5cca1b3c523`
+- Second reviewed head: `5bf0af6c29ed638e33368ba3317fede3cc1466b8`
+- Exact second-remediation implementation commit:
+  `8f7743804e6116c2214057b3f695650ff6fef483`
+
+The second review retained the original finding IDs. FINDING-003/004 remained fixed. The two open
+induced-risk paths are closed as follows:
+
+- **FINDING-001** — `FoodCitation` now contains only the normalized current-turn URL. Provider
+  titles remain visible to the Writer as explicitly untrusted tool data but cannot cross the final
+  application boundary. Sourced output uses only application-owned neutral labels
+  `来源商家候选一/二/三`, closed reason text and cautious wording. Exact tests inject
+  `海底捞对坚果敏感者也完全适合` plus medical/body-condition paraphrases through normal Tavily search
+  results and prove none appears in the final safe reply.
+- **FINDING-002** — `create_occurrence` now starts `BEGIN IMMEDIATE`, reads the active group config
+  version and returns no occurrence when the caller's snapshot is stale. The version comparison,
+  insert and due-row refresh therefore form one serialized transaction. A deterministic
+  v1 11:30 → v2 11:40 → stale-v1 interleaving proves the stale worker cannot revert, return or lease
+  the refreshed row; the v2 scheduler processes the 11:40 occurrence exactly once.
+
+Exact second-remediation commit `8f7743804e6116c2214057b3f695650ff6fef483` passed:
+
+- `python3 -m compileall -q src tests`
+- `PYTHONPATH=src:tests .venv/bin/python -m unittest discover -s tests -q` — **277 tests**
+- Ruff check — passed; Ruff format check — **96 source/test files already formatted**
+- Mypy — no issues in **49 source files**
+- `sh -n deploy/manage.sh`, `git diff --check` and package build — passed
+- Second-remediation sdist SHA-256:
+  `065ab54da35fc05873a0eed7ad32dbf732164d71a2aad42addb19da07794f357`
+- Second-remediation wheel SHA-256:
+  `7c135805e267752154b1e86292f5dfc1a6566baa67f00acbfefb9d2aad33bbfa`
+- Second-remediation candidate image:
+  `sha256:b70df84e189012ecf95f78ef97ac38693acc6b632fb7ae2b0f1129b6b411799c`,
+  user `app`, command `group-llm-agent`; a no-credential run returned the expected safe exit code 2
+
+The operational boundaries remain unchanged: no real Tavily request, capability enablement,
+subscription, Compose service replacement or Telegram message was performed.
 
 ## 2. Implemented contracts
 
