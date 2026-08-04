@@ -10,6 +10,7 @@ from typing import Protocol
 from group_llm_agent.automation_control import AutomationControlService
 from group_llm_agent.control import MemoryControlService
 from group_llm_agent.delivery import SQLiteDeliveryLedger
+from group_llm_agent.effect_bundle import EffectBundleRepository
 from group_llm_agent.effect_delivery import ExternalEffectDelivery
 from group_llm_agent.effector import WriterEffector
 from group_llm_agent.events import (
@@ -213,6 +214,7 @@ class PersonaMessageProcessor:
         controls: MemoryControlService,
         triggers: TriggerCoordinator,
         effector: WriterEffector,
+        bundles: EffectBundleRepository | None = None,
         automation_controls: AutomationControlService | None = None,
         media_loader: TelegramMediaLoader | None = None,
         vision: VisionModelPort | None = None,
@@ -229,6 +231,7 @@ class PersonaMessageProcessor:
         self.bundle = bundle
         self.messages = messages
         self.runs = runs
+        self.bundles = bundles or EffectBundleRepository(runs.database)
         self.controls = controls
         self.automation_controls = automation_controls
         self.triggers = triggers
@@ -244,11 +247,14 @@ class PersonaMessageProcessor:
         self.delivery = ExternalEffectDelivery(
             client=client,
             messages=messages,
-            runs=runs,
+            bundles=self.bundles,
             bot_user_id=bot_user_id,
             bot_display_name=bot_display_name,
             expression_catalog_provider=expression_catalog_provider,
         )
+        reconciled = self.bundles.reconcile_incomplete()
+        if reconciled:
+            logger.warning("effect_bundles_reconciled count=%s", reconciled)
         self.recognition_policy_version = recognition_policy_version
 
     def handle_message(self, event: TelegramTextMessage) -> ProcessingOutcome:
@@ -288,6 +294,18 @@ class PersonaMessageProcessor:
             persona=self.bundle.snapshot,
             recognition_policy_version=self.recognition_policy_version,
         )
+        if (
+            self.bundles.get(
+                chat_id=event.group_id,
+                trigger_event_id=event.event_id,
+            )
+            is not None
+        ):
+            self.bundles.reconcile_incomplete(
+                chat_id=event.group_id,
+                trigger_event_id=event.event_id,
+            )
+            return ProcessingOutcome("duplicate", event.group_id, event.message_id)
         if (
             self.runs.get_external_effect(
                 chat_id=event.group_id,

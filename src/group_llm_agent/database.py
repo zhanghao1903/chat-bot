@@ -709,6 +709,75 @@ _MIGRATIONS: tuple[tuple[int, str, str], ...] = (
             ON automation_action_audit(purge_after);
         """,
     ),
+    (
+        6,
+        "composite_effect_bundles_v0_3_1",
+        """
+        CREATE TABLE effect_bundles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bundle_id TEXT NOT NULL UNIQUE,
+            bot_user_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            trigger_event_id TEXT NOT NULL,
+            trigger_message_id TEXT NOT NULL,
+            persona_version TEXT NOT NULL,
+            persona_digest TEXT NOT NULL,
+            catalog_version TEXT,
+            catalog_digest TEXT,
+            requested_form TEXT NOT NULL
+                CHECK (requested_form IN ('text', 'sticker', 'text_sticker', 'failure_text')),
+            reason_code TEXT NOT NULL,
+            sticker_eligible INTEGER NOT NULL CHECK (sticker_eligible IN (0, 1)),
+            eligibility_reason TEXT NOT NULL,
+            status TEXT NOT NULL
+                CHECK (
+                    status IN (
+                        'prepared', 'delivering', 'completed', 'degraded',
+                        'failed', 'uncertain', 'interrupted'
+                    )
+                ),
+            error_code TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            completed_at TEXT,
+            UNIQUE(chat_id, trigger_event_id)
+        );
+        CREATE INDEX idx_effect_bundles_metrics
+            ON effect_bundles(
+                bot_user_id, persona_version, persona_digest,
+                catalog_version, catalog_digest, completed_at DESC, id DESC
+            );
+
+        CREATE TABLE effect_bundle_components (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bundle_id TEXT NOT NULL,
+            ordinal INTEGER NOT NULL CHECK (ordinal IN (1, 2)),
+            component_kind TEXT NOT NULL CHECK (component_kind IN ('text', 'sticker')),
+            requested_effect_kind TEXT NOT NULL
+                CHECK (requested_effect_kind IN ('reply', 'failure_reply', 'sticker')),
+            asset_semantic_id TEXT,
+            text_character_count INTEGER
+                CHECK (text_character_count IS NULL OR text_character_count >= 0),
+            status TEXT NOT NULL
+                CHECK (status IN ('planned', 'sending', 'sent', 'failed', 'uncertain', 'skipped')),
+            platform_message_id TEXT,
+            error_code TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(bundle_id, ordinal),
+            FOREIGN KEY (bundle_id) REFERENCES effect_bundles(bundle_id)
+        );
+        CREATE INDEX idx_effect_bundle_components_status
+            ON effect_bundle_components(status, bundle_id, ordinal);
+
+        ALTER TABLE avatar_change_audit ADD COLUMN operation_id TEXT;
+        ALTER TABLE avatar_change_audit ADD COLUMN api_method TEXT;
+        ALTER TABLE avatar_change_audit ADD COLUMN authorization_reference TEXT;
+        CREATE UNIQUE INDEX idx_avatar_change_operation
+            ON avatar_change_audit(operation_id)
+            WHERE operation_id IS NOT NULL;
+        """,
+    ),
 )
 
 

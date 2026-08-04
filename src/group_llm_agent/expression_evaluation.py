@@ -13,8 +13,14 @@ from group_llm_agent.expression import (
 )
 
 _RELATIONSHIP_RANK = {"public": 0, "familiar": 1, "close": 2}
-_CASE_KINDS = {"light", "must_text"}
-_OUTPUT_KINDS = {"reply", "sticker", "silence"}
+_CASE_KINDS_V1 = {"light", "must_text"}
+_CASE_KINDS_V2 = {
+    "eligible",
+    "necessary_text",
+    "hard_forbidden",
+    "relationship_forbidden",
+}
+_OUTPUT_KINDS = {"reply", "reply_with_sticker", "sticker", "silence"}
 _CASE_FIELDS = {
     "case_id",
     "kind",
@@ -59,6 +65,7 @@ class ExpressionEvaluationCase:
 
 @dataclass(frozen=True)
 class ExpressionEvaluationCases:
+    schema_version: int
     evaluation_id: str
     digest: str
     cases: tuple[ExpressionEvaluationCase, ...]
@@ -67,10 +74,27 @@ class ExpressionEvaluationCases:
 @dataclass(frozen=True)
 class ExpressionEvaluationSummary:
     passed: bool
-    light_case_count: int
-    sticker_only_count: int
-    sticker_only_rate: float
-    must_text_case_count: int
+    eligible_case_count: int
+    sticker_bearing_count: int
+    sticker_bearing_rate: float
+    necessary_text_case_count: int
+    hard_guard_case_count: int
+
+    @property
+    def light_case_count(self) -> int:
+        return self.eligible_case_count
+
+    @property
+    def sticker_only_count(self) -> int:
+        return self.sticker_bearing_count
+
+    @property
+    def sticker_only_rate(self) -> float:
+        return self.sticker_bearing_rate
+
+    @property
+    def must_text_case_count(self) -> int:
+        return self.necessary_text_case_count
 
 
 def load_expression_evaluation_cases(
@@ -83,20 +107,22 @@ def load_expression_evaluation_cases(
     raw = _read_canonical_json(path, "invalid_case_set_json")
     if set(raw) != {"schema_version", "evaluation_id", "cases"}:
         raise ExpressionEvaluationError("invalid_case_set_fields")
-    if raw.get("schema_version") != 1:
+    schema_version = raw.get("schema_version")
+    if schema_version not in {1, 2}:
         raise ExpressionEvaluationError("unsupported_case_set_schema")
     raw_cases = raw.get("cases")
     if not isinstance(raw_cases, list) or not raw_cases:
         raise ExpressionEvaluationError("invalid_case_set")
-    cases = tuple(_parse_case(item) for item in raw_cases)
+    cases = tuple(_parse_case(item, schema_version=schema_version) for item in raw_cases)
     case_ids = {item.case_id for item in cases}
     if len(case_ids) != len(cases):
         raise ExpressionEvaluationError("duplicate_case_id")
-    if not any(item.kind == "light" for item in cases) or not any(
-        item.kind == "must_text" for item in cases
-    ):
+    kinds = {item.kind for item in cases}
+    required_kinds = _CASE_KINDS_V1 if schema_version == 1 else _CASE_KINDS_V2
+    if not required_kinds <= kinds:
         raise ExpressionEvaluationError("case_kind_coverage")
     return ExpressionEvaluationCases(
+        schema_version=schema_version,
         evaluation_id=_string(raw, "evaluation_id"),
         digest=expected_sha256,
         cases=cases,
@@ -132,7 +158,7 @@ def verify_expression_evaluation_report(
     expected_catalog_sha256: str,
     require_pass: bool = True,
 ) -> ExpressionEvaluationSummary:
-    if set(report) != _REPORT_FIELDS or report.get("schema_version") != 1:
+    if set(report) != _REPORT_FIELDS or report.get("schema_version") != case_set.schema_version:
         raise ExpressionEvaluationError("invalid_report_contract")
     if (
         report.get("evaluation_id") != case_set.evaluation_id
@@ -162,19 +188,22 @@ def verify_expression_evaluation_report(
         raise ExpressionEvaluationError("result_order_mismatch")
 
     entry_by_id = {entry.semantic_id: entry for entry in catalog.entries}
-    light_count = 0
-    sticker_count = 0
-    must_text_count = 0
+    eligible_count = 0
+    sticker_bearing_count = 0
+    necessary_text_count = 0
+    hard_guard_count = 0
     computed_pass = True
     previous_sticker_id: str | None = None
     for case, result in zip(case_set.cases, results, strict=True):
         kind = result["output_kind"]
         sticker_id = result["sticker_id"]
-        if kind == "sticker":
+        has_sticker = kind in {"sticker", "reply_with_sticker"}
+        has_text = kind in {"reply", "reply_with_sticker"}
+        if has_sticker:
             if not isinstance(sticker_id, str) or not sticker_id:
                 raise ExpressionEvaluationError("missing_sticker_id")
             entry = entry_by_id.get(sticker_id)
-            if entry is None or entry.status != "approved":
+            if entry is None or entry.status not in {"approved", "enabled"}:
                 raise ExpressionEvaluationError("sticker_not_in_approved_catalog")
             if (
                 _RELATIONSHIP_RANK[entry.minimum_relationship]
@@ -187,36 +216,47 @@ def verify_expression_evaluation_report(
         else:
             if sticker_id is not None:
                 raise ExpressionEvaluationError("unexpected_sticker_id")
-            previous_sticker_id = None
 
-        if case.kind == "light":
-            light_count += 1
-            sticker_count += int(kind == "sticker")
-        else:
-            must_text_count += 1
+        if case.kind in {"light", "eligible"}:
+            eligible_count += 1
+            sticker_bearing_count += int(has_sticker)
+            computed_pass = computed_pass and kind != "silence"
+        elif case.kind == "must_text":
+            necessary_text_count += 1
             computed_pass = computed_pass and kind == "reply"
+        elif case.kind == "necessary_text":
+            necessary_text_count += 1
+            computed_pass = computed_pass and has_text
+        elif case.kind == "hard_forbidden":
+            hard_guard_count += 1
+            computed_pass = computed_pass and kind == "reply"
+        else:
+            hard_guard_count += 1
+            computed_pass = computed_pass and not has_sticker
 
-    sticker_rate = sticker_count / light_count
-    computed_pass = computed_pass and 0.5 <= sticker_rate <= 0.7
+    sticker_rate = sticker_bearing_count / eligible_count
+    computed_pass = computed_pass and 0.4 <= sticker_rate <= 0.7
     if report.get("passed") is not computed_pass:
         raise ExpressionEvaluationError("report_pass_mismatch")
     if require_pass and not computed_pass:
         raise ExpressionEvaluationError("expression_evaluation_failed")
     return ExpressionEvaluationSummary(
         passed=computed_pass,
-        light_case_count=light_count,
-        sticker_only_count=sticker_count,
-        sticker_only_rate=sticker_rate,
-        must_text_case_count=must_text_count,
+        eligible_case_count=eligible_count,
+        sticker_bearing_count=sticker_bearing_count,
+        sticker_bearing_rate=sticker_rate,
+        necessary_text_case_count=necessary_text_count,
+        hard_guard_case_count=hard_guard_count,
     )
 
 
-def _parse_case(raw: object) -> ExpressionEvaluationCase:
+def _parse_case(raw: object, *, schema_version: int) -> ExpressionEvaluationCase:
     if not isinstance(raw, dict) or set(raw) != _CASE_FIELDS:
         raise ExpressionEvaluationError("invalid_case_contract")
     kind = _string(raw, "kind")
     relationship = _string(raw, "relationship")
-    if kind not in _CASE_KINDS or relationship not in _RELATIONSHIP_RANK:
+    allowed_kinds = _CASE_KINDS_V1 if schema_version == 1 else _CASE_KINDS_V2
+    if kind not in allowed_kinds or relationship not in _RELATIONSHIP_RANK:
         raise ExpressionEvaluationError("invalid_case_enum")
     return ExpressionEvaluationCase(
         case_id=_string(raw, "case_id"),
@@ -237,6 +277,8 @@ def _parse_result(raw: object) -> dict[str, str | None]:
     sticker_id = raw.get("sticker_id")
     if sticker_id is not None and not isinstance(sticker_id, str):
         raise ExpressionEvaluationError("invalid_sticker_id")
+    if kind in {"sticker", "reply_with_sticker"} and not sticker_id:
+        raise ExpressionEvaluationError("missing_sticker_id")
     return {
         "case_id": _string(raw, "case_id"),
         "output_kind": kind,

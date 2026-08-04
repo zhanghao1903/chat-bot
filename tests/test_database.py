@@ -33,6 +33,8 @@ _EXPECTED_RUNTIME_TABLES = {
     "avatar_change_audit",
     "control_action_audit",
     "effect_runs",
+    "effect_bundle_components",
+    "effect_bundles",
     "external_effects",
     "group_messages",
     "group_policies",
@@ -95,6 +97,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     (3, "visual_expression_v0_3"),
                     (4, "avatar_global_provenance"),
                     (5, "scheduled_food_automation_v0_4"),
+                    (6, "composite_effect_bundles_v0_3_1"),
                 ],
                 [tuple(row) for row in migrations],
             )
@@ -138,7 +141,7 @@ class DatabaseMigrationTests(unittest.TestCase):
             )
             reopened.close()
 
-    def test_exact_v4_database_migrates_to_v5_without_losing_effect_audit(self) -> None:
+    def test_exact_v4_database_migrates_through_v6_without_losing_effect_audit(self) -> None:
         with TemporaryDirectory() as tmpdir:
             path = Path(tmpdir) / "runtime-v4.sqlite3"
             connection = sqlite3.connect(path)
@@ -207,17 +210,29 @@ class DatabaseMigrationTests(unittest.TestCase):
                 migration = connection.execute(
                     "SELECT name FROM schema_migrations WHERE version = 5"
                 ).fetchone()
+                bundle_migration = connection.execute(
+                    "SELECT name FROM schema_migrations WHERE version = 6"
+                ).fetchone()
+                avatar_columns = {
+                    str(row["name"])
+                    for row in connection.execute("PRAGMA table_info(avatar_change_audit)")
+                }
             finally:
                 connection.close()
 
             assert effect is not None
             assert tool is not None
             assert migration is not None
+            assert bundle_migration is not None
             self.assertEqual("inbound", effect["source_kind"])
             self.assertIsNone(effect["scheduled_occurrence_id"])
             self.assertEqual("legacy-outbound", effect["platform_message_id"])
             self.assertEqual("context", tool["budget_kind"])
             self.assertEqual("scheduled_food_automation_v0_4", migration["name"])
+            self.assertEqual("composite_effect_bundles_v0_3_1", bundle_migration["name"])
+            self.assertTrue(
+                {"operation_id", "api_method", "authorization_reference"} <= avatar_columns
+            )
             self.assertEqual("ok", quick_check)
 
     def test_memory_sources_cannot_cross_group_foreign_key_boundary(self) -> None:

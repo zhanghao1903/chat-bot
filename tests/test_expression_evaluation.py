@@ -86,7 +86,7 @@ class ExpressionEvaluationTests(unittest.TestCase):
 
     def test_frequency_outside_target_fails_even_when_self_reported_consistently(self) -> None:
         report = self._report()
-        for index in range(4, 6):
+        for index in range(3, 6):
             report["results"][index] = {
                 "case_id": f"EXPR-{index + 1:03d}",
                 "output_kind": "reply",
@@ -100,7 +100,7 @@ class ExpressionEvaluationTests(unittest.TestCase):
             expected_catalog_sha256=self.catalog_sha,
             require_pass=False,
         )
-        self.assertEqual(0.4, summary.sticker_only_rate)
+        self.assertEqual(0.3, summary.sticker_only_rate)
         with self.assertRaisesRegex(ExpressionEvaluationError, "expression_evaluation_failed"):
             verify_expression_evaluation_report(
                 report,

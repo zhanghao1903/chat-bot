@@ -4,16 +4,17 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from group_llm_agent.events import (
-    ExternalEffectKind,
-    FinalEffect,
-    FinalEffectKind,
-    PersonaSnapshot,
-    TelegramMessage,
+from group_llm_agent.effect_bundle import (
+    BundleComponent,
+    BundleStatus,
+    EffectBundleRecord,
+    EffectBundleRepository,
 )
+from group_llm_agent.events import FinalEffect, FinalEffectKind, PersonaSnapshot, TelegramMessage
 from group_llm_agent.expression import (
     ExpressionCatalog,
     ExpressionCatalogError,
+    ExpressionEntry,
     validate_runtime_selection,
 )
 from group_llm_agent.messages import MessageRepository
@@ -24,21 +25,27 @@ logger = logging.getLogger(__name__)
 
 
 class ExternalEffectDelivery:
-    """Owns the unique claim and exactly one confirmed visible delivery."""
+    """Delivers one bounded inbound persona bundle with at-most-once components."""
 
     def __init__(
         self,
         *,
         client: TelegramBotApiClient,
         messages: MessageRepository,
-        runs: RunRepository,
         bot_user_id: str,
         bot_display_name: str,
+        bundles: EffectBundleRepository | None = None,
+        runs: RunRepository | None = None,
         expression_catalog_provider: Callable[[], ExpressionCatalog] | None = None,
     ) -> None:
         self.client = client
         self.messages = messages
-        self.runs = runs
+        if bundles is None and runs is None:
+            raise ValueError("bundle repository is required")
+        if bundles is None:
+            assert runs is not None
+            bundles = EffectBundleRepository(runs.database)
+        self.bundles = bundles
         self.bot_user_id = bot_user_id
         self.bot_display_name = bot_display_name
         self.expression_catalog_provider = expression_catalog_provider
@@ -52,94 +59,82 @@ class ExternalEffectDelivery:
     ) -> str:
         if final.kind is FinalEffectKind.SILENCE:
             return "silence"
-        if final.kind is FinalEffectKind.STICKER:
-            return self._sticker(event=event, final=final, active_persona=active_persona)
-        assert final.text is not None
-        requested = (
-            ExternalEffectKind.REPLY
-            if final.kind is FinalEffectKind.REPLY
-            else ExternalEffectKind.FAILURE_REPLY
-        )
-        return self._text(
+        bundle = self.bundles.prepare(
             event=event,
-            text=final.text,
-            requested_kind=requested,
-            active_persona=active_persona,
+            final=final,
+            bot_user_id=self.bot_user_id,
         )
-
-    def _text(
-        self,
-        *,
-        event: TelegramMessage,
-        text: str,
-        requested_kind: ExternalEffectKind,
-        active_persona: PersonaSnapshot,
-    ) -> str:
-        effect_id = self.runs.claim_external_effect(
-            message=event,
-            effect_kind=requested_kind,
-            persona=active_persona,
-        )
-        if effect_id is None:
-            return "duplicate"
-        try:
-            sent = self.client.send_message(
+        if bundle is None:
+            self.bundles.reconcile_incomplete(
                 chat_id=event.group_id,
-                text=text,
-                reply_to_message_id=event.message_id,
+                trigger_event_id=event.event_id,
             )
-        except TelegramApiError as error:
-            self._record_delivery_error(effect_id, error)
-            return "send_failed"
-        self.runs.mark_external_sent(
-            effect_id,
-            platform_message_id=sent.message_id,
-            delivered_effect_kind=requested_kind,
-        )
-        self._record_outbound(event=event, sent_id=sent.message_id, text=text)
-        return "sent"
+            return "duplicate"
 
-    def _sticker(
+        for component in bundle.components:
+            outcome = self._deliver_component(
+                bundle=bundle,
+                component=component,
+                event=event,
+                final=final,
+                active_persona=active_persona,
+            )
+            if outcome in {"failed", "uncertain"} and component.component_kind == "text":
+                self.bundles.skip_planned(
+                    bundle_id=bundle.bundle_id,
+                    error_code=f"text_{outcome}",
+                )
+                break
+            if outcome == "uncertain":
+                self.bundles.skip_planned(
+                    bundle_id=bundle.bundle_id,
+                    error_code="prior_component_uncertain",
+                )
+                break
+
+        status = self.bundles.finalize(bundle_id=bundle.bundle_id)
+        return _delivery_status(bundle.requested_form, status)
+
+    def _deliver_component(
         self,
         *,
+        bundle: EffectBundleRecord,
+        component: BundleComponent,
         event: TelegramMessage,
         final: FinalEffect,
         active_persona: PersonaSnapshot,
     ) -> str:
-        assert final.sticker_id is not None
-        assert final.catalog_version is not None
-        assert final.catalog_digest is not None
-        try:
-            if self.expression_catalog_provider is None:
-                raise ExpressionCatalogError("catalog_unavailable")
-            catalog = self.expression_catalog_provider()
-            entry = validate_runtime_selection(
-                catalog,
-                semantic_id=final.sticker_id,
-                persona_version=final.persona.persona_version,
-                persona_digest=final.persona.persona_digest,
-                expected_catalog_version=final.catalog_version,
-                expected_catalog_digest=final.catalog_digest,
+        component_id = self.bundles.claim_component(
+            bundle_id=bundle.bundle_id,
+            ordinal=component.ordinal,
+        )
+        if component_id is None:
+            return "duplicate"
+        if component.component_kind == "text":
+            assert final.text is not None
+            try:
+                sent = self.client.send_message(
+                    chat_id=event.group_id,
+                    text=final.text,
+                    reply_to_message_id=event.message_id,
+                )
+            except TelegramApiError as error:
+                return self._record_error(component_id, error)
+            self.bundles.mark_sent(component_id, platform_message_id=sent.message_id)
+            self._record_outbound(
+                event=event,
+                ordinal=component.ordinal,
+                sent_id=sent.message_id,
+                text=final.text,
             )
+            return "sent"
+
+        try:
+            entry = self._sticker_entry(final=final, active_persona=active_persona)
         except (ExpressionCatalogError, OSError) as error:
             code = getattr(error, "code", "catalog_unavailable")
-            logger.info("sticker_degraded reason=sticker_%s", code)
-            if not final.fallback_text:
-                return "silence"
-            return self._text(
-                event=event,
-                text=final.fallback_text,
-                requested_kind=ExternalEffectKind.FAILURE_REPLY,
-                active_persona=active_persona,
-            )
-        effect_id = self.runs.claim_external_effect(
-            message=event,
-            effect_kind=ExternalEffectKind.STICKER,
-            persona=active_persona,
-            asset_semantic_id=entry.semantic_id,
-        )
-        if effect_id is None:
-            return "duplicate"
+            self.bundles.mark_failed(component_id, error_code=f"sticker_{code}")
+            return "failed"
         assert entry.telegram_file_id is not None
         try:
             sent = self.client.send_sticker(
@@ -148,73 +143,65 @@ class ExternalEffectDelivery:
                 reply_to_message_id=event.message_id,
             )
         except TelegramApiError as error:
-            if _delivery_uncertain(error):
-                self.runs.mark_external_uncertain(effect_id, error_code=error.category)
-                return "send_uncertain"
-            if final.fallback_text:
-                return self._claimed_fallback(
-                    effect_id=effect_id,
-                    event=event,
-                    text=final.fallback_text,
-                    sticker_error=error.category,
-                )
-            self.runs.mark_external_failed(effect_id, error_code=error.category)
-            return "send_failed"
+            return self._record_error(component_id, error)
         if sent.asset_file_unique_id != entry.telegram_file_unique_id:
-            self.runs.mark_external_uncertain(
-                effect_id,
+            self.bundles.mark_uncertain(
+                component_id,
                 error_code="sticker_identity_mismatch",
             )
-            return "send_uncertain"
-        self.runs.mark_external_sent(
-            effect_id,
-            platform_message_id=sent.message_id,
-            delivered_effect_kind=ExternalEffectKind.STICKER,
-        )
+            return "uncertain"
+        self.bundles.mark_sent(component_id, platform_message_id=sent.message_id)
         self._record_outbound(
             event=event,
+            ordinal=component.ordinal,
             sent_id=sent.message_id,
             text=f"[sticker:{entry.semantic_id}]",
         )
-        return "sticker_sent"
+        return "sent"
 
-    def _claimed_fallback(
+    def _sticker_entry(
         self,
         *,
-        effect_id: int,
-        event: TelegramMessage,
-        text: str,
-        sticker_error: str,
-    ) -> str:
-        try:
-            sent = self.client.send_message(
-                chat_id=event.group_id,
-                text=text,
-                reply_to_message_id=event.message_id,
-            )
-        except TelegramApiError as error:
-            self._record_delivery_error(effect_id, error)
-            return "fallback_failed"
-        self.runs.mark_external_sent(
-            effect_id,
-            platform_message_id=sent.message_id,
-            delivered_effect_kind=ExternalEffectKind.FAILURE_REPLY,
+        final: FinalEffect,
+        active_persona: PersonaSnapshot,
+    ) -> ExpressionEntry:
+        if self.expression_catalog_provider is None:
+            raise ExpressionCatalogError("catalog_unavailable")
+        if (
+            final.sticker_id is None
+            or final.catalog_version is None
+            or final.catalog_digest is None
+        ):
+            raise ExpressionCatalogError("invalid_final_sticker")
+        catalog = self.expression_catalog_provider()
+        return validate_runtime_selection(
+            catalog,
+            semantic_id=final.sticker_id,
+            persona_version=active_persona.persona_version,
+            persona_digest=active_persona.persona_digest,
+            expected_catalog_version=final.catalog_version,
+            expected_catalog_digest=final.catalog_digest,
         )
-        self._record_outbound(event=event, sent_id=sent.message_id, text=text)
-        logger.info("sticker_degraded reason=%s", sticker_error)
-        return "fallback_sent"
 
-    def _record_delivery_error(self, effect_id: int, error: TelegramApiError) -> None:
+    def _record_error(self, component_id: int, error: TelegramApiError) -> str:
         if _delivery_uncertain(error):
-            self.runs.mark_external_uncertain(effect_id, error_code=error.category)
-        else:
-            self.runs.mark_external_failed(effect_id, error_code=error.category)
+            self.bundles.mark_uncertain(component_id, error_code=error.category)
+            return "uncertain"
+        self.bundles.mark_failed(component_id, error_code=error.category)
+        return "failed"
 
-    def _record_outbound(self, *, event: TelegramMessage, sent_id: str, text: str) -> None:
+    def _record_outbound(
+        self,
+        *,
+        event: TelegramMessage,
+        ordinal: int,
+        sent_id: str,
+        text: str,
+    ) -> None:
         self.messages.record_outbound(
             chat_id=event.group_id,
             telegram_message_id=sent_id,
-            event_id=f"outbound:{event.event_id}",
+            event_id=f"outbound:{event.event_id}:{ordinal}",
             bot_user_id=self.bot_user_id,
             bot_display_name=self.bot_display_name,
             text=text,
@@ -224,10 +211,30 @@ class ExternalEffectDelivery:
 
 
 def _delivery_uncertain(error: TelegramApiError) -> bool:
-    return error.category in {
+    if error.category in {
         "timeout",
         "transport_error",
         "invalid_json",
         "invalid_response",
         "invalid_result",
-    }
+    }:
+        return True
+    return error.category in {"http_error", "api_error"} and (
+        error.status_code is None or error.status_code >= 500
+    )
+
+
+def _delivery_status(requested_form: str, status: BundleStatus) -> str:
+    if status is BundleStatus.COMPLETED:
+        if requested_form == "sticker":
+            return "sticker_sent"
+        if requested_form == "text_sticker":
+            return "composite_sent"
+        return "sent"
+    if status is BundleStatus.DEGRADED:
+        return "text_sent_sticker_failed"
+    if status is BundleStatus.UNCERTAIN:
+        return "send_uncertain"
+    if status is BundleStatus.FAILED:
+        return "send_failed"
+    return "send_interrupted"

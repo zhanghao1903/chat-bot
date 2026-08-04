@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from collections import Counter
@@ -9,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any
+from uuid import uuid4
 
 from group_llm_agent.database import SQLiteDatabase
 from group_llm_agent.expression import (
@@ -18,6 +18,21 @@ from group_llm_agent.expression import (
 )
 from group_llm_agent.platforms.telegram import TelegramApiError, TelegramBotApiClient
 from group_llm_agent.telegram_multipart import TelegramMultipartTransport
+
+APPROVED_DEFAULT_AVATAR_CATALOG_SHA256 = (
+    "b871161e68c18115893d7aea932dabf1e9101d40278d6ce9168a6eb3735d405a"
+)
+APPROVED_DEFAULT_AVATAR_IMAGE_SHA256 = (
+    "fd7ec0efafb9dc1e36856461228cecbf7467548c7628454fe2022f7ad607badf"
+)
+DEFAULT_AVATAR_ID = "lezhi-default"
+_AVATAR_API_METHOD = "setMyProfilePhoto"
+
+
+@dataclass(frozen=True)
+class AvatarApplyResult:
+    operation_id: str
+    status: str
 
 
 @dataclass(frozen=True)
@@ -182,13 +197,15 @@ class AvatarController:
         telegram: TelegramBotApiClient,
         multipart: TelegramMultipartTransport,
         bot_user_id: str,
-        state_directory: Path,
+        state_directory: Path | None = None,
+        approved_catalog_digest: str = APPROVED_DEFAULT_AVATAR_CATALOG_SHA256,
     ) -> None:
         self.database = database
         self.telegram = telegram
         self.multipart = multipart
         self.bot_user_id = bot_user_id
         self.state_directory = state_directory
+        self.approved_catalog_digest = approved_catalog_digest
 
     def stable_mood_candidate(
         self,
@@ -238,77 +255,56 @@ class AvatarController:
         avatar_id: str,
         requested_by: str,
         reason_code: str,
-    ) -> str:
+        authorization_reference: str,
+    ) -> AvatarApplyResult:
+        if catalog.digest != self.approved_catalog_digest:
+            raise ExpressionCatalogError("avatar_catalog_digest_mismatch")
+        if avatar_id != DEFAULT_AVATAR_ID or catalog.default_avatar_id != DEFAULT_AVATAR_ID:
+            raise ExpressionCatalogError("only_default_avatar_authorized")
+        if not authorization_reference.startswith("user-confirmed-avatar-apply:"):
+            raise ExpressionCatalogError("explicit_avatar_apply_authorization_required")
         candidate = catalog.candidate(avatar_id)
         if candidate is None or candidate.status not in {"approved", "enabled"}:
             raise ExpressionCatalogError("avatar_not_approved")
-        if avatar_id != catalog.default_avatar_id and not self._has_verified_default_baseline(
-            catalog
-        ):
-            raise ExpressionCatalogError("default_avatar_baseline_required")
+        if candidate.image_sha256 != APPROVED_DEFAULT_AVATAR_IMAGE_SHA256:
+            raise ExpressionCatalogError("avatar_asset_digest_mismatch")
         image_path = (catalog.path.parent / candidate.image_path).resolve()
         if file_sha256(image_path) != candidate.image_sha256:
             raise ExpressionCatalogError("avatar_asset_digest_mismatch")
-        previous = self._capture_current_profile()
+        operation_id = f"avatar-{uuid4().hex}"
         audit_id = self._start_audit(
             catalog=catalog,
-            previous_avatar_id=previous[0],
+            operation_id=operation_id,
             requested_avatar_id=avatar_id,
             reason_code=reason_code,
             requested_by=requested_by,
+            authorization_reference=authorization_reference,
         )
         try:
+            identity = self.telegram.get_me()
+            identity_id = identity.get("id")
+            if (
+                isinstance(identity_id, bool)
+                or not isinstance(identity_id, (int, str))
+                or str(identity_id) != self.bot_user_id
+                or identity.get("is_bot") is not True
+            ):
+                raise TelegramApiError("getMe", "invalid_identity")
             self.multipart.set_static_profile_photo(jpeg=image_path.read_bytes())
-            readback = self.telegram.get_user_profile_photo(user_id=self.bot_user_id)
-            if readback is None:
-                raise TelegramApiError("setMyProfilePhoto", "verification_failed")
-            remote = self.telegram.get_file(file_id=readback.file_id)
-            readback_content = self.telegram.download_file(
-                file_path=remote.file_path,
-                maximum_bytes=8 * 1024 * 1024,
-            )
-            if hashlib.sha256(readback_content).hexdigest() != candidate.image_sha256:
-                raise TelegramApiError("setMyProfilePhoto", "verification_mismatch")
         except BaseException as error:
-            rollback = self._rollback(previous)
+            status = _avatar_failure_status(error)
             self._finish_audit(
                 audit_id,
-                platform_status="failed",
-                error_code=str(getattr(error, "category", type(error).__name__)),
-                rollback_status=rollback,
+                platform_status=status,
+                error_code=_safe_avatar_error_code(error),
             )
             raise
         self._finish_audit(
             audit_id,
-            platform_status="verified",
+            platform_status="success",
             error_code=None,
-            rollback_status=None,
         )
-        return readback.file_unique_id
-
-    def _capture_current_profile(self) -> tuple[str | None, bytes | None]:
-        current = self.telegram.get_user_profile_photo(user_id=self.bot_user_id)
-        if current is None:
-            return None, None
-        remote = self.telegram.get_file(file_id=current.file_id)
-        content = self.telegram.download_file(
-            file_path=remote.file_path,
-            maximum_bytes=8 * 1024 * 1024,
-        )
-        self.state_directory.mkdir(parents=True, exist_ok=True)
-        target = self.state_directory / f"previous-{current.file_unique_id}.jpg"
-        target.write_bytes(content)
-        return current.file_unique_id, content
-
-    def _rollback(self, previous: tuple[str | None, bytes | None]) -> str:
-        try:
-            if previous[1] is None:
-                self.telegram.remove_my_profile_photo()
-            else:
-                self.multipart.set_static_profile_photo(jpeg=previous[1])
-            return "succeeded"
-        except (OSError, TelegramApiError, RuntimeError):
-            return "failed"
+        return AvatarApplyResult(operation_id=operation_id, status="success")
 
     def _recent_moods(self, since: datetime) -> list[tuple[str, datetime, str, str, int]]:
         connection = self.database.connect()
@@ -349,7 +345,7 @@ class AvatarController:
                     AND avatar_catalog_version = ?
                     AND requested_avatar_id = ?
                     AND requested_image_sha256 = ?
-                    AND platform_status = 'verified'
+                    AND platform_status IN ('verified', 'success')
                 LIMIT 1
                 """,
                 (
@@ -369,7 +365,7 @@ class AvatarController:
             rows = connection.execute(
                 """
                 SELECT created_at FROM avatar_change_audit
-                WHERE bot_user_id = ? AND platform_status = 'verified'
+                WHERE bot_user_id = ? AND platform_status IN ('verified', 'success')
                 ORDER BY created_at DESC
                 """,
                 (self.bot_user_id,),
@@ -385,10 +381,11 @@ class AvatarController:
         self,
         *,
         catalog: AvatarCatalog,
-        previous_avatar_id: str | None,
+        operation_id: str,
         requested_avatar_id: str,
         reason_code: str,
         requested_by: str,
+        authorization_reference: str,
     ) -> int:
         now = datetime.now(UTC).isoformat()
         requested = catalog.candidate(requested_avatar_id)
@@ -398,18 +395,21 @@ class AvatarController:
             cursor = connection.execute(
                 """
                 INSERT INTO avatar_change_audit (
+                    operation_id, api_method, authorization_reference,
                     bot_user_id, avatar_catalog_version, avatar_catalog_digest,
                     previous_avatar_id, requested_avatar_id, requested_image_sha256,
                     reason_code,
                     cooldown_status, requested_by, platform_status,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'eligible', ?, 'applying', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, 'eligible', ?, 'applying', ?, ?)
                 """,
                 (
+                    operation_id,
+                    _AVATAR_API_METHOD,
+                    authorization_reference,
                     self.bot_user_id,
                     catalog.catalog_version,
                     catalog.digest,
-                    previous_avatar_id,
                     requested_avatar_id,
                     requested.image_sha256,
                     reason_code,
@@ -427,23 +427,46 @@ class AvatarController:
         *,
         platform_status: str,
         error_code: str | None,
-        rollback_status: str | None,
     ) -> None:
         with self.database.transaction() as connection:
             connection.execute(
                 """
                 UPDATE avatar_change_audit
-                SET platform_status = ?, error_code = ?, rollback_status = ?, updated_at = ?
+                SET platform_status = ?, error_code = ?, rollback_status = NULL, updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     platform_status,
                     error_code,
-                    rollback_status,
                     datetime.now(UTC).isoformat(),
                     audit_id,
                 ),
             )
+
+
+def _avatar_failure_status(error: BaseException) -> str:
+    if not isinstance(error, TelegramApiError):
+        return "uncertain"
+    if error.category in {
+        "timeout",
+        "transport_error",
+        "invalid_json",
+        "invalid_response",
+        "invalid_result",
+    }:
+        return "uncertain"
+    if error.category in {"http_error", "api_error"} and (
+        error.status_code is None or error.status_code >= 500
+    ):
+        return "uncertain"
+    return "failed"
+
+
+def _safe_avatar_error_code(error: BaseException) -> str:
+    if isinstance(error, TelegramApiError):
+        status = f"_{error.status_code}" if error.status_code is not None else ""
+        return f"{error.method}_{error.category}{status}"
+    return type(error).__name__
 
 
 def _parse_candidate(raw: object) -> AvatarCandidate:

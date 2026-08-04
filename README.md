@@ -16,7 +16,8 @@
 
 所有模式只处理配置的一个群，忽略私聊、其他群、bot 消息和重复 update。受支持的静态
 图片只有先通过同一寻址/连续性/主动参与门槛，才会被短暂下载并理解；媒体本身不会抬高
-触发资格。每个 Telegram 事件最多产生一个外部效果。
+触发资格。普通人格回复最多产生一个逻辑 bundle：一条文本、一个 sticker，或先文本后一个
+sticker；定时推荐、控制命令和其他外部写入仍各自最多一个外部效果。
 
 ## 对话连续性触发 v0.2
 
@@ -71,22 +72,26 @@ v2 的 37 条真实模型评测证据见
 [provider-evaluation.json](docs/feature/lezhi-persona-v2-release/provider-evaluation.json)，发布与
 回滚证据见 [verification.md](docs/feature/lezhi-persona-v2-release/verification.md)。
 
-## 图片理解、专属表情和头像 v0.3
+## 图片理解、专属表情和头像 v0.3.1
 
 `VISION_CAPABILITY=available` 后，只有已经获得回复资格的 photo、静态图片 document 或
 静态 sticker 才会被有界下载、清除元数据并交给视觉模型。图中文字、二维码和截图消息始终
 是不可信内容；应用会拒绝身份、敏感属性、医疗诊断和定位推断。原始媒体不写数据库或日志。
 
-48 枚专属表情候选及完整目录位于
-`src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3`。候选目录默认不能在运行时
-加载；必须依次经过用户预览确认、受控上传、真实 Telegram smoke、再次确认启用，且每一步
-绑定上一状态的 SHA-256。Writer 只看语义说明并选择语义 ID，无法读取或提交 Telegram
-`file_id`。首次外部效果仍只能是文字、一个 sticker 或静默三者之一。
+48 枚专属表情的不可变候选资产位于
+`src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3`；生产运行使用另行批准、映射且
+摘要锁定的 enabled 目录，仓库 candidate 字节不会原地晋级。Writer 只看语义说明并选择语义
+ID，无法读取或提交 Telegram `file_id`。一次人格回复可以是一条单句/多句文本、一个 sticker、
+或先发送一条文本再发送一个 sticker；两组件共享持久 bundle identity，组件结果不确定时不会
+重发或追加替代内容。线上指标只统计最近 7 天最多 100 个 sticker-eligible 且至少有一个成功
+组件的 bundle，少于 30 个只显示 insufficient-data。
 
-头像和表情 promotion 只通过 `group-llm-agent-operator` 执行，并持有独占锁直到验证或回滚
-完成。群消息、Writer 和只读工具都没有上传、启用或改头像权限。当前仓库只包含候选资产；
-在用户单独确认联系表、完整目录、生产子集、头像圆形裁切和心情映射前，生产表情与自动头像
-轮换必须保持关闭。
+头像和表情写操作只通过 `group-llm-agent-operator` 执行。v0.3.1 唯一授权的头像写入是摘要
+锁定的 `lezhi-default`：先用 `getMe` 绑定 bot identity，再恰好调用一次 Telegram 官方
+`setMyProfilePhoto`。官方接口明确 `result=true` 即记录 `success`；明确拒绝记录 `failed`，超时、
+传输中断、5xx 或结果无法解析记录 `uncertain`。系统不会读取旧头像、不会上传后 readback、
+不会把头像发给视觉模型，也不会自动重试或回滚。显示异常由用户人工上报，并通过 operation ID
+关联审计。四张 mood 头像、VISION 和自动头像轮换继续关闭。
 
 ## 订阅式工作日美食推荐 v0.4
 
@@ -311,3 +316,8 @@ docker compose -f deploy/compose.yaml config
 - [Lezhi visual expression v0.3 design](docs/feature/lezhi-sticker-expression-v0-3/design.md)
 - [Lezhi visual expression v0.3 implementation plan](docs/feature/lezhi-sticker-expression-v0-3/implementation-plan.md)
 - [Lezhi visual expression v0.3 verification](docs/feature/lezhi-sticker-expression-v0-3/verification.md)
+- [Lezhi avatar and expression v0.3.1 requirements](docs/feature/lezhi-avatar-and-expression-v0-3-1/requirements.md)
+- [Lezhi avatar and expression v0.3.1 design](docs/feature/lezhi-avatar-and-expression-v0-3-1/design.md)
+- [Lezhi avatar and expression v0.3.1 implementation plan](docs/feature/lezhi-avatar-and-expression-v0-3-1/implementation-plan.md)
+- [Lezhi avatar and expression v0.3.1 fixed evaluation](docs/feature/lezhi-avatar-and-expression-v0-3-1/evaluation-cases.json)
+- [Lezhi avatar and expression v0.3.1 verification](docs/feature/lezhi-avatar-and-expression-v0-3-1/verification.md)

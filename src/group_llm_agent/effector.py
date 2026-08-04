@@ -16,13 +16,13 @@ from group_llm_agent.events import (
 from group_llm_agent.expression import (
     ExpressionCatalog,
     ExpressionCatalogError,
-    ExpressionEntry,
     validate_runtime_selection,
 )
-from group_llm_agent.food_recommendation import (
-    FOOD_RECOMMENDATION_SCHEMA,
-    validate_food_recommendation,
+from group_llm_agent.expression_policy import (
+    classify_sticker_eligibility,
+    sticker_selection_error,
 )
+from group_llm_agent.food_recommendation import validate_food_recommendation
 from group_llm_agent.model import (
     ModelApiError,
     ModelResultError,
@@ -41,103 +41,9 @@ from group_llm_agent.web_tools import (
     WebToolScope,
     WebToolSession,
 )
+from group_llm_agent.writer_contract import WRITER_RESPONSE_SCHEMA
 from group_llm_agent.writer_prompt import build_writer_model_messages
 
-_MOOD_SIGNAL_SCHEMA = {
-    "type": "string",
-    "enum": ["neutral", "joyful", "playful", "gentle", "pouty"],
-}
-WRITER_RESPONSE_SCHEMA = {
-    "type": "object",
-    "oneOf": [
-        {
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "kind",
-                "reason_code",
-                "sticker_id",
-                "catalog_version",
-                "catalog_digest",
-                "fallback_text",
-            ],
-            "properties": {
-                "kind": {"const": "sticker"},
-                "reason_code": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9_]{0,63}$",
-                },
-                "sticker_id": {"type": "string", "minLength": 1, "maxLength": 128},
-                "catalog_version": {"type": "string", "minLength": 1, "maxLength": 128},
-                "catalog_digest": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-                "fallback_text": {
-                    "type": ["string", "null"],
-                    "maxLength": 4096,
-                },
-                "mood_signal": _MOOD_SIGNAL_SCHEMA,
-            },
-        },
-        {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["kind", "reason_code", "text"],
-            "properties": {
-                "kind": {"const": "reply"},
-                "reason_code": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9_]{0,63}$",
-                },
-                "text": {"type": "string", "minLength": 1, "maxLength": 4096},
-                "mood_signal": _MOOD_SIGNAL_SCHEMA,
-            },
-        },
-        {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["kind", "reason_code"],
-            "properties": {
-                "kind": {"const": "silence"},
-                "reason_code": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9_]{0,63}$",
-                },
-                "mood_signal": _MOOD_SIGNAL_SCHEMA,
-            },
-        },
-        FOOD_RECOMMENDATION_SCHEMA,
-        {
-            "type": "object",
-            "additionalProperties": False,
-            "required": [
-                "kind",
-                "reason_code",
-                "tool_name",
-                "tool_arguments",
-                "tool_purpose_code",
-            ],
-            "properties": {
-                "kind": {"const": "call_tool"},
-                "reason_code": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9_]{0,63}$",
-                },
-                "tool_name": {"type": "string"},
-                "tool_arguments": {
-                    "type": "object",
-                    "maxProperties": 8,
-                },
-                "tool_purpose_code": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9_]{0,63}$",
-                },
-                "extension_reason_code": {
-                    "type": "string",
-                    "pattern": "^[a-z0-9][a-z0-9_]{0,63}$",
-                },
-            },
-        },
-    ],
-}
 _DEFAULT_FAILURE_REPLY = "我这会儿有点卡住了，稍后再试试。"
 _LEAKAGE_MARKER_PATTERN = re.compile(
     r"(?:BEGIN|END)_UNTRUSTED|"
@@ -245,6 +151,7 @@ class WriterEffector:
                 vision_error_code=vision_error_code,
             )
         catalog = self._load_catalog()
+        sticker_eligibility = classify_sticker_eligibility(context, catalog)
         web_session = self.web_session_factory() if self.web_session_factory is not None else None
         history: list[str] = []
         tool_results: list[ToolExecutionResult | WebToolExecutionResult] = []
@@ -461,6 +368,91 @@ class WriterEffector:
                     reason_code=decision.reason_code,
                     persona=request.persona,
                     text=decision.text,
+                    catalog_version=(catalog.catalog_version if catalog is not None else None),
+                    catalog_digest=(catalog.digest if catalog is not None else None),
+                    sticker_eligible=sticker_eligibility.eligible,
+                    sticker_eligibility_reason=sticker_eligibility.reason_code,
+                    mood_signal=decision.mood_signal,
+                    used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                )
+                self.runs.complete_effect_run(
+                    effect_run_id=effect_run_id,
+                    effect=final,
+                    model_call_count=model_call_number,
+                    tool_call_count=tool_call_count,
+                )
+                return final
+            if decision.kind is WriterDecisionKind.REPLY_WITH_STICKER:
+                assert decision.text is not None
+                completed_at = self.clock()
+                validation_error = _final_effect_validation_error(
+                    request=request,
+                    bundle=bundle,
+                    text=decision.text,
+                    completed_at=completed_at,
+                )
+                if validation_error is not None:
+                    return self._degrade(
+                        request=request,
+                        effect_run_id=effect_run_id,
+                        model_call_count=model_call_number,
+                        tool_call_count=tool_call_count,
+                        used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                        reason_code=validation_error,
+                    )
+                try:
+                    current_catalog = self._load_catalog(required=True)
+                    assert current_catalog is not None
+                    current_eligibility = classify_sticker_eligibility(
+                        context,
+                        current_catalog,
+                    )
+                    entry = validate_runtime_selection(
+                        current_catalog,
+                        semantic_id=str(decision.sticker_id),
+                        persona_version=request.persona.persona_version,
+                        persona_digest=request.persona.persona_digest,
+                        expected_catalog_version=str(decision.catalog_version),
+                        expected_catalog_digest=str(decision.catalog_digest),
+                    )
+                    selection_error = sticker_selection_error(
+                        context=context,
+                        catalog=current_catalog,
+                        entry=entry,
+                        sticker_only=False,
+                    )
+                    if selection_error is not None:
+                        raise ExpressionCatalogError(selection_error)
+                except ExpressionCatalogError as error:
+                    final = FinalEffect(
+                        kind=FinalEffectKind.REPLY,
+                        reason_code=f"sticker_{error.code}",
+                        persona=request.persona,
+                        text=decision.text,
+                        catalog_version=(catalog.catalog_version if catalog is not None else None),
+                        catalog_digest=(catalog.digest if catalog is not None else None),
+                        sticker_eligible=sticker_eligibility.eligible,
+                        sticker_eligibility_reason=sticker_eligibility.reason_code,
+                        mood_signal=decision.mood_signal,
+                        used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                    )
+                    self.runs.complete_effect_run(
+                        effect_run_id=effect_run_id,
+                        effect=final,
+                        model_call_count=model_call_number,
+                        tool_call_count=tool_call_count,
+                    )
+                    return final
+                final = FinalEffect(
+                    kind=FinalEffectKind.REPLY_WITH_STICKER,
+                    reason_code=decision.reason_code,
+                    persona=request.persona,
+                    text=decision.text,
+                    sticker_id=entry.semantic_id,
+                    catalog_version=current_catalog.catalog_version,
+                    catalog_digest=current_catalog.digest,
+                    sticker_eligible=current_eligibility.eligible,
+                    sticker_eligibility_reason=current_eligibility.reason_code,
                     mood_signal=decision.mood_signal,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                 )
@@ -483,9 +475,11 @@ class WriterEffector:
                         expected_catalog_version=str(decision.catalog_version),
                         expected_catalog_digest=str(decision.catalog_digest),
                     )
-                    sticker_error = _sticker_selection_error(
+                    sticker_error = sticker_selection_error(
                         context=context,
+                        catalog=current_catalog,
                         entry=entry,
+                        sticker_only=True,
                     )
                     if sticker_error is not None:
                         raise ExpressionCatalogError(sticker_error)
@@ -514,6 +508,8 @@ class WriterEffector:
                     catalog_version=current_catalog.catalog_version,
                     catalog_digest=current_catalog.digest,
                     fallback_text=decision.fallback_text,
+                    sticker_eligible=True,
+                    sticker_eligibility_reason="light_interaction",
                     mood_signal=decision.mood_signal,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                 )
@@ -794,59 +790,3 @@ def _final_effect_validation_error(
 
 def _tool_result_fingerprint(result: ToolExecutionResult | WebToolExecutionResult) -> str:
     return f"{result.capability}:{result.content_json}"
-
-
-_SERIOUS_CONTEXT = re.compile(
-    r"(?:医疗|受伤|伤口|流血|出血|血迹|自伤|自杀|违法|报警|合同|法律|病|药|"
-    r"药物|诊断|急救|步骤|怎么做|为什么|medical|medication|medicine|pills?|"
-    r"injur|wounds?|bleed|blood|self[- ]?harm|suicide|illegal|legal|diagnos|"
-    r"emergency|steps?|how (?:do|to)|why)",
-    re.IGNORECASE,
-)
-
-_STICKER_ONLY_SAFE_VISION_FLAGS = frozenset({"known_enabled_sticker"})
-
-
-def _sticker_selection_error(
-    *,
-    context: EffectContext,
-    entry: ExpressionEntry,
-) -> str | None:
-    if _context_requires_text(context):
-        return "necessary_text_required"
-    relationship_rank = 1 if any(member.items for member in context.member_memory) else 0
-    required_rank = {"public": 0, "familiar": 1, "close": 2}[entry.minimum_relationship]
-    if relationship_rank < required_rank:
-        return "relationship_insufficient"
-    last_outbound = next(
-        (item for item in reversed(context.recent_scene) if item.direction == "outbound"),
-        None,
-    )
-    if last_outbound is not None and last_outbound.text == f"[sticker:{entry.semantic_id}]":
-        return "consecutive_repeat"
-    return None
-
-
-def _context_requires_text(context: EffectContext) -> bool:
-    if context.current_message is not None and _SERIOUS_CONTEXT.search(
-        context.current_message.text
-    ):
-        return True
-    if context.vision_error_code is not None:
-        return True
-    evidence = context.vision_evidence
-    if evidence is None:
-        return False
-    normalized_flags = {flag.strip().lower() for flag in evidence.safety_flags}
-    if normalized_flags and not normalized_flags <= _STICKER_ONLY_SAFE_VISION_FLAGS:
-        return True
-    visual_text = "\n".join(
-        (
-            evidence.summary,
-            *evidence.visible_text,
-            *evidence.observations,
-            *evidence.inferences,
-            *evidence.uncertainties,
-        )
-    )
-    return _SERIOUS_CONTEXT.search(visual_text) is not None

@@ -7,9 +7,9 @@ from pathlib import Path
 
 from helpers import temporary_database
 
+from group_llm_agent.effect_bundle import BundleStatus, EffectBundleRepository
 from group_llm_agent.effect_delivery import ExternalEffectDelivery
 from group_llm_agent.events import (
-    ExternalEffectStatus,
     FinalEffect,
     FinalEffectKind,
     PersonaSnapshot,
@@ -31,9 +31,11 @@ class _Telegram:
         self,
         *,
         sticker_error: TelegramApiError | None = None,
+        message_error: TelegramApiError | None = None,
         unique_id: str = "unique-1",
     ) -> None:
         self.sticker_error = sticker_error
+        self.message_error = message_error
         self.unique_id = unique_id
         self.stickers = 0
         self.messages = 0
@@ -46,6 +48,8 @@ class _Telegram:
 
     def send_message(self, **_kwargs: object) -> SentMessage:
         self.messages += 1
+        if self.message_error is not None:
+            raise self.message_error
         return SentMessage("901")
 
 
@@ -94,6 +98,16 @@ def _final(catalog) -> FinalEffect:
         catalog_version=catalog.catalog_version,
         catalog_digest=catalog.digest,
         fallback_text="我在呀。",
+        sticker_eligible=True,
+        sticker_eligibility_reason="ordinary_social_turn",
+    )
+
+
+def _composite(catalog) -> FinalEffect:
+    return replace(
+        _final(catalog),
+        kind=FinalEffectKind.REPLY_WITH_STICKER,
+        text="我在呀。",
     )
 
 
@@ -122,11 +136,13 @@ class ExternalEffectDeliveryTests(unittest.TestCase):
                 "duplicate",
                 delivery.deliver(event=_event(), final=final, active_persona=final.persona),
             )
-            record = RunRepository(database).get_external_effect(
+            record = EffectBundleRepository(database).get(
                 chat_id="-1001", trigger_event_id="event-1"
             )
             assert record is not None
-            self.assertEqual(ExternalEffectStatus.SENT, record.status)
+            self.assertEqual(BundleStatus.COMPLETED, record.status)
+            self.assertEqual("sticker", record.requested_form)
+            self.assertEqual("sent", record.components[0].status.value)
             self.assertEqual(1, client.stickers)
 
     def test_uncertain_failure_and_identity_mismatch_never_fallback(self) -> None:
@@ -134,6 +150,7 @@ class ExternalEffectDeliveryTests(unittest.TestCase):
         final = _final(catalog)
         for client in (
             _Telegram(sticker_error=TelegramApiError("sendSticker", "timeout")),
+            _Telegram(sticker_error=TelegramApiError("sendSticker", "http_error", 503)),
             _Telegram(unique_id="wrong-unique"),
         ):
             with self.subTest(client=client), temporary_database() as database:
@@ -144,22 +161,87 @@ class ExternalEffectDeliveryTests(unittest.TestCase):
                 )
                 self.assertEqual(0, client.messages)
 
-    def test_confirmed_failure_uses_one_text_fallback_under_same_claim(self) -> None:
+    def test_confirmed_sticker_failure_does_not_send_fallback_text(self) -> None:
         catalog = _enabled_catalog()
         final = _final(catalog)
         with temporary_database() as database:
             client = _Telegram(sticker_error=TelegramApiError("sendSticker", "api_error", 400))
             delivery = self._delivery(database, client, catalog)
             self.assertEqual(
-                "fallback_sent",
+                "send_failed",
                 delivery.deliver(event=_event(), final=final, active_persona=final.persona),
             )
-            record = RunRepository(database).get_external_effect(
+            record = EffectBundleRepository(database).get(
                 chat_id="-1001", trigger_event_id="event-1"
             )
             assert record is not None
-            self.assertEqual(ExternalEffectStatus.SENT, record.status)
-            self.assertEqual("failure_reply", record.delivered_effect_kind.value)  # type: ignore[union-attr]
+            self.assertEqual(BundleStatus.FAILED, record.status)
+            self.assertEqual((1, 0), (client.stickers, client.messages))
+
+    def test_composite_is_text_then_sticker_and_each_component_is_claimed_once(self) -> None:
+        catalog = _enabled_catalog()
+        final = _composite(catalog)
+        with temporary_database() as database:
+            client = _Telegram()
+            delivery = self._delivery(database, client, catalog)
+
+            self.assertEqual(
+                "composite_sent",
+                delivery.deliver(event=_event(), final=final, active_persona=final.persona),
+            )
+            record = EffectBundleRepository(database).get(
+                chat_id="-1001", trigger_event_id="event-1"
+            )
+            assert record is not None
+            self.assertEqual(BundleStatus.COMPLETED, record.status)
+            self.assertEqual(
+                ["text", "sticker"], [item.component_kind for item in record.components]
+            )
+            self.assertEqual(["sent", "sent"], [item.status.value for item in record.components])
+            self.assertEqual((1, 1), (client.stickers, client.messages))
+            self.assertEqual(
+                "duplicate",
+                delivery.deliver(event=_event(), final=final, active_persona=final.persona),
+            )
+            self.assertEqual((1, 1), (client.stickers, client.messages))
+
+    def test_composite_text_failure_skips_sticker_and_uncertain_text_is_not_retried(self) -> None:
+        catalog = _enabled_catalog()
+        final = _composite(catalog)
+        for error, expected in (
+            (TelegramApiError("sendMessage", "api_error", 400), "send_failed"),
+            (TelegramApiError("sendMessage", "timeout"), "send_uncertain"),
+        ):
+            with self.subTest(error=error.category), temporary_database() as database:
+                client = _Telegram(message_error=error)
+                delivery = self._delivery(database, client, catalog)
+                self.assertEqual(
+                    expected,
+                    delivery.deliver(event=_event(), final=final, active_persona=final.persona),
+                )
+                record = EffectBundleRepository(database).get(
+                    chat_id="-1001", trigger_event_id="event-1"
+                )
+                assert record is not None
+                self.assertEqual("skipped", record.components[1].status.value)
+                self.assertEqual((0, 1), (client.stickers, client.messages))
+
+    def test_composite_sticker_failure_is_terminal_text_only_degradation(self) -> None:
+        catalog = _enabled_catalog()
+        final = _composite(catalog)
+        with temporary_database() as database:
+            client = _Telegram(sticker_error=TelegramApiError("sendSticker", "api_error", 400))
+            delivery = self._delivery(database, client, catalog)
+            self.assertEqual(
+                "text_sent_sticker_failed",
+                delivery.deliver(event=_event(), final=final, active_persona=final.persona),
+            )
+            record = EffectBundleRepository(database).get(
+                chat_id="-1001", trigger_event_id="event-1"
+            )
+            assert record is not None
+            self.assertEqual(BundleStatus.DEGRADED, record.status)
+            self.assertEqual(["sent", "failed"], [item.status.value for item in record.components])
             self.assertEqual((1, 1), (client.stickers, client.messages))
 
 

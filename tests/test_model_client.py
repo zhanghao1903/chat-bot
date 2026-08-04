@@ -21,6 +21,7 @@ from group_llm_agent.model import (
     parse_trigger_decision,
     parse_writer_decision,
 )
+from group_llm_agent.writer_contract import WRITER_RESPONSE_SCHEMA, writer_protocol_text
 
 _API_KEY = "test-secret-key-never-log"
 _MODELS = {
@@ -239,6 +240,16 @@ class ModelClientTests(unittest.TestCase):
 
 
 class ModelResultParserTests(unittest.TestCase):
+    def test_writer_enum_schema_and_prompt_contract_have_identical_kinds(self) -> None:
+        schema_kinds = {
+            branch["properties"]["kind"]["const"] for branch in WRITER_RESPONSE_SCHEMA["oneOf"]
+        }
+        enum_kinds = {item.value for item in WriterDecisionKind}
+        self.assertEqual(enum_kinds, schema_kinds)
+        protocol = writer_protocol_text()
+        for final_kind in ("reply", "reply_with_sticker", "sticker", "silence"):
+            self.assertIn(f'"kind":"{final_kind}"', protocol)
+
     def test_continuity_parser_accepts_exact_contract_and_rejects_extra_fields(self) -> None:
         persona = PersonaSnapshot("test", "v1", "digest")
         for kind in ContinuityDecisionKind:
@@ -339,6 +350,36 @@ class ModelResultParserTests(unittest.TestCase):
                 ),
                 allowed_tools=frozenset(),
             )
+
+    def test_writer_composite_parser_requires_one_text_and_application_sticker_identity(
+        self,
+    ) -> None:
+        payload = {
+            "kind": "reply_with_sticker",
+            "reason_code": "warm_greeting",
+            "text": "我在呀。\n刚刚去接了杯水。",
+            "sticker_id": "lezhi.hello_wave.a01",
+            "catalog_version": "lezhi-expression-v0.3",
+            "catalog_digest": "a" * 64,
+            "mood_signal": "playful",
+        }
+        decision = parse_writer_decision(
+            StructuredModelResult(payload),
+            allowed_tools=frozenset(),
+        )
+        self.assertEqual(WriterDecisionKind.REPLY_WITH_STICKER, decision.kind)
+        self.assertEqual(payload["text"], decision.text)
+        self.assertEqual(payload["sticker_id"], decision.sticker_id)
+
+        for injected in ("telegram_file_id", "sticker_url", "second_text"):
+            with self.subTest(injected=injected):
+                invalid = dict(payload)
+                invalid[injected] = "provider-controlled"
+                with self.assertRaisesRegex(ModelResultError, "unexpected_fields"):
+                    parse_writer_decision(
+                        StructuredModelResult(invalid),
+                        allowed_tools=frozenset(),
+                    )
 
     def test_writer_food_parser_accepts_only_exact_bounded_shape(self) -> None:
         payload = {
