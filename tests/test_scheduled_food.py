@@ -133,6 +133,39 @@ class ScheduledFoodProcessorTests(unittest.TestCase):
             )
             self.assertEqual(0, fixture.telegram.calls)
 
+    def test_restart_after_durable_send_ack_reconciles_occurrence_as_sent(self) -> None:
+        with ScheduledFixtureContext() as fixture:
+            prepared = fixture.prepare_manually()
+            effect_id = fixture.delivery_repository.claim_prepared(
+                occurrence_id=prepared.occurrence_id,
+                persona=fixture.bundle.snapshot,
+                now=fixture.now,
+            )
+            assert effect_id is not None
+            fixture.runs.mark_external_sent(
+                effect_id,
+                platform_message_id="already-sent-telegram-message",
+            )
+
+            self.assertEqual(1, fixture.processor.recover_inflight())
+            recovered = fixture.repository.get_occurrence(occurrence_id=prepared.occurrence_id)
+            assert recovered is not None
+            self.assertEqual(OccurrenceStatus.SENT, recovered.status)
+            self.assertEqual("delivery_ack_reconciled", recovered.reason_code)
+            self.assertEqual(
+                ("dish:noodles",),
+                fixture.repository.recent_primary_keys(chat_id=prepared.chat_id),
+            )
+            self.assertEqual(
+                OccurrenceStatus.SENT,
+                fixture.processor.process(
+                    occurrence=recovered,
+                    source=fixture.source,
+                    worker_id="worker-after-restart",
+                ),
+            )
+            self.assertEqual(0, fixture.telegram.calls)
+
     def test_timeout_after_claim_is_uncertain_and_replay_does_not_send(self) -> None:
         with ScheduledFixtureContext(
             send_error=TelegramApiError("sendMessage", "timeout")

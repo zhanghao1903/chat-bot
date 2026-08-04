@@ -207,6 +207,64 @@ class AutomationRepositoryTests(unittest.TestCase):
             )
             self.assertIsNotNone(recovered)
 
+    def test_unleased_occurrence_refreshes_after_schedule_change_but_leased_is_immutable(
+        self,
+    ) -> None:
+        with temporary_database() as database:
+            repository = AutomationRepository(database)
+            original_config = repository.enable_group(chat_id="-1001")
+            due = repository.create_occurrence(
+                bot_user_id="7",
+                config=original_config,
+                local_date=date(2026, 8, 3),
+                slot=MealSlot.LUNCH,
+                persona=_PERSONA,
+            )
+            assert due is not None
+            changed_config = repository.update_config(
+                chat_id="-1001",
+                timezone="Asia/Shanghai",
+                lunch_time="11:40",
+                dinner_time="17:30",
+                location_text=None,
+            )
+            refreshed = repository.create_occurrence(
+                bot_user_id="7",
+                config=changed_config,
+                local_date=date(2026, 8, 3),
+                slot=MealSlot.LUNCH,
+                persona=_PERSONA,
+            )
+            assert refreshed is not None
+            self.assertEqual(due.occurrence_id, refreshed.occurrence_id)
+            self.assertEqual(datetime(2026, 8, 3, 3, 40, tzinfo=UTC), refreshed.scheduled_for)
+            self.assertEqual(changed_config.config_version, refreshed.config_version)
+
+            leased = repository.lease(
+                occurrence_id=refreshed.occurrence_id,
+                worker_id="worker-a",
+                now=refreshed.scheduled_for,
+            )
+            assert leased is not None
+            later_config = repository.update_config(
+                chat_id="-1001",
+                timezone="Asia/Shanghai",
+                lunch_time="11:50",
+                dinner_time="17:30",
+                location_text=None,
+            )
+            immutable = repository.create_occurrence(
+                bot_user_id="7",
+                config=later_config,
+                local_date=date(2026, 8, 3),
+                slot=MealSlot.LUNCH,
+                persona=_PERSONA,
+            )
+            assert immutable is not None
+            self.assertEqual(OccurrenceStatus.LEASED, immutable.status)
+            self.assertEqual(datetime(2026, 8, 3, 3, 40, tzinfo=UTC), immutable.scheduled_for)
+            self.assertEqual(changed_config.config_version, immutable.config_version)
+
 
 class ScheduledEffectSourceTests(unittest.TestCase):
     def test_scheduled_request_has_no_fake_telegram_message(self) -> None:

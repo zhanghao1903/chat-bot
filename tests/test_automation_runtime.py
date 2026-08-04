@@ -155,6 +155,46 @@ class AutomationSchedulerTests(unittest.TestCase):
             assert stored is not None
             self.assertEqual(OccurrenceStatus.SENT, stored.status)
 
+    def test_schedule_edit_refreshes_old_unleased_row_and_sends_new_slot_once(self) -> None:
+        with temporary_database() as database:
+            repository = AutomationRepository(database)
+            old_config = repository.enable_group(chat_id="-1001")
+            repository.subscribe(chat_id="-1001", member_user_id="member-1")
+            old_occurrence = repository.create_occurrence(
+                bot_user_id="7",
+                config=old_config,
+                local_date=datetime(2026, 8, 3, tzinfo=UTC).date(),
+                slot=MealSlot.LUNCH,
+                persona=_PERSONA,
+            )
+            assert old_occurrence is not None
+            self.assertEqual(datetime(2026, 8, 3, 3, 30, tzinfo=UTC), old_occurrence.scheduled_for)
+
+            new_config = repository.update_config(
+                chat_id="-1001",
+                timezone="Asia/Shanghai",
+                lunch_time="11:40",
+                dinner_time="17:30",
+                location_text=None,
+            )
+            processor = FakeOccurrenceProcessor()
+            scheduler = AutomationScheduler(
+                repository=repository,
+                processor=processor,
+                bot_user_id="7",
+                persona=_PERSONA,
+                clock=lambda: datetime(2026, 8, 3, 3, 40, tzinfo=UTC),
+            )
+
+            self.assertEqual(1, scheduler.run_once(worker_id="worker-after-edit"))
+            self.assertEqual(0, scheduler.run_once(worker_id="worker-restart"))
+            self.assertEqual(1, len(processor.sources))
+            refreshed = repository.get_occurrence(occurrence_id=old_occurrence.occurrence_id)
+            assert refreshed is not None
+            self.assertEqual(OccurrenceStatus.SENT, refreshed.status)
+            self.assertEqual(datetime(2026, 8, 3, 3, 40, tzinfo=UTC), refreshed.scheduled_for)
+            self.assertEqual(new_config.config_version, refreshed.config_version)
+
     def test_next_schedule_skips_weekend(self) -> None:
         with temporary_database() as database:
             repository = AutomationRepository(database)

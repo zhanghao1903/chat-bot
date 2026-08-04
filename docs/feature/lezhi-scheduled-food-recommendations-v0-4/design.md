@@ -113,6 +113,11 @@ target member. Inputs have fixed keys, lengths and enums; cron expressions, prom
 sequences and unknown options are rejected. Status reports a subscription count, never a member
 list or another member's preferences.
 
+The subscribe acknowledgement and `/food_status` are generated from the active group config in
+one message. They identify the current group, show its IANA timezone, lunch/dinner wall times and
+next occurrence converted into that timezone, state that each slot is coalesced into at most one
+group message, and include `/food_unsubscribe`. They never print a subscriber identity.
+
 `/food_disable CONFIRM` invalidates future eligibility and deletes active subscriptions and
 preference rows in the same transaction. A minimal redacted action audit is retained for 30 days.
 Already claimed external effects are not revoked or resent.
@@ -256,15 +261,20 @@ stateDiagram-v2
 ```
 
 At each bounded tick the worker enumerates enabled registry/config pairs and only the current and
-immediately previous local slot. It inserts the deterministic row if absent, then atomically
-leases one eligible row. Before expensive work it rechecks enabled/paused state, at least one
+immediately previous local slot. It inserts the deterministic row if absent. If the same stable
+date/slot row is still unleased `due` after a schedule edit, the same transaction refreshes its
+scheduled instant, grace deadline, config version and persona snapshot; leased, prepared, claimed
+and terminal rows are immutable. The worker then atomically leases one eligible row. Before
+expensive work it rechecks enabled/paused state, at least one
 subscription, config version, grace deadline, persona snapshot and absence of an external-effect
 claim.
 
 A crash before `prepared` releases through lease expiry and may recompute. A crash after
-`prepared` reuses the same stored payload/text. A crash after the external-effect claim never
-resends; `sending` becomes `uncertain` on recovery unless a durable Telegram success acknowledgement
-already exists. `sent`, all skipped outcomes, `uncertain` and final definite failures are terminal.
+`prepared` reuses the same stored payload/text. Recovery joins the occurrence to its durable
+external effect: `sent` acknowledgement reconciles the occurrence to `sent`, `failed` to definite
+failure, and only an ambiguous `sending`, `uncertain` or missing effect becomes `uncertain`.
+No post-claim state is resent. `sent`, all skipped outcomes, `uncertain` and final definite failures
+are terminal.
 
 The worker keeps no correctness-critical in-memory cursor. On startup it evaluates the last
 30 minutes using occurrence keys, so a restart after 20 minutes can execute once and a restart
@@ -388,34 +398,35 @@ The Writer response schema gains a scheduled-only `food_recommendation` decision
 
 ```text
 kind, reason_code, mode(generic|sourced),
-primary{canonical_key,label,description},
-alternatives[exactly 2 of the same shape],
-source_result_ids[0..3], cautious_freshness_note
+primary{choice_type,generic_dish_id,source_result_id,reason_tag},
+alternatives[exactly 2 of the same closed shape]
 ```
 
-The model cannot provide raw citation URLs; it references opaque successful Web result IDs. The
-application resolves them to normalized URLs and renders the final Telegram text. All fields are
-bounded plain text and must be free of protocol/leakage markers.
+The model cannot author a displayed dish/merchant label, description, safety note, current fact or
+raw citation URL. It selects one of the application registry's generic dish IDs or, with an
+authorized location, three distinct opaque successful Web result IDs. The application owns the
+closed reason-tag text, resolves source IDs to current-turn normalized URL/title records, derives
+stable merchant keys and renders the final Telegram text.
 
 The application-owned validator requires:
 
-- exactly one primary and exactly two alternatives with distinct canonical keys and meaningful
-  distinct directions;
+- exactly one primary and exactly two alternatives with distinct application-derived keys and
+  displayed labels;
 - primary not present in the last five successful primary keys;
-- no subscriber name/list, sensitive preference inference, allergy guarantee, medical advice,
-  purchase, reservation, payment, navigation or other external-write claim;
-- `generic` mode has no merchant, opening, price, address, ranking or “nearby” claim and no source
-  is required;
-- `sourced` mode has an authorized group location, one to three successful current-run source
-  IDs, conservative wording and sources supporting every current merchant/opening/price/address
-  or ranking claim;
+- `generic` mode consists only of three distinct registered dish IDs and null source IDs, so model
+  output cannot introduce a merchant, current fact or health/safety reassurance;
+- `sourced` mode has an authorized group location and three distinct successful current-run source
+  IDs; each displayed merchant label is derived from a bounded entity-like result title and each
+  claim carries its own normalized URL;
+- free-form labels, descriptions, freshness/health/medical notes and extra fields are schema errors
+  regardless of wording; rendered reasons and cautious source wording are application-owned;
 - source conflict, missing evidence, stale/unsafe content or uncertainty removes the current fact
   or downgrades the whole payload to generic;
 - persona snapshot, deadline, config version, subscription eligibility and group identity still
   match immediately before preparation and before the external-effect claim.
 
 Rendering is deterministic and bounded for Telegram. It keeps Lezhi's short opening, a labelled
-primary, two concise alternatives and optional `来源：` links. It never includes internal
+primary, two concise alternatives and, for sourced mode, exactly three `来源：` links. It never includes internal
 reasoning, tool protocol, raw page content or operational errors. The exact rendered text and
 canonical primary key are persisted before the effect claim.
 

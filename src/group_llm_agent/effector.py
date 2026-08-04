@@ -397,7 +397,7 @@ class WriterEffector:
                 food, validation_error = validate_food_recommendation(
                     decision=decision,
                     request=request,
-                    citation_urls=(web_session.citation_urls if web_session is not None else {}),
+                    citations=(web_session.citations if web_session is not None else {}),
                     validate_text=validate_food_text,
                 )
                 if food is None:

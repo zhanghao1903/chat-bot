@@ -81,8 +81,16 @@ class AutomationControlTests(unittest.TestCase):
                 service.handle(
                     message("/food_subscribe", event_id="update-2"),
                     persona=persona,
+                    now=datetime(2026, 8, 3, 2, tzinfo=UTC),
                 ).status,
             )
+            subscription_ack = telegram.sent[-1]
+            self.assertIn("当前群（-1001）", subscription_ack)
+            self.assertIn("时区 Asia/Shanghai", subscription_ack)
+            self.assertIn("午餐 11:30，晚餐 17:30", subscription_ack)
+            self.assertIn("下一次：2026-08-03 11:30 (Asia/Shanghai)", subscription_ack)
+            self.assertIn("全群合并发送最多一条", subscription_ack)
+            self.assertIn("/food_unsubscribe", subscription_ack)
             status = service.handle(
                 message("/food_status", event_id="update-3"),
                 persona=persona,
@@ -90,6 +98,7 @@ class AutomationControlTests(unittest.TestCase):
             )
             self.assertEqual("status", status.status)
             self.assertIn("订阅数：1", telegram.sent[-1])
+            self.assertIn("下一次：2026-08-03 11:30 (Asia/Shanghai)", telegram.sent[-1])
             self.assertNotIn("member-1", telegram.sent[-1])
             self.assertEqual(
                 "unsubscribed",
@@ -158,6 +167,36 @@ class AutomationControlTests(unittest.TestCase):
                 persona=persona,
             )
             self.assertEqual("invalid_command", invalid.status)
+
+    def test_status_and_subscribe_render_next_time_in_configured_iana_timezone(self) -> None:
+        with temporary_database() as database:
+            telegram = FakeTelegram()
+            service = self.service(database, telegram)
+            persona = PersonaSnapshot("lezhi", "v2", "a" * 64)
+            service.handle(message("/food_enable"), persona=persona)
+            service.handle(
+                message(
+                    "/food_config timezone=America/New_York lunch=11:20 dinner=17:40",
+                    event_id="update-2",
+                ),
+                persona=persona,
+            )
+            service.handle(
+                message("/food_subscribe", event_id="update-3"),
+                persona=persona,
+                now=datetime(2026, 8, 3, 14, tzinfo=UTC),
+            )
+            self.assertIn("时区 America/New_York", telegram.sent[-1])
+            self.assertIn("下一次：2026-08-03 11:20 (America/New_York)", telegram.sent[-1])
+
+            service.handle(
+                message("/food_status", event_id="update-4"),
+                persona=persona,
+                now=datetime(2026, 8, 3, 14, tzinfo=UTC),
+            )
+            self.assertIn("下一次：2026-08-03 11:20 (America/New_York)", telegram.sent[-1])
+            self.assertIn("当前群（-1001）", telegram.sent[-1])
+            self.assertIn("/food_unsubscribe", telegram.sent[-1])
 
     def test_disable_requires_confirmation_and_clears_subscriptions(self) -> None:
         with temporary_database() as database:

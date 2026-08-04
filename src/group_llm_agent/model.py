@@ -90,9 +90,10 @@ class StructuredModelResult:
 
 @dataclass(frozen=True)
 class FoodChoice:
-    canonical_key: str
-    label: str
-    description: str
+    choice_type: str
+    generic_dish_id: str | None
+    source_result_id: str | None
+    reason_tag: str
 
 
 @dataclass(frozen=True)
@@ -112,8 +113,6 @@ class WriterDecision:
     food_mode: str | None = None
     food_primary: FoodChoice | None = None
     food_alternatives: tuple[FoodChoice, ...] = ()
-    source_result_ids: tuple[str, ...] = ()
-    cautious_freshness_note: str | None = None
 
 
 @dataclass(frozen=True)
@@ -388,8 +387,6 @@ def parse_writer_decision(
                 "mode",
                 "primary",
                 "alternatives",
-                "source_result_ids",
-                "cautious_freshness_note",
             },
         )
         mode = payload["mode"]
@@ -398,25 +395,12 @@ def parse_writer_decision(
         alternatives = payload["alternatives"]
         if not isinstance(alternatives, list) or len(alternatives) != 2:
             raise ModelResultError("invalid_food_alternatives")
-        source_ids = payload["source_result_ids"]
-        if (
-            not isinstance(source_ids, list)
-            or len(source_ids) > 3
-            or not all(_is_identifier(value, maximum=32) for value in source_ids)
-            or len(set(source_ids)) != len(source_ids)
-        ):
-            raise ModelResultError("invalid_food_sources")
-        note = payload["cautious_freshness_note"]
-        if note is not None:
-            note = _parse_text(note, maximum=240, category="invalid_food_freshness_note")
         return WriterDecision(
             kind=kind,
             reason_code=_parse_reason_code(payload["reason_code"]),
             food_mode=str(mode),
             food_primary=_parse_food_choice(payload["primary"]),
             food_alternatives=tuple(_parse_food_choice(item) for item in alternatives),
-            source_result_ids=tuple(source_ids),
-            cautious_freshness_note=note,
         )
 
     required = {"kind", "reason_code", "tool_name", "tool_arguments", "tool_purpose_code"}
@@ -628,19 +612,24 @@ def _parse_reason_code(value: Any) -> str:
 def _parse_food_choice(value: object) -> FoodChoice:
     if not isinstance(value, dict):
         raise ModelResultError("invalid_food_choice")
-    _require_fields(value, {"canonical_key", "label", "description"})
+    _require_fields(value, {"choice_type", "generic_dish_id", "source_result_id", "reason_tag"})
+    choice_type = value["choice_type"]
+    if choice_type not in {"generic_dish", "merchant"}:
+        raise ModelResultError("invalid_food_choice_type")
+    generic_dish_id = value["generic_dish_id"]
+    if generic_dish_id is not None and not _is_identifier(generic_dish_id, maximum=64):
+        raise ModelResultError("invalid_food_generic_dish_id")
+    source_result_id = value["source_result_id"]
+    if source_result_id is not None and not _is_identifier(source_result_id, maximum=32):
+        raise ModelResultError("invalid_food_source_result_id")
+    reason_tag = value["reason_tag"]
+    if reason_tag not in {"warming", "hearty", "light", "shareable", "quick", "variety"}:
+        raise ModelResultError("invalid_food_reason_tag")
     return FoodChoice(
-        canonical_key=_parse_identifier(
-            value["canonical_key"],
-            maximum=64,
-            category="invalid_food_canonical_key",
-        ),
-        label=_parse_text(value["label"], maximum=80, category="invalid_food_label"),
-        description=_parse_text(
-            value["description"],
-            maximum=240,
-            category="invalid_food_description",
-        ),
+        choice_type=str(choice_type),
+        generic_dish_id=str(generic_dish_id) if generic_dish_id is not None else None,
+        source_result_id=str(source_result_id) if source_result_id is not None else None,
+        reason_tag=str(reason_tag),
     )
 
 

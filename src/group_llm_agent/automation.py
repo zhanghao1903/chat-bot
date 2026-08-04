@@ -491,6 +491,29 @@ class AutomationRepository:
                     now,
                 ),
             )
+            # The stable occurrence key intentionally survives a schedule edit. Until a
+            # worker has leased the send right, refresh that row to the active schedule
+            # snapshot instead of letting an obsolete unleased row poison the new slot.
+            # Claimed states are immutable and therefore excluded by status='due'.
+            connection.execute(
+                """
+                UPDATE automation_occurrences
+                SET scheduled_for = ?, grace_deadline = ?, config_version = ?,
+                    persona_id = ?, persona_version = ?, persona_digest = ?,
+                    reason_code = NULL, updated_at = ?
+                WHERE occurrence_id = ? AND status = 'due'
+                """,
+                (
+                    scheduled_for.isoformat(),
+                    (scheduled_for + _GRACE).isoformat(),
+                    config.config_version,
+                    persona.persona_id,
+                    persona.persona_version,
+                    persona.persona_digest,
+                    now,
+                    occurrence_id,
+                ),
+            )
         return self.get_occurrence(occurrence_id=occurrence_id)
 
     def get_occurrence(self, *, occurrence_id: str) -> AutomationOccurrence | None:

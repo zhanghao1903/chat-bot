@@ -34,7 +34,7 @@ class FoodEffectorTests(unittest.TestCase):
             final = fixture.effector.execute(request=fixture.request, bundle=fixture.bundle)
 
             self.assertEqual(FinalEffectKind.REPLY, final.kind, final.reason_code)
-            self.assertEqual("dish:noodles", final.primary_key)
+            self.assertEqual("dish:hot-noodles", final.primary_key)
             self.assertEqual((), final.source_urls)
             self.assertIn("主推：热汤面", final.text or "")
             scene = fixture.model.calls[0]["messages"][1].content
@@ -43,19 +43,19 @@ class FoodEffectorTests(unittest.TestCase):
             self.assertNotIn("sender_user_id", scene)
             self.assertNotIn("current_message", scene)
 
-    def test_food_final_validator_rejects_recent_primary_and_generic_current_claims(self) -> None:
+    def test_food_final_validator_rejects_recent_primary_and_no_location_merchant(self) -> None:
         cases = (
             (
                 "recent_primary",
                 _food_result(),
-                ("dish:noodles",),
+                ("dish:hot-noodles",),
                 "food_primary_recently_used",
             ),
             (
-                "generic_current_fact",
-                _food_result(primary_description="附近这家现在营业，人均 35 元。"),
+                "generic_merchant",
+                _food_result(primary_choice_type="merchant", primary_id=None),
                 (),
-                "food_generic_current_fact",
+                "food_generic_choice_not_registered",
             ),
         )
         for label, result, recent, reason in cases:
@@ -75,19 +75,23 @@ class FoodEffectorTests(unittest.TestCase):
             _web_call("面馆 午餐 浦东", purpose="find_current_lunch"),
             _food_result(
                 mode="sourced",
-                primary_key="merchant:noodle-house",
-                primary_label="浦东面馆",
-                primary_description="可以先把它当作热乎的主推。",
-                source_ids=["web:1"],
-                freshness_note="营业与价格可能变化，出发前再确认。",
+                source_ids=["web:1", "web:2", "web:3"],
             ),
             web_client=web,
         ) as fixture:
             final = fixture.effector.execute(request=fixture.request, bundle=fixture.bundle)
 
             self.assertEqual(FinalEffectKind.REPLY, final.kind, final.reason_code)
-            self.assertEqual(("https://example.com/result-1",), final.source_urls)
-            self.assertIn("来源：https://example.com/result-1", final.text or "")
+            self.assertEqual(
+                (
+                    "https://example.com/result-1-1",
+                    "https://example.com/result-1-2",
+                    "https://example.com/result-1-3",
+                ),
+                final.source_urls,
+            )
+            self.assertIn("主推：浦东面馆", final.text or "")
+            self.assertIn("来源：https://example.com/result-1-1", final.text or "")
             self.assertEqual(1, web.search_calls)
             self.assertEqual([("web", 1)], fixture.tool_budget_rows())
 
@@ -247,13 +251,14 @@ class FakeTavilyClient:
         del query, deadline
         self.search_calls += 1
         return TavilySearchResponse(
-            results=(
+            results=tuple(
                 TavilySearchResult(
-                    title=f"Result {self.search_calls}",
-                    url=f"https://example.com/result-{self.search_calls}",
+                    title=("浦东面馆", "浦东饭馆", "浦东小馆")[index - 1],
+                    url=f"https://example.com/result-{self.search_calls}-{index}",
                     content="Bounded current restaurant evidence.",
                     score=0.9,
-                ),
+                )
+                for index in range(1, 4)
             ),
             request_id=f"request-{self.search_calls}",
             credits=1.0,
@@ -272,36 +277,37 @@ def _public_resolver(
 def _food_result(
     *,
     mode: str = "generic",
-    primary_key: str = "dish:noodles",
-    primary_label: str = "热汤面",
-    primary_description: str = "暖和、好选，先用它做主推。",
+    primary_choice_type: str | None = None,
+    primary_id: str | None = "dish:hot-noodles",
     source_ids: list[str] | None = None,
-    freshness_note: str | None = None,
 ) -> StructuredModelResult:
+    sources = source_ids or []
+    sourced = mode == "sourced"
+    choice_type = primary_choice_type or ("merchant" if sourced else "generic_dish")
+
+    def choice(index: int, generic_id: str, reason_tag: str) -> dict[str, object]:
+        return {
+            "choice_type": "merchant" if sourced else "generic_dish",
+            "generic_dish_id": None if sourced else generic_id,
+            "source_result_id": sources[index] if sourced else None,
+            "reason_tag": reason_tag,
+        }
+
     return StructuredModelResult(
         {
             "kind": "food_recommendation",
             "reason_code": "weekday_food_choice",
             "mode": mode,
             "primary": {
-                "canonical_key": primary_key,
-                "label": primary_label,
-                "description": primary_description,
+                "choice_type": choice_type,
+                "generic_dish_id": None if choice_type == "merchant" else primary_id,
+                "source_result_id": sources[0] if sourced and sources else None,
+                "reason_tag": "warming",
             },
             "alternatives": [
-                {
-                    "canonical_key": "dish:rice-bowl",
-                    "label": "杂粮盖饭",
-                    "description": "更扎实，适合想吃饱一点。",
-                },
-                {
-                    "canonical_key": "dish:dumplings",
-                    "label": "煎饺配小菜",
-                    "description": "换个脆香方向，也方便分享。",
-                },
+                choice(1, "dish:rice-bowl", "hearty"),
+                choice(2, "dish:dumplings", "shareable"),
             ],
-            "source_result_ids": source_ids or [],
-            "cautious_freshness_note": freshness_note,
         }
     )
 

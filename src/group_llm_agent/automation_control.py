@@ -3,8 +3,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
+from zoneinfo import ZoneInfo
 
-from group_llm_agent.automation import AutomationRepository, SubscriptionPreferences
+from group_llm_agent.automation import (
+    AutomationRepository,
+    GroupAutomationConfig,
+    SubscriptionPreferences,
+)
 from group_llm_agent.automation_runtime import next_scheduled
 from group_llm_agent.events import ExternalEffectKind, PersonaSnapshot, TelegramTextMessage
 from group_llm_agent.platforms.telegram import ChatMemberStatus, SentMessage, TelegramApiError
@@ -172,9 +177,16 @@ class AutomationControlService:
                 chat_id=message.group_id,
                 member_user_id=message.sender_id,
             )
+            active_config = self.repository.get_config(chat_id=message.group_id)
+            if active_config is None or not active_config.enabled:
+                raise ValueError("subscription requires active group config")
             return (
                 "subscribed" if created else "already_subscribed",
-                "你已订阅本群工作日美食推荐。",
+                _subscription_summary(
+                    chat_id=message.group_id,
+                    config=active_config,
+                    now=now,
+                ),
             )
         if command == _PREFERENCES:
             preferences = _preferences(argument)
@@ -212,9 +224,15 @@ class AutomationControlService:
             member_user_id=message.sender_id,
         )
         next_at = next_scheduled(config, after=now)
-        next_text = next_at.isoformat() if next_at is not None else "暂无"
+        next_text = _local_schedule_text(next_at, timezone=config.timezone)
         state = "关闭" if not config.enabled else "暂停" if config.paused else "运行"
-        return f"状态：{state}；订阅数：{count}；你：{'已订阅' if own else '未订阅'}；下一次：{next_text}；配置版本：{config.config_version}。"
+        return (
+            f"当前群（{message.group_id}）状态：{state}；时区 {config.timezone}；"
+            f"午餐 {config.lunch_time}，晚餐 {config.dinner_time}；订阅数：{count}；"
+            f"你：{'已订阅' if own else '未订阅'}；下一次：{next_text}；"
+            "每个餐次全群合并发送最多一条，不会逐个 @；退订请发送 "
+            f"/food_unsubscribe；配置版本：{config.config_version}。"
+        )
 
     def _is_admin(self, message: TelegramTextMessage, *, command: str) -> bool:
         try:
@@ -283,6 +301,26 @@ class AutomationControlService:
             reason_code=reason,
             config_version=config.config_version if config is not None else None,
         )
+
+
+def _subscription_summary(*, chat_id: str, config: GroupAutomationConfig, now: datetime) -> str:
+    next_text = _local_schedule_text(
+        next_scheduled(config, after=now),
+        timezone=config.timezone,
+    )
+    state = "（当前暂停）" if config.paused else ""
+    return (
+        f"你已订阅当前群（{chat_id}）的工作日美食推荐{state}；时区 {config.timezone}；"
+        f"午餐 {config.lunch_time}，晚餐 {config.dinner_time}；下一次：{next_text}；"
+        "每个餐次全群合并发送最多一条，不会逐个 @；退订请发送 /food_unsubscribe。"
+    )
+
+
+def _local_schedule_text(value: datetime | None, *, timezone: str) -> str:
+    if value is None:
+        return "暂无"
+    local = value.astimezone(ZoneInfo(timezone))
+    return f"{local:%Y-%m-%d %H:%M} ({timezone})"
 
 
 def _parse_command(text: str, *, bot_username: str | None) -> tuple[str, str | None]:

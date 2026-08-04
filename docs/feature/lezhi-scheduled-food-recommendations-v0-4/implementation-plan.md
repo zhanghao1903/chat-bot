@@ -206,8 +206,10 @@
 - share deadline, cumulative 16 KiB admitted tool content, source/cost and safety stop conditions;
 - retain context-call 4–5 novelty/extension rules and reject duplicate/unneeded Web attempts;
 - compile typed scheduled persona prompt from aggregate preferences/location/history, never fake member text;
-- validate one primary + two distinct alternatives, recent-five exclusion and generic/sourced facts;
-- resolve opaque sources, require 1–3 links for current claims and render exact stable text;
+- validate one primary + two distinct alternatives through application-owned generic dish and
+  reason registries, with recent-five exclusion and no model-authored recommendation prose;
+- resolve one current-turn source per sourced merchant choice, derive displayed/source identities
+  in the application and render exact stable text with cautious wording;
 - scheduled failures degrade to generic or silence, never an unsolicited technical failure reply.
 
 ### Checks
@@ -216,7 +218,8 @@
 - attempted sixth context/Web call rejected before provider; counters do not consume each other;
 - model attempt 11, deadline and cumulative result bound terminate correctly;
 - direct/contextual existing paths and sticker/vision safety remain unchanged;
-- primary repetition, duplicate alternative, unsupported fact/source and leakage negatives;
+- primary repetition, duplicate alternative, no-location merchant, free-form allergy/medical
+  reassurance, unsupported fact/source and leakage negatives;
 - generic no-location/no-Web, sourced current merchant facts and conflict downgrade positives;
 - Writer tool result cannot alter subscription, persona, memory or tool policy.
 
@@ -242,7 +245,8 @@
 - persist validated payload and exact rendered text before the external-effect claim;
 - reuse prepared content after restart and recheck config/subscription/persona before claim;
 - send one text external effect with nullable trigger message and occurrence ID uniqueness;
-- map Telegram success/definite failure/uncertain and claimed-without-ack recovery;
+- reconcile durable external `sent`/`failed` acknowledgements to occurrence history and map only
+  ambiguous claimed-without-ack recovery to `uncertain`;
 - never retry definite or uncertain scheduled effects automatically;
 - advance recent-primary history only for acknowledged `sent` outcomes;
 - expose status/outcome without leaking message text or subscriber data.

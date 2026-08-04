@@ -107,35 +107,53 @@ class AutomationDeliveryRepository:
             return int(effect_id)
 
     def recover_sending_as_uncertain(self) -> int:
-        """Close restart-time post-claim ambiguity without retrying a visible effect."""
+        """Reconcile the durable external effect before closing restart-time ambiguity."""
 
         now = datetime.now(UTC).isoformat()
         with self.database.transaction() as connection:
-            occurrence_ids = connection.execute(
+            rows = connection.execute(
                 """
-                SELECT occurrence_id FROM automation_occurrences
-                WHERE automation_type = ? AND status = 'sending'
+                SELECT occurrence.occurrence_id, effect.id AS effect_id,
+                       effect.status AS effect_status
+                FROM automation_occurrences AS occurrence
+                LEFT JOIN external_effects AS effect
+                  ON effect.scheduled_occurrence_id = occurrence.occurrence_id
+                 AND effect.source_kind = 'scheduled'
+                WHERE occurrence.automation_type = ? AND occurrence.status = 'sending'
                 """,
                 (_AUTOMATION_TYPE,),
             ).fetchall()
-            ids = tuple(str(row["occurrence_id"]) for row in occurrence_ids)
-            if not ids:
+            if not rows:
                 return 0
-            placeholders = ",".join("?" for _ in ids)
-            connection.execute(
-                f"""
-                UPDATE external_effects
-                SET status = 'uncertain', error_code = 'restart_after_claim', updated_at = ?
-                WHERE trigger_event_id IN ({placeholders}) AND status = 'sending'
-                """,
-                (now, *ids),
-            )
-            cursor = connection.execute(
-                f"""
-                UPDATE automation_occurrences
-                SET status = 'uncertain', reason_code = 'restart_after_claim', updated_at = ?
-                WHERE occurrence_id IN ({placeholders}) AND status = 'sending'
-                """,
-                (now, *ids),
-            )
-            return cursor.rowcount
+            reconciled = 0
+            for row in rows:
+                occurrence_id = str(row["occurrence_id"])
+                effect_status = row["effect_status"]
+                if effect_status == "sent":
+                    status = "sent"
+                    reason = "delivery_ack_reconciled"
+                elif effect_status == "failed":
+                    status = "definite_failure"
+                    reason = "delivery_failure_reconciled"
+                else:
+                    status = "uncertain"
+                    reason = "restart_after_claim"
+                    if effect_status == "sending":
+                        connection.execute(
+                            """
+                            UPDATE external_effects
+                            SET status = 'uncertain', error_code = ?, updated_at = ?
+                            WHERE id = ? AND status = 'sending'
+                            """,
+                            (reason, now, int(row["effect_id"])),
+                        )
+                cursor = connection.execute(
+                    """
+                    UPDATE automation_occurrences
+                    SET status = ?, reason_code = ?, updated_at = ?
+                    WHERE occurrence_id = ? AND status = 'sending'
+                    """,
+                    (status, reason, now, occurrence_id),
+                )
+                reconciled += cursor.rowcount
+            return reconciled

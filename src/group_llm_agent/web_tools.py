@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from time import monotonic
 from typing import cast
 
+from group_llm_agent.food_recommendation import FoodCitation
 from group_llm_agent.model import WriterDecision, WriterDecisionKind
 from group_llm_agent.runs import RunRepository
 from group_llm_agent.tavily import TavilyApiError, TavilyClient
@@ -61,6 +62,7 @@ class WebToolSession:
         self.resolver = resolver or _resolve
         self.allowed_tools = WEB_TOOLS
         self._urls: dict[str, str] = {}
+        self._citations: dict[str, FoodCitation] = {}
         self._searched_queries: set[str] = set()
         self._fetched_urls: set[str] = set()
         self._next_result_id = 1
@@ -68,6 +70,10 @@ class WebToolSession:
     @property
     def citation_urls(self) -> dict[str, str]:
         return dict(self._urls)
+
+    @property
+    def citations(self) -> dict[str, FoodCitation]:
+        return dict(self._citations)
 
     def execute(
         self,
@@ -190,6 +196,7 @@ class WebToolSession:
             result_id = f"web:{self._next_result_id}"
             self._next_result_id += 1
             self._urls[result_id] = normalized
+            self._citations[result_id] = FoodCitation(url=normalized, title=result.title)
             host = urllib.parse.urlsplit(normalized).hostname
             assert host is not None
             domains.add(host)
