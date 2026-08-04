@@ -150,6 +150,45 @@ command after an approval-service connection interruption. No workaround was att
 container was changed, and this remediation does not claim new image evidence. No real Tavily call,
 capability enablement, subscription, Compose service replacement or Telegram message was performed.
 
+### 1.4 Expired pre-prepare lease recovery and fourth remediation
+
+- Fourth review dispatch: `8d5dbbcc54b6257b7df1fb8e4f374e83c1772f5b6b1bf733c4cdcae0663f2fe6`
+- Accepted immutable ReviewResult SHA-256:
+  `3a5628dd77500468b6daf5389acee9e5f04183e1609f1ca3e528c727a62dcd2e`
+- Fourth reviewed head: `0dc99138b3fe422fe23fd161ea5954bdf5ce582c`
+- Exact fourth-remediation implementation commit:
+  `3fcb0ef0d615aa09b91f27d85551bd4abb7ef46b`
+
+The fourth review confirmed FINDING-001 through FINDING-004 fixed and identified one induced
+pre-prepare recovery gap. It is closed as follows:
+
+- **FINDING-005** — first acquisition and expired recovery are now distinct arms of one transactional
+  lease update. A `due` row still requires both its expected version and an enabled active config at
+  that exact version. An expired `leased` row, whose send right was already acquired, is recovered
+  against its immutable occurrence version without requiring the later active config to match. The
+  scheduler passes the occurrence version; its existing pre-claim policy then makes a post-lease v2
+  edit terminalize the recovered v1 occurrence once as `definite_failure`. The exact
+  lease-v1/admin-config-v2/crash-before-prepare/restart regression proves the first recovery processes
+  one row, a duplicate processes zero, the recommendation processor is never called, zero external
+  effects exist and the row is not stranded in `leased`.
+
+Exact fourth-remediation commit `3fcb0ef0d615aa09b91f27d85551bd4abb7ef46b` passed:
+
+- `python3 -m compileall -q src tests`
+- `PYTHONPATH=src:tests uv run python -m unittest discover -s tests -q` — **279 tests** in
+  **94.614 seconds**
+- Ruff check — passed; Ruff format check — **96 source/test files already formatted**
+- Mypy — no issues in **49 source files**
+- `sh -n deploy/manage.sh`, `git diff --check` and package build — passed
+- Fourth-remediation sdist SHA-256:
+  `beedebf0c14cf3d062e9639d308766d57df96285d44bc8ac26ba412f9ebcc1fd`
+- Fourth-remediation wheel SHA-256:
+  `b2a4cf66e29f03bb841e2795f834d11519af055cd4152ad40bec7d1eea5a3461`
+
+The Docker, provider and deployment boundaries from section 1.3 remain unchanged: no candidate image
+was rebuilt, no real Tavily call was made, capabilities stayed disabled, and no running service or
+Telegram state changed.
+
 ## 2. Implemented contracts
 
 - `weekday_food_recommendation` is an application-owned automation definition. Runtime capability,
