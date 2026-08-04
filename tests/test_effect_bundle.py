@@ -245,6 +245,90 @@ class EffectBundleRepositoryTests(unittest.TestCase):
                 (excluded.sample_count, excluded.sticker_bearing_count),
             )
 
+    def test_metrics_isolate_snapshot_time_and_mixed_component_failure(self) -> None:
+        with temporary_database() as database:
+            repository = EffectBundleRepository(database)
+            for index in range(1, 31):
+                self._record_visible_bundle(
+                    repository,
+                    index=index,
+                    final=_composite_final() if index <= 12 else _text_final(),
+                )
+
+            wrong_snapshot = replace(_text_final(), catalog_digest="d" * 64)
+            self._record_visible_bundle(repository, index=31, final=wrong_snapshot)
+
+            old = repository.prepare(
+                event=_event(32),
+                final=_text_final(),
+                bot_user_id="bot-1",
+            )
+            assert old is not None
+            old_component = repository.claim_component(bundle_id=old.bundle_id, ordinal=1)
+            assert old_component is not None
+            repository.mark_sent(old_component, platform_message_id="old")
+            repository.finalize(bundle_id=old.bundle_id)
+
+            boundary = repository.prepare(
+                event=_event(33),
+                final=_text_final(),
+                bot_user_id="bot-1",
+            )
+            assert boundary is not None
+            boundary_component = repository.claim_component(
+                bundle_id=boundary.bundle_id,
+                ordinal=1,
+            )
+            assert boundary_component is not None
+            repository.mark_sent(boundary_component, platform_message_id="boundary")
+            repository.finalize(bundle_id=boundary.bundle_id)
+
+            mixed = repository.prepare(
+                event=_event(34),
+                final=_composite_final(),
+                bot_user_id="bot-1",
+            )
+            assert mixed is not None
+            text_component = repository.claim_component(bundle_id=mixed.bundle_id, ordinal=1)
+            assert text_component is not None
+            repository.mark_sent(text_component, platform_message_id="mixed-text")
+            sticker_component = repository.claim_component(
+                bundle_id=mixed.bundle_id,
+                ordinal=2,
+            )
+            assert sticker_component is not None
+            repository.mark_failed(sticker_component, error_code="explicit_failure")
+            repository.finalize(bundle_id=mixed.bundle_id)
+
+            current = datetime.now(UTC) + timedelta(seconds=2)
+            with database.transaction() as connection:
+                connection.execute(
+                    "UPDATE effect_bundles SET completed_at = ? WHERE bundle_id = ?",
+                    ((current - timedelta(days=7, microseconds=1)).isoformat(), old.bundle_id),
+                )
+                connection.execute(
+                    "UPDATE effect_bundles SET completed_at = ? WHERE bundle_id = ?",
+                    ((current - timedelta(days=7)).isoformat(), boundary.bundle_id),
+                )
+
+            metrics = repository.metrics(
+                bot_user_id="bot-1",
+                persona_version=_PERSONA.persona_version,
+                persona_digest=_PERSONA.persona_digest,
+                catalog_version=_CATALOG_VERSION,
+                catalog_digest=_CATALOG_DIGEST,
+                now=current,
+            )
+            self.assertEqual("ready", metrics.status)
+            self.assertEqual(
+                (32, 12, 20),
+                (
+                    metrics.sample_count,
+                    metrics.sticker_bearing_count,
+                    metrics.text_only_count,
+                ),
+            )
+
     @staticmethod
     def _record_visible_bundle(
         repository: EffectBundleRepository,
