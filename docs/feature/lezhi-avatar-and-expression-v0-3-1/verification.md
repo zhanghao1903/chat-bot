@@ -195,6 +195,27 @@ continues to report the pre-existing Pillow `ImagingCore.__iter__` typing
 incompatibility in unchanged `asset_pipeline.py`; neither runtime behavior nor
 this follow-up touches that file.
 
+Exact-head review dispatch
+`c379534c93dd6d09d60b1cb62f062738dc17f13090b9fe4c0e82886ea5667fec`
+found that the first relationship alternation treated bare `支持我` as an
+exclusive relationship signal while missing common paraphrases such as
+`你只能喜欢我`, `你只许偏爱我`, `只宠我一个`, and `你不许站别人那边`.
+The deterministic remediation replaces the substring match with bounded
+Chinese and English exclusivity, favoritism, and side-taking structures. Bare
+support, gratitude, `支持我们`, and English `supporting me` statements remain
+ordinary sticker-eligible context. The immutable implementation snapshot is
+`a9990d1dfee9b75c08a09c2fc23805f4bc859db1`.
+
+Direct policy regressions cover every reviewer reproduction plus bounded
+English variants. End-to-end effector regressions prove representative
+exclusive contexts reject both sticker-only and text-plus-sticker output,
+while benign support and gratitude still allow a validated sticker. The
+focused policy, prompt, and effector suite passes 19 tests; the full discovery
+suite passes 303 tests. Ruff check/format passes all 104 source/test files,
+targeted Mypy passes the changed runtime module, and compileall, shell syntax,
+and diff checks pass. No additional provider call was used or required for
+this deterministic finding closure.
+
 - Independent exact-head merge review is still required.
 - On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
   `mergeOnApprove` policy to be set to `true` temporarily, only to re-review
