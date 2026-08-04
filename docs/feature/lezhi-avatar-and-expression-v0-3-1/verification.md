@@ -273,6 +273,38 @@ The canonical configured-provider report remains byte-identical at SHA-256
 no additional provider call, deployment, container replacement, Telegram,
 Tavily, SQLite, sticker, or avatar operation occurred.
 
+Fourth re-review dispatch
+`7f85c1a242efb1889eb58029ddc6ebde7c29c697c2510744819fba93dc748f60`
+retained FINDING-002 because the prior exact head still omitted the canonical
+modal/prohibitor-before-addressee order and lacked an English direct-subject
+boundary. Exact misses included `只许你喜欢我`, `不许你喜欢别人`,
+allow/necessity variants, single-member interaction variants, and their
+English equivalents; the neutral technical sentence
+`This app can only support me.` was also incorrectly classified as a
+relationship context. A nested anti-exclusivity quotation remained a false
+positive.
+
+Implementation snapshot `6adef03fa8766058bc6a74e33a7698d97408fa79`
+represents both Chinese subject placements, extends bounded allow/necessity,
+interaction, and negative-other forms, and requires each positive English
+match to have an application-owned direct relationship subject. A complete
+Chinese object boundary and scoped anti-exclusivity overlap remain mandatory.
+This closes the exact reviewer cases without treating app, device, family, or
+other non-person technical subjects as relationship demands.
+
+The expanded direct and end-to-end matrix covers `sticker` and
+`reply_with_sticker` outcomes for every prior review example plus
+modal-before-addressee, allow/necessity, rhetorical, nested quotation,
+technical-subject, possessive, anti-exclusivity, and multi-span cases. The
+focused policy/prompt/effector suite passes 19 tests; the full discovery suite
+passes 303 tests in 97.230 seconds. Ruff check/format passes all 104
+source/test files, targeted Mypy passes `expression_policy.py`, and compileall,
+shell syntax, and diff checks pass. The provider report remains byte-identical
+at SHA-256
+`cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`.
+No provider, deployment, container, Telegram, Tavily, SQLite, sticker, or
+avatar operation occurred.
+
 - Independent exact-head merge review is still required.
 - On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
   `mergeOnApprove` policy to be set to `true` temporarily, only to re-review
