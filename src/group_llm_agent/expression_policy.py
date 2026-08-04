@@ -24,20 +24,32 @@ _TEXT_REQUIRED = re.compile(
     r"steps?|how (?:do|to)|why|explain|instructions?|address|when|price)",
     re.IGNORECASE,
 )
-_CHINESE_EXCLUSIVITY_MARKER = r"(?:必须\s*只|务必\s*只|只能|只准|只许|仅限|只)\s*"
+_CHINESE_EXCLUSIVITY_MARKER = (
+    r"(?:必须\s*(?:只|只能)|务必\s*只|一定(?:要)?\s*只|(?:要|得)\s*只|"
+    r"只能|只可以|只可|只准|只许|仅限|仅|只)\s*"
+)
 _CHINESE_TO_ME_ACTION = (
     r"(?:"
-    r"对我(?:撒(?:个)?娇|亲昵|偏心)(?:就好|就行|而已)?|"
+    r"对我(?:撒(?:个)?娇|亲昵|偏心|好)(?:就好|就行|而已)?|"
+    r"(?:跟|和)我(?:玩|聊天|说话)|"
     r"站(?:在)?我(?:这边|一边)|"
-    r"(?:支持|喜欢|偏爱|偏袒|偏心|宠)我(?![们的])"
-    r"(?:一个人?)?(?:就好|就行|而已)?"
+    r"(?:支持|喜欢|爱|偏爱|偏袒|偏心|宠|陪|关心|在乎|理|搭理|夸|哄|"
+    r"选|向着|护着)我(?![们的])"
+    r"(?:一个人?|一人)?(?:就好|就行|就可以了?|而已|好吗|好不好|行吗|"
+    r"行不行|可以吗|可以不|才行|才可以|才对吗?|懂吗|知道吗)?"
     r")(?=$|[\s，,。.!！？?；;：:、吧嘛呢呀哦啦吗\"'“”‘’）)】\]])"
 )
-_ENGLISH_TO_ME_ACTION = r"(?:like|love|favor|support|back|side with|stand by|care for)\s+me\b"
+_ENGLISH_RELATIONSHIP_ACTION = (
+    r"(?:like|love|favor|support|back|side with|stand by|care for|care about|"
+    r"talk to|chat with|play with|choose|praise|comfort)"
+)
+_ENGLISH_TO_ME_ACTION = _ENGLISH_RELATIONSHIP_ACTION + r"\s+me\b"
+_RELATIONSHIP_CLAUSE_BREAK = re.compile(r"[，,。.!！？?；;\n]")
 _RELATIONSHIP_EXCLUSIVITY_NEGATIONS = (
     re.compile(
         r"(?:别|不要|不是|并非|并不是|不能|不可以|不该|不应该|不应|不必|"
-        r"无需|不许|不准)(?:再|再去)?(?:说|是说|代表|意味着)?\s*(?:你\s*)?"
+        r"不用|不需要|无需|没必要|没有必要|不许|不准)(?:再|再去)?\s*"
+        r"(?:(?:说|要求|让|希望)\s*)?(?:你\s*)?"
         + _CHINESE_EXCLUSIVITY_MARKER
         + _CHINESE_TO_ME_ACTION,
         re.IGNORECASE,
@@ -48,15 +60,31 @@ _RELATIONSHIP_EXCLUSIVITY_NEGATIONS = (
     ),
     re.compile(
         r"\b(?:"
-        r"(?:do not|don't|never|should not|shouldn't|must not|mustn't)\s+"
+        r"(?:do not|don['’]t|cannot|can not|can['’]t|never|should not|"
+        r"shouldn['’]t|must not|mustn['’]t)\s+"
         r"(?:only|just)\s+"
         r"|not(?:\s+that)?(?:\s+you)?(?:\s+(?:can|must|should))?\s+only\s+"
         r")" + _ENGLISH_TO_ME_ACTION,
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:do not|don't|never|should not|shouldn't|must not|mustn't)\s+"
+        r"\b(?:"
+        r"(?:do not|don['’]t)\s+(?:have|need)\s+to|"
+        r"(?:are not|aren['’]t|do not|don['’]t)\s+(?:required|expected)\s+to|"
+        r"need not|needn['’]t|it(?:'s| is)\s+not\s+that\s+you\s+"
+        r"(?:must|should|have to)"
+        r")\s+(?:only\s+)?" + _ENGLISH_RELATIONSHIP_ACTION + r"\s+(?:only\s+)?me\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:do not|don['’]t|cannot|can not|can['’]t|never|should not|"
+        r"shouldn['’]t|must not|mustn['’]t)\s+"
         r"(?:take|be on|stay on)\s+(?:only\s+)?my\s+side\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:do not|don['’]t|cannot|can not|can['’]t|never|should not|"
+        r"shouldn['’]t|must not|mustn['’]t)\s+" + _ENGLISH_RELATIONSHIP_ACTION + r"\s+only\s+me\b",
         re.IGNORECASE,
     ),
 )
@@ -66,18 +94,32 @@ _RELATIONSHIP_STICKER_FORBIDDEN = (
         re.IGNORECASE,
     ),
     re.compile(
-        r"(?:不许|不准|不要|不能|别)(?:再)?(?:站(?:在)?|支持|偏向|偏袒)"
+        r"(?:不许|不准|不要|不能|不可以|不该|不应该|别)(?:再)?"
+        r"(?:站(?:在)?|支持|喜欢|爱|偏爱|偏向|偏袒|偏心|宠|陪|关心|在乎|"
+        r"理|搭理|夸|哄|选|向着|护着)"
         r"(?:别人|其他人|任何其他人)(?:那边|一边)?",
         re.IGNORECASE,
     ),
     re.compile(
-        r"\b(?:"
-        r"(?:only|must only|can only|should only|have to only)\s+" + _ENGLISH_TO_ME_ACTION + r"|"
-        r"(?:take|be on|stay on)\s+(?:only\s+)?my\s+side|"
-        r"(?:do not|don't|must not)\s+(?:side with|support|back|favor)\s+"
-        r"(?:anyone|anybody|someone|others?)\s+else|"
-        r"(?:choose|favor|prefer)\s+me\s+over\s+(?:anyone|anybody|others?)"
-        r")\b",
+        (
+            r"\b(?:"
+            r"(?:only|must only|can only|should only|have to only)\s+"
+            + _ENGLISH_TO_ME_ACTION
+            + r"|"
+            + _ENGLISH_RELATIONSHIP_ACTION
+            + r"\s+only\s+me|"
+            r"(?:side|stand)\s+only\s+with\s+me|"
+            r"(?:take|be on|stay on)\s+(?:only\s+)?my\s+side|"
+            r"(?:do not|don['’]t|cannot|can not|can['’]t|must not|mustn['’]t|"
+            r"should not|shouldn['’]t|may not|never|not allowed to)\s+"
+            + _ENGLISH_RELATIONSHIP_ACTION
+            + r"\s+"
+            r"(?:(?:anyone|anybody|someone|no one|nobody)\s+else|others?|"
+            r"any other (?:person|member))|" + _ENGLISH_RELATIONSHIP_ACTION + r"\s+me\s+(?:and\s+)?"
+            r"(?:no one|nobody)\s+else|"
+            r"(?:choose|favor|prefer)\s+me\s+over\s+(?:anyone|anybody|others?)"
+            r")\b"
+        ),
         re.IGNORECASE,
     ),
 )
@@ -167,6 +209,7 @@ def _relationship_sticker_forbidden(context: EffectContext) -> bool:
         match.span()
         for pattern in _RELATIONSHIP_EXCLUSIVITY_NEGATIONS
         for match in pattern.finditer(text)
+        if not _rhetorical_exclusivity_negation(text, match)
     )
     for pattern in _RELATIONSHIP_STICKER_FORBIDDEN:
         for match in pattern.finditer(text):
@@ -176,6 +219,14 @@ def _relationship_sticker_forbidden(context: EffectContext) -> bool:
             ):
                 return True
     return False
+
+
+def _rhetorical_exclusivity_negation(text: str, match: re.Match[str]) -> bool:
+    clause_prefix = _RELATIONSHIP_CLAUSE_BREAK.split(text[: match.start()])[-1]
+    if any(marker in clause_prefix for marker in ("难道", "难不成", "岂不是")):
+        return True
+    suffix = text[match.end() :].lstrip()
+    return suffix.startswith(("吗", "嘛", "？", "?"))
 
 
 def _vision_text(context: EffectContext) -> str:

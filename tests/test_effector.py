@@ -548,9 +548,24 @@ class WriterEffectorTests(unittest.TestCase):
         for message_text in (
             "你只能喜欢我",
             "你只许偏爱我",
+            "你只能爱我",
+            "你只可以喜欢我",
+            "你一定要只喜欢我",
+            "你只能喜欢我好吗",
+            "你只喜欢我就可以了",
+            "你只能爱我一人",
             "只宠我一个",
             "你不许站别人那边",
+            "你不许喜欢别人",
+            "你不能爱任何其他人",
+            "你不可以喜欢任何其他人",
+            "你不是说只能喜欢我吗？",
+            "难道你不应该只喜欢我吗？",
             "You can only support me.",
+            "You must love only me.",
+            "You can't love anyone else.",
+            "Don't love anyone else.",
+            "Love me and nobody else.",
         ):
             for decision_kind in ("sticker", "reply_with_sticker"):
                 payload: dict[str, object] = {
@@ -594,9 +609,15 @@ class WriterEffectorTests(unittest.TestCase):
             "我只喜欢我的新头像",
             "别只支持我，大家都需要支持",
             "不是只能喜欢我，大家都值得被喜欢",
+            "我不是说你只能喜欢我，大家都值得被喜欢",
+            "你不用只喜欢我，大家都值得被喜欢",
             "不应该只支持我，其他人也需要支持",
             "Do not only support me; support everyone.",
             "Do not take only my side; hear everyone out.",
+            "Do not love only me; love everyone.",
+            "You cannot only love me; love everyone too.",
+            "You don't have to love only me.",
+            "You aren't required to love only me.",
         ):
             for decision_kind in ("sticker", "reply_with_sticker"):
                 payload = {
