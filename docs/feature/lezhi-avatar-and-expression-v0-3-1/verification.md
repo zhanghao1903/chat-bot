@@ -305,6 +305,32 @@ at SHA-256
 No provider, deployment, container, Telegram, Tavily, SQLite, sticker, or
 avatar operation occurred.
 
+Fifth re-review dispatch
+`791c204683e0a4bd40655c9cb59167a8f74445696bdba5fa9e4440454066a104`
+retained FINDING-002 because direct modal-before-addressee questions,
+Chinese ability/permission/intent questions, persona-name addressees between
+the modal and action, and explicit-speaker rhetorical demands still bypassed
+the previous exact head. The exact matrix also showed these forms cross both
+the sticker-only and composite final-effect boundary.
+
+Implementation snapshot `52a14feba1ba3056a402336e61af044211f8aed3`
+adds bounded question-subject structures for English modal + `you`/`Lezhi`,
+Chinese ability/permission/intent + `你`/`乐枝`, persona-name placement after
+the Chinese modal/prohibitor, and explicit-speaker rhetorical demands. The
+same direct-subject check rejects technical modal questions whose subject is
+an app, device, or other non-person object. Nested anti-exclusivity quotation,
+possessive, inclusive-correction, and multi-span exemptions remain scoped.
+
+Direct and end-to-end regressions cover every exact reviewer reproduction,
+both final Writer sticker forms, previous matrices, and extra wh-question and
+technical-question variants. The focused policy/prompt/effector suite passes
+19 tests; the full discovery suite passes 303 tests in 99.686 seconds. Ruff
+check/format passes all 104 source/test files, targeted Mypy passes
+`expression_policy.py`, and compileall, shell syntax, and diff checks pass.
+The configured-provider report is unchanged at SHA-256
+`cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`.
+No provider call or production/external operation occurred.
+
 - Independent exact-head merge review is still required.
 - On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
   `mergeOnApprove` policy to be set to `true` temporarily, only to re-review
