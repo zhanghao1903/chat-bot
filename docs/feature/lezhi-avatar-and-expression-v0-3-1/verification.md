@@ -143,5 +143,33 @@ avatar rotation are not authorized or claimed by this verification.
 
 ## Review And Merge State
 
-The exact implementation is ready for a new immutable exact-head
-`ReviewRequest`. `mergeOnApprove=false`; review must not merge this snapshot.
+Immutable ReviewResult dispatch
+`c8a010d899ef3dc0a491b8c9ca68bbf8d8b85ea71ae90771bb79680566fe5dbb`
+approved exact head `83ed3dfd415cc67fcb58cf2b52ecb980a5f55ee4` with no
+findings. Its merge status was `NOT_AUTHORIZED` because the request retained
+`mergeOnApprove=false`.
+
+On 2026-08-05 the user explicitly requested the release workflow and feature
+closure. This authorizes the guarded PR #8 merge and the bounded post-merge
+production release described below. The global Feature Lifecycle policy may be
+set to `mergeOnApprove=true` only for the new exact-head review and must be
+restored to `false` immediately after the merge result is accepted.
+
+This authorization covers:
+
+- guarded squash merge of PR #8 without branch deletion or admin bypass;
+- production SQLite backup and `quick_check`, migration 6 through normal
+  application startup, immutable-image Compose replacement, and rollback if
+  verification fails;
+- read-only verification of all 48 enabled mappings, VISION disabled,
+  automatic avatar rotation disabled, mood avatars unapplied, v0.4 state, bot
+  identity, polling, database integrity, and delivery state;
+- bounded Telegram reply-form release verification using operator-visible
+  group evidence already supplied during this feature and new messages only if
+  necessary to close the release gate.
+
+It does not authorize another provider evaluation, sticker upload or publish,
+another default-avatar write, mood-avatar application, automatic avatar
+rotation, VISION enablement, destructive database reset, or unrelated
+production changes. The already visible default avatar and existing 48
+mappings must be preserved rather than re-applied.
