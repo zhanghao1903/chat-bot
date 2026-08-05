@@ -16,9 +16,11 @@
   after existing trigger eligibility, keeps image content untrusted, and stores no media binary.
 - Deterministic 48-item Lezhi expression candidate set with transparent masters, Telegram WebP,
   light/dark previews, canonical semantic catalog, exact source traceability, and five avatar crops.
-- Application-owned text/sticker/composite/silence decisions, enabled-catalog allowlisting, final
-  mapping revalidation, text-first two-component bundles, per-component uncertain-send suppression,
-  restart reconciliation, and aggregate sticker-bearing metrics.
+- LLM-owned text/sticker/composite/silence decisions from full conversation, relationship, memory,
+  and vision context, with application-owned structured-output validation, enabled-catalog
+  allowlisting, final mapping revalidation, relationship metadata, and consecutive-repeat bounds.
+- Text-first two-component bundles, per-component uncertain-send suppression, and restart
+  reconciliation without an online sticker-frequency metric or quota.
 - Explicit operator-only catalog promotion and sticker-pack publication, plus one-shot default
   profile-photo apply bound to exact catalog/image/bot/authorization identity and Telegram API
   success without automated readback, retry, or rollback.
@@ -54,9 +56,8 @@
 
 - Inbound persona replies may contain one text component followed by at most one enabled Lezhi
   sticker; scheduled food, control commands, tools, and other external writes remain single-effect.
-- Sticker-bearing evaluation and seven-day runtime metrics use a 40–70% target over eligible,
-  successfully visible bundles, while safety, necessary-text, relationship, and repetition gates
-  remain authoritative.
+- Sticker-bearing rate is offline evaluation context only. It does not decide pass/fail, change a
+  valid Writer decision, create an online runtime metric, or impose a quota.
 
 - Writer model completions are capped at eleven so independent context 3/5 and Web 0–5 budgets can
   share one deadline, 16 KiB admitted-result ceiling and reserved final completion without an

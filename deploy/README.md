@@ -136,17 +136,8 @@ EXPRESSION_CATALOG_SHA256=<enabled catalog sha256>
 ```
 
 enabled 目录可产生 sticker-only 或一条文本后附一个 sticker；两个组件有独立 claim/outcome，
-重启不会补发迟到的第二组件。查看不含正文的滚动指标：
-
-```bash
-group-llm-agent-operator expression-metrics \
-  --database /app/data/telegram-bot.sqlite3 \
-  --bot-user-id <bot id> \
-  --persona-version lezhi-v2.0 \
-  --persona-digest 0bea56724a99dfa6f437ac85b158f3d3190e98c7125eecc1f81672f7fbe17603 \
-  --catalog-version lezhi-expression-v0.3 \
-  --catalog-digest <enabled catalog sha256>
-```
+重启不会补发迟到的第二组件。回复形式由 Writer 基于完整上下文决定；应用不维护贴纸频率窗口、
+配额或在线 `expression-metrics` 门禁。
 
 默认头像 apply 使用部署侧批准目录，不修改仓库 candidate。命令必须绑定目录摘要
 `b871161e68c18115893d7aea932dabf1e9101d40278d6ce9168a6eb3735d405a`、图片摘要

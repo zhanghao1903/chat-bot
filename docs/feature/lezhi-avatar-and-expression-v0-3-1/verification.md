@@ -1,193 +1,147 @@
 # Verification: 乐枝默认头像部署与复合表情回复 v0.3.1
 
-- Status: Exact implementation approved; one-time guarded merge review pending
-- Verified at: 2026-08-04
-- Safe-forward baseline: `88c775c8ef0be7d1c63fd71b5924334b12492d75`
-- Exact implementation snapshot: `2bbbb3824c856ed5fe199a36fc32c3e814828b33`
-- Exact FINDING-001 remediation snapshot: `ace5be1713b31bbd956cb5af5d1f415578cc8819`
-- Requirements commit: `86ace06b0704da458646747e3ca0468456235851`
-- Requirements SHA-256: `66b82b3db77ffba968d26b651a2cccfc7a85e500b36a79a8aa41722a6b67593d`
-- Fixed evaluation SHA-256: `6ea34402129e92e10c571dce77c8005c5bd0aa7d607641954e6da429a32a769b`
+- Status: LLM-owned reply-form implementation verified; exact-head review pending
+- Verified at: 2026-08-05
+- Safe-forward baseline: `85998708aa9a1d85b33a4477a818339498846868`
+- Exact implementation snapshot: `f00b3eb683de2a124f78e675385476da1c54c2b4`
+- Confirmed requirements commit: `596a754419bc971ac71436bbb85f408ecc7962f0`
+- Confirmed requirements SHA-256: `71e6b25fc970a4a6aa78697369a1a194081102f943138e699ae0a5a642caacc9`
+- Accepted handoff: `845408808dafe33c51255982fb5ffff0befa6accd98f803c6f62432bf1aab8dd`
 
-## Verification Boundary
+## Revision Boundary
 
-The exact implementation snapshot descends from the confirmed safe-forward
-baseline. `git merge-base` returned the exact baseline SHA. The previous
-production snapshot `c1e820ae...` was not used as a build base, so the merged
-v0.4 subscription, food-recommendation, schema-migration, command, scheduler,
-Tavily, and runtime paths remain in the candidate.
+This snapshot implements the user's superseding architecture decision for PR
+#8. The Writer LLM is the only semantic owner of `reply`,
+`reply_with_sticker`, `sticker`, or `silence`. It receives the complete
+bounded conversation, relationship, member-memory, vision, catalog, and tool
+context. Application code no longer classifies natural-language content to
+decide whether a sticker is appropriate.
 
-The repository expression assets are byte-identical to the baseline:
-`git diff --name-only 88c775c...2bbbb38 --
-src/group_llm_agent/expression_assets` returned no files. The implementation
-does not enable VISION or automatic avatar rotation and does not apply a mood
-avatar.
+The previous keyword-remediation review was cancelled before this
+implementation. Its phrase-by-phrase FINDING-002 loop is obsolete under the
+confirmed architecture and must not be resumed against an older head.
 
 ## Implemented Contracts
 
-### Composite persona replies
+### LLM semantic ownership
 
-- Added the closed `reply_with_sticker` Writer/final-effect kind.
-- Inbound persona replies may contain one text component, one sticker
-  component, or text then sticker; scheduled food, controls, tools, and other
-  external writes remain on their existing single-effect paths.
-- Writer output selects only an application-owned semantic ID. Platform
-  `file_id`, arbitrary URLs, and extra visible components are not accepted.
-- The application-owned expression policy keeps necessary-text, medical,
-  self-harm, safety, illegal, permission, serious relationship, relationship
-  strength, and adjacent-repeat bounds above the frequency target.
-- An invalid composite sticker safely degrades to the already validated text.
+- `writer_prompt.py` states that the Writer is the sole semantic reply-form
+  decision maker.
+- The prompt encourages stickers when they naturally add emotion or action to
+  a light interaction and directs the model toward text or silence for serious,
+  safety, medical, permission, relationship-repair, exclusivity, favoritism,
+  or one-member-side content.
+- The prompt explicitly forbids choosing a reply form to hit a rate, target,
+  quota, or metric.
+- The `0.4–0.7` sticker-bearing range remains an offline observation reference
+  only.
 
-### Durable bundle delivery
+### Non-semantic application boundary
 
-- Additive migration 6 creates `effect_bundles` and
-  `effect_bundle_components` after the v0.4 migration set.
-- Bundle/component rows record immutable snapshots, order, semantic identity,
-  claims, and outcomes without full message text or credentials.
-- Text is sent before sticker. Text explicit failure prevents sticker send;
-  sticker explicit failure after text becomes text-only degraded.
-- Timeout, transport, invalid/unknown response, and claimed-before-crash
-  boundaries are terminal uncertain and are never retried.
-- Restart after text success never sends a late sticker. Duplicate processing
-  cannot repeat a sent or uncertain component.
+- `expression_policy.py` contains no natural-language keywords, regular
+  expressions, synonym registries, prefix tokenization, vision-label
+  semantics, or handcrafted relationship grammar.
+- Runtime sticker validation is limited to an enabled catalog and entry,
+  structured minimum-relationship metadata, and the consecutive-repeat rule.
+- Exact persona/catalog digest, version, semantic ID, Telegram mapping, and
+  structured-output validation remain in the existing application boundary.
+- An invalid `reply_with_sticker` selection degrades to its already validated
+  text. An invalid sticker-only selection degrades to silence.
+- Exhausted invalid or unknown Writer structured output degrades to silence on
+  every trigger path. Provider transport/runtime failures retain the existing
+  direct-failure/contextual-silence behavior.
 
-### Expression measurement
+### No online rate gate
 
-- Metrics are scoped to exact bot/persona/catalog identities, the latest seven
-  days, and at most 100 qualifying bundles.
-- Fewer than 30 samples returns `insufficient_data`; the report exposes only
-  aggregate counts, time bounds, and a ratio.
-- The denominator requires application-owned sticker eligibility and at least
-  one sent visible component. Safety/relationship-ineligible, non-matching
-  snapshots, all-failed, silence, and non-triggered turns do not count.
-- Sticker-only and successfully delivered composite stickers both count in the
-  numerator. A composite whose text succeeds and sticker explicitly fails is
-  a qualifying text-only outcome.
-- Regressions cover 29/30 and 100/101 boundaries, the exact seven-day edge,
-  snapshot isolation, partial failure, and exclusions.
-- The fixed schema-v2 set contains 48 cases: 40 eligible plus bounded
-  necessary-text, hard-forbidden, and relationship guards. Computed passing
-  bounds are 16 through 28 sticker-bearing eligible cases (0.40 through 0.70);
-  self-reported pass cannot override computed failure.
+- The `expression-metrics` operator command is removed.
+- The seven-day/latest-100 effect-bundle metric and the legacy expression
+  usage-rate API are removed.
+- Existing database columns remain for additive schema compatibility, but no
+  runtime rate, quota, minimum-sample gate, or corrective feedback loop reads
+  them.
+- Offline evaluation still reports observed counts and ratios. Report pass/fail
+  depends only on deterministic catalog, relationship-metadata, and
+  consecutive-repeat invariants; semantic case labels and the observed rate do
+  not independently fail a report.
 
-### Default avatar apply
+### Durable delivery and compatibility
 
-- The only authorized avatar is `lezhi-default` from deployment-approved
-  catalog SHA-256
-  `b871161e68c18115893d7aea932dabf1e9101d40278d6ce9168a6eb3735d405a`
-  and image SHA-256
-  `fd7ec0efafb9dc1e36856461228cecbf7467548c7628454fe2022f7ad607badf`.
-- Apply requires an explicit `user-confirmed-avatar-apply:` reference and an
-  authenticated `getMe` bot identity match before any write.
-- The operator path records a unique operation ID, safe authorization/audit
-  fields, and calls `setMyProfilePhoto` exactly once.
-- Exact API `result=true` records `success`. Explicit 4xx rejection records
-  `failed`; timeout, transport, HTTP/API 5xx, invalid JSON/response/result, or
-  an unknown post-call outcome records `uncertain`.
-- The apply path performs no profile-photo readback, `getFile`, download,
-  remote digest, visual-provider call, rollback, or automatic retry.
-- Wrong catalog, image, avatar, authorization, or bot identity stops before
-  the Telegram write.
+- Text-first component ordering, component claims, sent/failed/uncertain
+  outcomes, restart reconciliation, and at-most-once behavior are unchanged.
+- The safe-forward merge base is exactly
+  `85998708aa9a1d85b33a4477a818339498846868`.
+- The implementation changes no expression/avatar asset and no v0.4
+  automation, subscription, scheduled-food, Tavily, or migration source file.
+- VISION and automatic avatar rotation remain outside this implementation and
+  no production setting is changed.
 
-## Exact Snapshot Evidence
+## Deterministic Verification
 
-The following checks ran from a clean `git archive` of
-`2bbbb3824c856ed5fe199a36fc32c3e814828b33`, not from the shared checkout:
+All commands ran in the owned clean worktree. No external provider, Telegram,
+Tavily, deployment, container, SQLite production database, sticker upload, or
+avatar operation was invoked.
 
 | Check | Result |
 | --- | --- |
+| Focused policy/prompt/effector/evaluation/bundle/operator/database suite | Passed 37 tests in 1.205 seconds |
+| Full unit discovery | Passed 301 tests in 110.795 seconds |
 | `python3 -m compileall -q src tests` | Passed |
-| `PYTHONPATH=src:tests uv run python -m unittest discover -s tests -q` | Passed 297 tests in 102.203 seconds |
 | `uvx ruff check src tests` | Passed |
-| `uvx ruff format --check src tests` | Passed; 103 files already formatted |
-| `uv run mypy src/group_llm_agent` | Passed; no issues in 52 source files |
+| `uvx ruff format --check src tests` | Passed; 104 files already formatted |
+| `uv run --offline mypy src/group_llm_agent` | Passed; no issues in 52 source files |
 | `sh -n deploy/manage.sh` | Passed |
-| `uv build` | Produced wheel and sdist |
-| Isolated wheel install | Installed package and Pillow 11.3.0 |
-| Installed entry point without `TELEGRAM_BOT_TOKEN` | Safe expected exit code 2 with redacted configuration error |
-| Docker Compose render using `.env.example` | Passed; read-only root, no-new-privileges, tmpfs, persistent data volume, VISION/automation/expression disabled by example defaults |
-| Tracked snapshot credential/private-key scan | No matches |
+| `git diff --check` | Passed |
+| `uv build --offline` | Produced wheel and sdist |
 
-Build artifacts from this verification run:
+Build artifacts:
 
 - sdist SHA-256:
-  `b6699c6b4948e2e5ae9333ce43e9aed77a93d161dcf0c59741d3dee1d5949c5d`
+  `e9d960a1563cec274d8c2ac483e9529d7a8261d37b1a5302b28fb085717b6d25`
 - wheel SHA-256:
-  `52c8f2c76450ce45fdd61216dea5a4e06ba099a542489b5cafaad1f1cfe9d3cc`
+  `9a4909cfdf5ec315157c3d47af84f3fb2bf2d350e1476f1af03b47af05528c9a`
 
-Wheel inspection confirmed `effect_bundle.py`, `effect_delivery.py`,
-`expression_policy.py`, `writer_contract.py`, the expression catalog, and both
-immutable Lezhi v1/v2 persona bundles.
+The package build includes the simplified `expression_policy.py`, revised
+effector/evaluation/prompt modules, both immutable persona bundles, and all
+expression/avatar assets.
 
-Candidate image `telegram-bot:v031-candidate-2bbbb38` built successfully at
-image ID
-`sha256:734ba1523ee7a86cfc1f1e8e301a7d67dfc5431122521d9e00e2c4596d1719da`.
-Read-only inspection confirmed user `app`, command `group-llm-agent`, Pillow
-11.3.0, 48 expression entries, and imports for the new bundle/delivery/policy
-modules. A read-only no-credential run returned the expected safe exit code 2.
-No running service was replaced or restarted.
+## Regression Evidence
 
-## FINDING-001 Remediation Evidence
+- Natural-language invariance tests feed serious, medical, exclusive,
+  multilingual, benign, and long repeated text through the policy boundary and
+  prove identical non-semantic validation outcomes.
+- Policy tests cover disabled catalog/entry rejection, public/familiar/close
+  structured relationship ranks, exact outbound sticker markers, and repeat
+  rejection.
+- End-to-end effector tests prove natural-language and vision strings do not
+  override a valid model reply form.
+- End-to-end degradation tests prove invalid composite stickers preserve text,
+  invalid sticker-only results become silence, and exhausted invalid structured
+  output becomes silence even on a direct trigger.
+- Offline evaluation tests prove observed rates of `0.0`, `0.375`, `0.4`,
+  `0.7`, `0.725`, and `1.0` do not decide pass/fail; semantic case labels are
+  observational while relationship metadata and consecutive repeat remain
+  deterministic failures.
+- Operator and repository tests prove the online metrics command and both rate
+  calculation APIs are absent while durable bundle behavior remains green.
 
-The first independent review examined carrier
-`3785b17d8d2d2e2c4f78d359f504778d32d47985` and found that explicit
-Chinese and English safety-incident language could remain sticker-eligible.
-Remediation snapshot `ace5be1713b31bbd956cb5af5d1f415578cc8819`
-extends the application-owned serious-context classifier with bounded
-safety-incident, safety-accident, workplace/industrial-accident, and Chinese
-incident/accident terms. The Writer cannot override this classification.
+## Provider Evidence And Limitations
 
-Direct policy regressions prove `发生安全事故了`, `现场出现安全险情`,
-`A safety incident happened.`, and `There was a workplace accident.` are all
-ineligible for stickers, while a benign light interaction remains eligible.
-End-to-end effector regressions prove that, for both the Chinese and English
-literal cases:
+The historical configured-provider report remains byte-identical at SHA-256
+`cc89c4f22cbed02bffe1b510c60b22409aabbda5011b6145b6e77882747ff5d2`.
+It is retained for traceability only and does not satisfy the revised
+architecture's future provider-evidence gate because it was generated before
+this prompt and responsibility-boundary change.
 
-- a Writer `sticker` result becomes a direct-path failure reply with no
-  sticker; and
-- a Writer `reply_with_sticker` result becomes the already-validated text-only
-  reply with no sticker.
+A new provider run requires separate authorization. This implementation and
+verification did not consume credentials, transmit any fixed evaluation
+content, or call the configured non-official OpenAI-compatible endpoint.
 
-The following checks ran from a clean `git archive` of the exact remediation
-snapshot:
+Production remains on the previously deployed snapshot. Deployment, container
+replacement, Telegram smoke, expression upload/mapping, SQLite migration,
+default-avatar apply, mood-avatar apply, VISION enablement, and automatic
+avatar rotation are not authorized or claimed by this verification.
 
-| Check | Result |
-| --- | --- |
-| Focused policy and effector suite | Passed 16 tests in 0.767 seconds |
-| Full unit discovery suite | Passed 300 tests in 98.836 seconds |
-| `python3 -m compileall -q src tests` | Passed |
+## Review And Merge State
 
-The byte-identical implementation tree also passed Ruff check and format
-(`103` files), Mypy (`52` source files), `sh -n deploy/manage.sh`,
-`git diff --check`, and offline wheel/sdist build. The remediation changed only
-`expression_policy.py`, `test_expression_policy.py`, and `test_effector.py`;
-v0.4 source paths, expression assets, avatar assets, mappings, deployment
-configuration, and production state were not changed.
-
-## Release Gates And Limitations
-
-- Independent exact-head merge review is still required.
-- On 2026-08-04, the user explicitly authorized the Feature Lifecycle global
-  `mergeOnApprove` policy to be set to `true` temporarily, only to re-review
-  and squash merge PR #7. The merge review must require the exact head, use no
-  admin or auto merge, preserve the feature branch, and return immutable merge
-  traceability.
-- Main must restore the global `mergeOnApprove` policy to `false` immediately
-  after accepting the merged ReviewResult. The temporary authorization does
-  not permit deployment, Compose/container changes, SQLite migration,
-  expression or avatar operations, Telegram messages, or provider/Tavily
-  calls.
-- Production SQLite backup, immutable-copy `PRAGMA quick_check`, migration,
-  Compose replacement, and post-start verification remain post-merge release
-  steps; no production database or container was changed during verification.
-- The 48 production Telegram mappings were not mutated or re-uploaded. The
-  release must prove all 48 remain enabled before and after restart.
-- No real Telegram message, sticker, profile-photo write, provider request,
-  visual-provider request, or Tavily request was made during this verification.
-- After merge and preflight, one user-authorized default-avatar apply is in
-  scope. Telegram API success is the system success condition; visible client
-  anomalies remain a manual-report path.
-- Production must keep VISION disabled, automatic avatar rotation disabled,
-  and mood-avatar apply count at zero.
-- Real Telegram composite-reply UAT and the user's visual confirmation of the
-  default avatar remain final operational acceptance steps.
+The exact implementation is ready for a new immutable exact-head
+`ReviewRequest`. `mergeOnApprove=false`; review must not merge this snapshot.

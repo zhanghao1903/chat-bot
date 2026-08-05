@@ -18,10 +18,7 @@ from group_llm_agent.expression import (
     ExpressionCatalogError,
     validate_runtime_selection,
 )
-from group_llm_agent.expression_policy import (
-    classify_sticker_eligibility,
-    sticker_selection_error,
-)
+from group_llm_agent.expression_policy import sticker_selection_error
 from group_llm_agent.food_recommendation import validate_food_recommendation
 from group_llm_agent.model import (
     ModelApiError,
@@ -151,7 +148,6 @@ class WriterEffector:
                 vision_error_code=vision_error_code,
             )
         catalog = self._load_catalog()
-        sticker_eligibility = classify_sticker_eligibility(context, catalog)
         web_session = self.web_session_factory() if self.web_session_factory is not None else None
         history: list[str] = []
         tool_results: list[ToolExecutionResult | WebToolExecutionResult] = []
@@ -269,7 +265,7 @@ class WriterEffector:
                 if model_call_number < self.budgets.maximum_model_calls:
                     history.append(f"writer_protocol_error:{error.category}")
                     continue
-                return self._degrade(
+                return self._silence(
                     request=request,
                     effect_run_id=effect_run_id,
                     model_call_count=model_call_number,
@@ -370,8 +366,8 @@ class WriterEffector:
                     text=decision.text,
                     catalog_version=(catalog.catalog_version if catalog is not None else None),
                     catalog_digest=(catalog.digest if catalog is not None else None),
-                    sticker_eligible=sticker_eligibility.eligible,
-                    sticker_eligibility_reason=sticker_eligibility.reason_code,
+                    sticker_eligible=False,
+                    sticker_eligibility_reason="model_selected_text",
                     mood_signal=decision.mood_signal,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                 )
@@ -403,10 +399,6 @@ class WriterEffector:
                 try:
                     current_catalog = self._load_catalog(required=True)
                     assert current_catalog is not None
-                    current_eligibility = classify_sticker_eligibility(
-                        context,
-                        current_catalog,
-                    )
                     entry = validate_runtime_selection(
                         current_catalog,
                         semantic_id=str(decision.sticker_id),
@@ -419,7 +411,6 @@ class WriterEffector:
                         context=context,
                         catalog=current_catalog,
                         entry=entry,
-                        sticker_only=False,
                     )
                     if selection_error is not None:
                         raise ExpressionCatalogError(selection_error)
@@ -431,8 +422,8 @@ class WriterEffector:
                         text=decision.text,
                         catalog_version=(catalog.catalog_version if catalog is not None else None),
                         catalog_digest=(catalog.digest if catalog is not None else None),
-                        sticker_eligible=sticker_eligibility.eligible,
-                        sticker_eligibility_reason=sticker_eligibility.reason_code,
+                        sticker_eligible=False,
+                        sticker_eligibility_reason=f"sticker_{error.code}",
                         mood_signal=decision.mood_signal,
                         used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                     )
@@ -451,8 +442,8 @@ class WriterEffector:
                     sticker_id=entry.semantic_id,
                     catalog_version=current_catalog.catalog_version,
                     catalog_digest=current_catalog.digest,
-                    sticker_eligible=current_eligibility.eligible,
-                    sticker_eligibility_reason=current_eligibility.reason_code,
+                    sticker_eligible=True,
+                    sticker_eligibility_reason="model_selected_nonsemantic_valid",
                     mood_signal=decision.mood_signal,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                 )
@@ -479,7 +470,6 @@ class WriterEffector:
                         context=context,
                         catalog=current_catalog,
                         entry=entry,
-                        sticker_only=True,
                     )
                     if sticker_error is not None:
                         raise ExpressionCatalogError(sticker_error)
@@ -492,7 +482,7 @@ class WriterEffector:
                     if fallback_error is not None:
                         raise ExpressionCatalogError(fallback_error)
                 except ExpressionCatalogError as error:
-                    return self._degrade(
+                    return self._silence(
                         request=request,
                         effect_run_id=effect_run_id,
                         model_call_count=model_call_number,
@@ -509,7 +499,7 @@ class WriterEffector:
                     catalog_digest=current_catalog.digest,
                     fallback_text=decision.fallback_text,
                     sticker_eligible=True,
-                    sticker_eligibility_reason="light_interaction",
+                    sticker_eligibility_reason="model_selected_nonsemantic_valid",
                     mood_signal=decision.mood_signal,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                 )
@@ -729,6 +719,30 @@ class WriterEffector:
                 persona=request.persona,
                 used_tool_call_ids=used_tool_call_ids,
             )
+        self.runs.complete_effect_run(
+            effect_run_id=effect_run_id,
+            effect=final,
+            model_call_count=model_call_count,
+            tool_call_count=tool_call_count,
+        )
+        return final
+
+    def _silence(
+        self,
+        *,
+        request: EffectRequest,
+        effect_run_id: int,
+        model_call_count: int,
+        tool_call_count: int,
+        used_tool_call_ids: tuple[int, ...],
+        reason_code: str,
+    ) -> FinalEffect:
+        final = FinalEffect(
+            kind=FinalEffectKind.SILENCE,
+            reason_code=reason_code,
+            persona=request.persona,
+            used_tool_call_ids=used_tool_call_ids,
+        )
         self.runs.complete_effect_run(
             effect_run_id=effect_run_id,
             effect=final,

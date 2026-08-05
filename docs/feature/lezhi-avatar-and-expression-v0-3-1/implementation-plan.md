@@ -1,36 +1,39 @@
 # Implementation Plan: 乐枝默认头像部署与复合表情回复 v0.3.1
 
-- Status: Ready For Implementation
-- Confirmed requirements: `86ace06b0704da458646747e3ca0468456235851`
-- Technical design: `6b386995efd84d0369549edc5d7bfc96d7eae475`
-- Safe forward baseline: `origin/main@88c775c8ef0be7d1c63fd71b5924334b12492d75`
+- Status: Ready For Implementation — LLM Reply-Form Boundary Revision
+- Confirmed requirements: `596a754419bc971ac71436bbb85f408ecc7962f0`
+- Technical design: `a23bb6640aec97f7c781abb45767231cee966aeb`
+- Safe forward baseline: `origin/main@85998708aa9a1d85b33a4477a818339498846868`
 - Plan date: 2026-08-04
 
 ## 1. Delivery Strategy
 
-Implement in additive, independently testable slices. The branch already
-contains a non-rewriting merge of the safe-forward main baseline. No slice may
-remove or bypass v0.4 automation behavior.
+Implement as a deletion-first, independently testable revision on the existing
+PR #8 branch. The exact safe-forward main baseline remains an ancestor. No
+slice may remove or bypass v0.4 automation behavior.
 
 The implementation order is intentionally state-first:
 
-1. establish closed model and sticker-policy contracts;
-2. add durable bundle/component state;
-3. route inbound delivery and replay through that state;
-4. add privacy-safe metrics and fixed evaluation;
-5. simplify the explicit avatar apply path;
-6. run full verification and release preparation.
+1. preserve the closed Writer contract and move all reply-form semantics to the
+   Writer prompt;
+2. delete natural-language gates while retaining non-semantic selection
+   validation and DEC-016 degradation;
+3. remove the online frequency command/query and make offline rate reporting
+   non-normative;
+4. preserve durable bundle/delivery/avatar/v0.4 behavior;
+5. replace keyword matrices with deterministic boundary tests;
+6. run full local verification and prepare a new exact-head review.
 
 Production, Telegram writes, default-avatar application, and Compose restart
 remain deferred until implementation is committed, reviewed, approved, merged,
 backed up, and built from the exact merge artifact.
 
-## 2. Slice A — Writer Contract And Sticker Policy
+## 2. Slice A — Writer Contract And Non-Semantic Sticker Boundary
 
 ### Files
 
-- add `src/group_llm_agent/writer_contract.py`
-- add `src/group_llm_agent/expression_policy.py`
+- retain `src/group_llm_agent/writer_contract.py`
+- simplify `src/group_llm_agent/expression_policy.py`
 - update `src/group_llm_agent/events.py`
 - update `src/group_llm_agent/model.py`
 - update `src/group_llm_agent/writer_prompt.py`
@@ -48,20 +51,24 @@ backed up, and built from the exact merge artifact.
    `FinalEffectKind.REPLY_WITH_STICKER`.
 2. Define the closed composite JSON shape in `writer_contract.py` and expose
    the canonical prompt protocol from the same module.
-3. Extend `WriterDecision` and `FinalEffect` with the bounded composite fields
-   plus sticker eligibility metadata.
+3. Preserve the bounded composite fields and legacy-compatible sticker audit
+   metadata without using it as a semantic denominator.
 4. Parse exactly one text and one semantic sticker ID; reject unknown fields,
    raw Telegram identifiers, URLs, and missing snapshots.
-5. Update `writer_prompt.py` to advertise a 0.4–0.7 sticker-bearing target and
-   the text-first composite shape. Retain v0.4 food and independent Web/context
-   tool budgets.
+5. Update `writer_prompt.py` to make the LLM the sole reply-form semantic
+   decision maker. Guide it to avoid stickers in serious/safety/medical/
+   permission/relationship-repair/exclusive contexts, prefer them when they
+   naturally add emotion/action, and never force a rate. Retain v0.4 food and
+   independent Web/context tool budgets.
 6. Reject composite output for scheduled requests before effect completion.
-7. Move application-owned sticker eligibility and selected-entry validation to
-   `expression_policy.py`, with distinct `sticker_only_allowed` and
-   `composite_allowed` results.
+7. Delete message/vision keyword regexes, synonym and subject registries,
+   prefix/negation parsing, and any equivalent semantic classifier from
+   `expression_policy.py`. Keep only enabled catalog, structured relationship
+   rank, and consecutive-repeat validation.
 8. Keep final text privacy, protocol, deadline, and persona checks unchanged.
-9. Degrade an invalid composite sticker to the already validated text; retain
-   the existing direct/contextual degradation for invalid sticker-only output.
+9. Apply DEC-016: degrade an invalid composite sticker to the already validated
+   text; degrade invalid sticker-only and exhausted invalid/unknown Writer
+   output to silence for both direct and contextual paths.
 10. Map composite model-run completion to the existing `reply` effect-run
     terminal state.
 
@@ -71,10 +78,10 @@ backed up, and built from the exact merge artifact.
 - valid single- and multi-sentence composite payloads parse;
 - second text, second sticker, arbitrary file ID, URL, and extra field fail;
 - scheduled composite fails closed while food output remains accepted;
-- medical/self-harm/safety/illegal/permission/serious-repair contexts reject all
-  stickers;
-- ordinary facts retain text and may accept a compatible sticker;
-- relationship and adjacent-repeat guards remain effective;
+- arbitrary natural-language content cannot change a schema-valid Writer form;
+- enabled catalog/digest/ID, structured relationship metadata, scheduled-path,
+  and adjacent-repeat guards remain effective;
+- static inspection finds no reply-form keyword/regex/synonym/parser gate;
 - final-effect leakage/deadline/snapshot regressions remain green.
 
 ## 3. Slice B — Migration 6 And Bundle Repository
@@ -88,22 +95,24 @@ backed up, and built from the exact merge artifact.
 
 ### Changes
 
-1. Add migration 6 after the existing scheduled-food migration 5.
-2. Create `effect_bundles` with unique chat/event identity, bot/persona/catalog
-   snapshots, requested form, eligibility, terminal status, and safe reasons.
+1. Do not add a new migration; preserve existing migration 6 after scheduled
+   food migration 5.
+2. Preserve `effect_bundles` with unique chat/event identity,
+   bot/persona/catalog snapshots, requested form, legacy-compatible eligibility
+   fields, terminal status, and safe reasons.
 3. Create `effect_bundle_components` with order, kind, optional semantic ID,
    length-only text metadata, state, platform ID, and safe error category.
 4. Add nullable avatar audit columns `operation_id`, `api_method`, and
    `authorization_reference` without rewriting historical rows.
-5. Implement an `EffectBundleRepository` with transactions for:
+5. Preserve `EffectBundleRepository` transactions for:
    - atomic bundle/component preparation;
    - component compare-and-swap claim;
    - sent/failed/uncertain/skipped completion;
    - bundle terminal derivation;
    - exact chat/event lookup;
    - bounded restart reconciliation;
-   - last successfully sent sticker lookup;
-   - privacy-safe seven-day/latest-100 metrics.
+   - last successfully sent sticker lookup.
+   Remove the online seven-day/latest-100 expression metric query.
 6. Treat terminal rows as immutable and make duplicate completion idempotent.
 7. Do not move controls or scheduled automation into the new tables.
 
@@ -170,7 +179,7 @@ backed up, and built from the exact merge artifact.
 - `/food_enable`, `/food_subscribe`, `/food_status`, and recovery regressions
   remain green.
 
-## 5. Slice D — Metrics And Fixed Evaluation
+## 5. Slice D — Online Metric Removal And Offline Evaluation Reference
 
 ### Files
 
@@ -183,30 +192,30 @@ backed up, and built from the exact merge artifact.
 
 ### Changes
 
-1. Add a privacy-safe `expression-metrics` operator command scoped by exact
-   bot/persona/catalog identity and an explicit database path.
-2. Return counts, ratio, sample/window bounds, and `insufficient_data` below 30;
-   never return message or member content.
-3. Extend evaluation results with `reply_with_sticker`; count both sticker-only
-   and composite as sticker-bearing.
+1. Remove the online `expression-metrics` operator command and bundle
+   repository rolling-rate query. Do not add a replacement runtime metric.
+2. Keep migration-6 columns readable for compatibility; do not query them as a
+   semantic denominator, quota, or correction input.
+3. Preserve `reply_with_sticker` in offline evaluation results and report both
+   sticker-only and composite as an observed sticker-bearing count.
 4. Preserve the immutable v0.3 20-case asset and its digest as historical input.
-5. Add a separate canonical v0.3.1 case set with 40 sticker-eligible cases and
-   bounded hard-guard cases.
-6. Require 16–28 sticker-bearing eligible outputs, text on every necessary-text
-   case, no sticker on every hard-forbidden case, relationship compatibility,
-   and no adjacent repeated sticker.
-7. Keep evaluation evidence bound to exact case/catalog/persona/model/provider
-   snapshots. Do not let self-reported pass override computed pass.
+5. Preserve the canonical v0.3.1 case set as an offline semantic-review input;
+   its scenario labels never enter runtime code.
+6. Remove the 16–28 / 0.4–0.7 pass condition and automatic semantic guard
+   verdicts. Compute deterministic pass only from report contract, snapshots,
+   catalog/ID, structured relationship metadata, and adjacent-repeat rules.
+7. Keep future evaluation evidence bound to exact case/catalog/persona/model/
+   provider/prompt/context snapshots. A new separately authorized provider run
+   plus independent review is still required; the existing report is history.
 
 ### Checks
 
-- 0, 29, 30, 100, and 101 qualifying-row windows;
-- seven-day boundary and exact version isolation;
-- sticker-only plus composite numerator;
-- text-only eligible denominator;
-- safety/relationship ineligible, silence, and all-failed exclusion;
-- mixed component failure counts by successful visible component;
-- 0.39, 0.40, 0.70, and 0.71 fixed-set boundaries;
+- operator CLI exposes no online expression-rate command;
+- bundle repository exposes no seven-day/latest-100 semantic denominator;
+- sticker-only plus composite are counted only as offline observations;
+- 0.39, 0.40, 0.70, and 0.71 all leave deterministic report validity
+  unchanged;
+- scenario labels and natural-language wording do not change application pass;
 - fabricated `passed=true` with invalid computed results is rejected;
 - the original v0.3 evaluation set still loads and verifies under its historical
   contract.
@@ -268,7 +277,7 @@ backed up, and built from the exact merge artifact.
 
 ### Changes
 
-1. Document reply forms, component outcomes, metric semantics, and the one-shot
+1. Document reply forms, component outcomes, offline evaluation semantics, and the one-shot
    avatar operation.
 2. Record exact test/build commands, result counts, artifact identities, and
    limitations without credentials or full prompts.
@@ -302,8 +311,9 @@ Also prove:
 - exact Docker image runs as the expected non-root user and loads 48 mappings;
 - production-shaped database backup and upgraded copy both pass quick check;
 - v0.4 scheduler/control focused suites remain green;
-- configured Writer provider completes the canonical v0.3.1 fixed set without
-  exposing keys, Base URLs, provider bodies, or full prompts.
+- configured Writer provider evidence remains explicitly deferred because this
+  revision does not authorize a provider call; old evidence is not reused as
+  proof of the new contract.
 
 ## 9. Commit And Review Plan
 
@@ -311,7 +321,7 @@ Use phase/slice commits that keep review boundaries clear:
 
 1. writer contract and expression policy;
 2. migration 6, bundle repository, delivery, and runtime integration;
-3. metrics/evaluation and avatar API-success path;
+3. online metric removal/offline evaluation reference and avatar API-success path;
 4. documentation, changelog, and verification carrier.
 
 Push after coherent green slices. Create one non-draft PR targeting `main`.

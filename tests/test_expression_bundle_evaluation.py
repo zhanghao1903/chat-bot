@@ -59,11 +59,10 @@ class ExpressionBundleEvaluationTests(unittest.TestCase):
             {item.kind for item in self.case_set.cases},
         )
 
-    def test_sticker_only_and_composite_both_count_at_closed_boundaries(self) -> None:
-        for sticker_bearing, expected_pass in ((15, False), (16, True), (28, True), (29, False)):
+    def test_sticker_rate_is_observational_and_never_decides_pass(self) -> None:
+        for sticker_bearing in (0, 15, 16, 28, 29, 40):
             with self.subTest(sticker_bearing=sticker_bearing):
                 report = self._report(sticker_bearing=sticker_bearing)
-                report["passed"] = expected_pass
                 summary = verify_expression_evaluation_report(
                     report,
                     case_set=self.case_set,
@@ -71,12 +70,12 @@ class ExpressionBundleEvaluationTests(unittest.TestCase):
                     expected_catalog_sha256=self.catalog_sha,
                     require_pass=False,
                 )
-                self.assertEqual(expected_pass, summary.passed)
+                self.assertTrue(summary.passed)
                 self.assertEqual(sticker_bearing, summary.sticker_bearing_count)
                 self.assertEqual(sticker_bearing / 40, summary.sticker_bearing_rate)
 
-    def test_guard_cases_and_adjacent_sticker_variety_fail_closed(self) -> None:
-        for mutation in ("hard_guard", "necessary_text", "repeat"):
+    def test_semantic_case_labels_are_observational_but_repeat_is_enforced(self) -> None:
+        for mutation in ("hard_guard", "necessary_text"):
             with self.subTest(mutation=mutation):
                 report = self._report(sticker_bearing=16)
                 if mutation == "hard_guard":
@@ -91,9 +90,6 @@ class ExpressionBundleEvaluationTests(unittest.TestCase):
                         "output_kind": "sticker",
                         "sticker_id": _STICKERS[0],
                     }
-                else:
-                    report["results"][1]["sticker_id"] = report["results"][0]["sticker_id"]
-                report["passed"] = False
                 summary = verify_expression_evaluation_report(
                     report,
                     case_set=self.case_set,
@@ -101,10 +97,23 @@ class ExpressionBundleEvaluationTests(unittest.TestCase):
                     expected_catalog_sha256=self.catalog_sha,
                     require_pass=False,
                 )
-                self.assertFalse(summary.passed)
+                self.assertTrue(summary.passed)
 
-    def test_self_reported_pass_cannot_override_computed_failure(self) -> None:
-        report = self._report(sticker_bearing=15)
+        repeated = self._report(sticker_bearing=16)
+        repeated["results"][1]["sticker_id"] = repeated["results"][0]["sticker_id"]
+        repeated["passed"] = False
+        summary = verify_expression_evaluation_report(
+            repeated,
+            case_set=self.case_set,
+            catalog=self.catalog,
+            expected_catalog_sha256=self.catalog_sha,
+            require_pass=False,
+        )
+        self.assertFalse(summary.passed)
+
+    def test_self_reported_pass_cannot_override_deterministic_failure(self) -> None:
+        report = self._report(sticker_bearing=16)
+        report["results"][1]["sticker_id"] = report["results"][0]["sticker_id"]
         with self.assertRaisesRegex(ExpressionEvaluationError, "report_pass_mismatch"):
             verify_expression_evaluation_report(
                 report,

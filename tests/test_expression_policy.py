@@ -6,10 +6,10 @@ from types import SimpleNamespace
 from typing import cast
 
 from group_llm_agent.context import EffectContext
-from group_llm_agent.expression import ExpressionCatalog
+from group_llm_agent.expression import ExpressionCatalog, ExpressionEntry
 from group_llm_agent.expression_policy import (
     _last_outbound_sticker,
-    classify_sticker_eligibility,
+    sticker_selection_error,
 )
 from group_llm_agent.messages import StoredGroupMessage
 
@@ -30,87 +30,151 @@ def _outbound(message_id: str, text: str) -> StoredGroupMessage:
     )
 
 
+def _catalog(*, status: str = "enabled") -> ExpressionCatalog:
+    return cast(ExpressionCatalog, SimpleNamespace(status=status))
+
+
+def _entry(
+    *,
+    semantic_id: str = "lezhi.hello_wave.a01",
+    status: str = "enabled",
+    relationship: str = "public",
+) -> ExpressionEntry:
+    return cast(
+        ExpressionEntry,
+        SimpleNamespace(
+            semantic_id=semantic_id,
+            status=status,
+            minimum_relationship=relationship,
+        ),
+    )
+
+
+def _context(
+    *,
+    text: str = "你好呀",
+    has_memory: bool = False,
+    recent_scene: tuple[StoredGroupMessage, ...] = (),
+) -> EffectContext:
+    member_memory = (
+        (SimpleNamespace(items=(SimpleNamespace(memory_id="memory-1"),)),) if has_memory else ()
+    )
+    return cast(
+        EffectContext,
+        SimpleNamespace(
+            current_message=SimpleNamespace(text=text),
+            vision_error_code=None,
+            vision_evidence=None,
+            member_memory=member_memory,
+            recent_scene=recent_scene,
+        ),
+    )
+
+
 class ExpressionPolicyTests(unittest.TestCase):
-    def test_explicit_safety_incidents_are_never_sticker_eligible(self) -> None:
-        catalog = cast(
-            ExpressionCatalog,
-            SimpleNamespace(
-                status="enabled",
-                entries=(
-                    SimpleNamespace(
-                        status="enabled",
-                        minimum_relationship="public",
-                        semantic_id="lezhi.hello_wave.a01",
-                    ),
-                ),
-            ),
-        )
-        for text in (
+    def test_selection_does_not_classify_natural_language(self) -> None:
+        texts = (
             "发生安全事故了",
-            "现场出现安全险情",
-            "A safety incident happened.",
-            "There was a workplace accident.",
-        ):
-            with self.subTest(text=text):
-                context = cast(
-                    EffectContext,
-                    SimpleNamespace(
-                        current_message=SimpleNamespace(text=text),
-                        vision_error_code=None,
-                        vision_evidence=None,
-                        member_memory=(),
-                        recent_scene=(),
-                    ),
+            "我需要医疗帮助",
+            "你只能爱我",
+            "Please always love only me.",
+            "普通轻松闲聊",
+            "need to " * 1_024,
+        )
+        for text in texts:
+            with self.subTest(text=text[:40]):
+                self.assertIsNone(
+                    sticker_selection_error(
+                        context=_context(text=text),
+                        catalog=_catalog(),
+                        entry=_entry(),
+                    )
                 )
 
-                eligibility = classify_sticker_eligibility(context, catalog)
-
-                self.assertFalse(eligibility.eligible)
-                self.assertFalse(eligibility.sticker_only_allowed)
-                self.assertEqual("serious_context", eligibility.reason_code)
-
-    def test_benign_light_interaction_remains_sticker_eligible(self) -> None:
-        context = cast(
-            EffectContext,
-            SimpleNamespace(
-                current_message=SimpleNamespace(text="哈哈，你也太会接话了"),
-                vision_error_code=None,
-                vision_evidence=None,
-                member_memory=(),
-                recent_scene=(),
+    def test_catalog_and_entry_must_be_enabled(self) -> None:
+        self.assertEqual(
+            "catalog_not_enabled",
+            sticker_selection_error(
+                context=_context(),
+                catalog=_catalog(status="approved"),
+                entry=_entry(),
             ),
         )
-        catalog = cast(
-            ExpressionCatalog,
-            SimpleNamespace(
-                status="enabled",
-                entries=(
-                    SimpleNamespace(
-                        status="enabled",
-                        minimum_relationship="public",
-                        semantic_id="lezhi.hello_wave.a01",
-                    ),
-                ),
+        self.assertEqual(
+            "sticker_not_enabled",
+            sticker_selection_error(
+                context=_context(),
+                catalog=_catalog(),
+                entry=_entry(status="approved"),
             ),
         )
 
-        eligibility = classify_sticker_eligibility(context, catalog)
+    def test_relationship_metadata_is_enforced_without_language_parsing(self) -> None:
+        self.assertEqual(
+            "relationship_insufficient",
+            sticker_selection_error(
+                context=_context(),
+                catalog=_catalog(),
+                entry=_entry(relationship="familiar"),
+            ),
+        )
+        self.assertIsNone(
+            sticker_selection_error(
+                context=_context(has_memory=True),
+                catalog=_catalog(),
+                entry=_entry(relationship="familiar"),
+            )
+        )
+        self.assertEqual(
+            "relationship_insufficient",
+            sticker_selection_error(
+                context=_context(has_memory=True),
+                catalog=_catalog(),
+                entry=_entry(relationship="close"),
+            ),
+        )
 
-        self.assertTrue(eligibility.eligible)
-        self.assertTrue(eligibility.sticker_only_allowed)
-        self.assertEqual("light_interaction", eligibility.reason_code)
-
-    def test_last_sticker_survives_intervening_text_only_reply(self) -> None:
-        context = cast(
-            EffectContext,
-            SimpleNamespace(
-                recent_scene=(
-                    _outbound("1", "[sticker:lezhi.hello_wave.a01]"),
-                    _outbound("2", "这是一条文字回复。"),
-                )
+    def test_consecutive_repeat_is_rejected_across_intervening_text(self) -> None:
+        context = _context(
+            recent_scene=(
+                _outbound("1", "[sticker:lezhi.hello_wave.a01]"),
+                _outbound("2", "这是一条文字回复。"),
+            )
+        )
+        self.assertEqual(
+            "consecutive_repeat",
+            sticker_selection_error(
+                context=context,
+                catalog=_catalog(),
+                entry=_entry(),
             ),
         )
         self.assertEqual("lezhi.hello_wave.a01", _last_outbound_sticker(context))
+
+    def test_only_exact_outbound_sticker_markers_affect_repeat_policy(self) -> None:
+        context = _context(
+            recent_scene=(
+                _outbound("1", "讨论 [sticker:lezhi.hello_wave.a01]"),
+                replace_direction(_outbound("2", "[sticker:lezhi.hello_wave.a01]")),
+            )
+        )
+        self.assertIsNone(_last_outbound_sticker(context))
+
+
+def replace_direction(message: StoredGroupMessage) -> StoredGroupMessage:
+    return StoredGroupMessage(
+        id=message.id,
+        chat_id=message.chat_id,
+        telegram_message_id=message.telegram_message_id,
+        event_id=message.event_id,
+        sender_user_id=message.sender_user_id,
+        sender_display_name=message.sender_display_name,
+        direction="inbound",
+        text=message.text,
+        sent_at=message.sent_at,
+        replied_to_message_id=message.replied_to_message_id,
+        replied_to_user_id=message.replied_to_user_id,
+    )
 
 
 if __name__ == "__main__":

@@ -20,7 +20,12 @@ from group_llm_agent.events import (
     TriggerCategory,
     TriggerPath,
 )
-from group_llm_agent.expression import file_sha256, load_expression_catalog
+from group_llm_agent.expression import (
+    ExpressionCatalog,
+    ExpressionEntry,
+    file_sha256,
+    load_expression_catalog,
+)
 from group_llm_agent.memory import MemoryRepository
 from group_llm_agent.messages import MessageRepository
 from group_llm_agent.model import (
@@ -101,7 +106,7 @@ class WriterEffectorTests(unittest.TestCase):
             self.assertEqual(("reply", 2, 1), fixture.effect_run_summary())
             self.assertEqual(["unknown_tool"], fixture.tool_statuses())
 
-    def test_third_tool_request_cannot_exceed_budget_and_direct_degrades_once(self) -> None:
+    def test_tool_request_after_budget_fails_closed_to_silence(self) -> None:
         with EffectorFixtureContext(
             _tool_result("search_recent_group_messages", {"query": "needle"}),
             _tool_result("lookup_member_memory", {"member_user_id": "member-a"}),
@@ -112,11 +117,11 @@ class WriterEffectorTests(unittest.TestCase):
                 bundle=fixture.bundle,
             )
 
-            self.assertEqual(FinalEffectKind.FAILURE_REPLY, final.kind)
-            self.assertTrue(final.text)
+            self.assertEqual(FinalEffectKind.SILENCE, final.kind)
+            self.assertIsNone(final.text)
             self.assertEqual(3, len(fixture.model.calls))
             self.assertEqual(2, len(final.used_tool_call_ids))
-            self.assertEqual(("failure_reply", 3, 2), fixture.effect_run_summary())
+            self.assertEqual(("silence", 3, 2), fixture.effect_run_summary())
 
     def test_model_failure_is_failure_reply_for_direct_and_silence_for_contextual(self) -> None:
         for path, expected in (
@@ -265,7 +270,7 @@ class WriterEffectorTests(unittest.TestCase):
 
             final = fixture.effector.execute(request=fixture.request, bundle=fixture.bundle)
 
-            self.assertEqual(FinalEffectKind.FAILURE_REPLY, final.kind)
+            self.assertEqual(FinalEffectKind.SILENCE, final.kind)
             connection = fixture.database.connect()
             try:
                 audits = connection.execute(
@@ -334,146 +339,27 @@ class WriterEffectorTests(unittest.TestCase):
             self.assertEqual(selected.semantic_id, final.sticker_id)
             self.assertEqual("joyful", final.mood_signal)
 
-    def test_serious_visual_evidence_cannot_become_sticker_only_effect(self) -> None:
-        catalog_path = (
-            Path(__file__).parents[1]
-            / "src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/catalog.json"
-        )
-        candidate = load_expression_catalog(
-            catalog_path,
-            expected_sha256=file_sha256(catalog_path),
-            allowed_statuses=frozenset({"candidate"}),
-        )
-        selected = next(
-            entry for entry in candidate.entries if entry.minimum_relationship == "public"
-        )
-        cases = (
-            (
-                "schema_serious_synonyms",
-                VisionEvidence(
-                    summary="A deep gash with red liquid beside two tablets.",
-                    visible_text=(),
-                    observations=("The skin is split and red fluid is visible.",),
-                    inferences=(),
-                    uncertainties=(),
-                    safety_flags=("graphic_content", "health_concern"),
-                    media_sha256="a" * 64,
-                    model_id="vision-test",
-                ),
-                None,
-                FinalEffectKind.FAILURE_REPLY,
-            ),
-            (
-                "unknown_flag_defense_in_depth",
-                VisionEvidence(
-                    summary="The image needs additional review.",
-                    visible_text=(),
-                    observations=(),
-                    inferences=(),
-                    uncertainties=("Risk classification is uncertain.",),
-                    safety_flags=("unknown_provider_label",),
-                    media_sha256="b" * 64,
-                    model_id="vision-test",
-                ),
-                None,
-                FinalEffectKind.FAILURE_REPLY,
-            ),
-            (
-                "unknown_flag_parser_failure",
-                None,
-                "invalid_safety_flag",
-                FinalEffectKind.FAILURE_REPLY,
-            ),
-            (
-                "benign_image",
-                VisionEvidence(
-                    summary="A blue cup is on a table.",
-                    visible_text=(),
-                    observations=("The cup is centered in the image.",),
-                    inferences=(),
-                    uncertainties=(),
-                    safety_flags=(),
-                    media_sha256="c" * 64,
-                    model_id="vision-test",
-                ),
-                None,
-                FinalEffectKind.STICKER,
-            ),
-        )
-        for label, evidence, error_code, expected_kind in cases:
-            with (
-                self.subTest(label=label),
-                EffectorFixtureContext(
-                    StructuredModelResult(
-                        {
-                            "kind": "sticker",
-                            "reason_code": "light_reaction",
-                            "sticker_id": selected.semantic_id,
-                            "catalog_version": candidate.catalog_version,
-                            "catalog_digest": candidate.digest,
-                            "fallback_text": "我看到了。",
-                            "mood_signal": "gentle",
-                        }
-                    )
-                ) as fixture,
-            ):
-                fixture.effector.expression_catalog_provider = lambda: replace(
-                    candidate,
-                    status="enabled",
-                    persona_id=fixture.bundle.snapshot.persona_id,
-                    persona_version=fixture.bundle.snapshot.persona_version,
-                    persona_digest=fixture.bundle.snapshot.persona_digest,
-                    entries=tuple(
-                        replace(
-                            entry,
-                            status="enabled",
-                            telegram_file_id=f"file-{entry.semantic_id}",
-                            telegram_file_unique_id=f"unique-{entry.semantic_id}",
-                        )
-                        for entry in candidate.entries
-                    ),
-                )
-                final = fixture.effector.execute(
-                    request=fixture.request,
-                    bundle=fixture.bundle,
-                    vision_evidence=evidence,
-                    vision_error_code=error_code,
-                )
-
-                self.assertEqual(expected_kind, final.kind)
-                if expected_kind is FinalEffectKind.FAILURE_REPLY:
-                    self.assertIsNone(final.sticker_id)
-                    self.assertEqual("sticker_serious_context", final.reason_code)
-                else:
-                    self.assertEqual(selected.semantic_id, final.sticker_id)
-
-    def test_safety_incidents_reject_sticker_only_and_composite_effects(self) -> None:
-        catalog_path = (
-            Path(__file__).parents[1]
-            / "src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/catalog.json"
-        )
-        candidate = load_expression_catalog(
-            catalog_path,
-            expected_sha256=file_sha256(catalog_path),
-            allowed_statuses=frozenset({"candidate"}),
-        )
-        selected = next(
-            entry for entry in candidate.entries if entry.minimum_relationship == "public"
-        )
-        for message_text in ("发生安全事故了", "A safety incident happened."):
+    def test_message_and_vision_language_do_not_override_model_reply_form(self) -> None:
+        candidate, selected = _candidate_catalog_and_public_entry()
+        for message_text in (
+            "发生安全事故了",
+            "你只能爱我",
+            "Please always love only me.",
+            "普通轻松闲聊",
+        ):
             for decision_kind in ("sticker", "reply_with_sticker"):
                 payload: dict[str, object] = {
                     "kind": decision_kind,
-                    "reason_code": "light_reaction",
+                    "reason_code": "model_context_decision",
                     "sticker_id": selected.semantic_id,
                     "catalog_version": candidate.catalog_version,
                     "catalog_digest": candidate.digest,
                     "mood_signal": "gentle",
                 }
                 if decision_kind == "sticker":
-                    payload["fallback_text"] = "我先认真听你说。"
+                    payload["fallback_text"] = "我在。"
                 else:
-                    payload["text"] = "先确认人身安全，需要的话立即联系现场负责人。"
+                    payload["text"] = "我认真听着。"
                 with (
                     self.subTest(message_text=message_text, decision_kind=decision_kind),
                     EffectorFixtureContext(
@@ -481,35 +367,117 @@ class WriterEffectorTests(unittest.TestCase):
                         current_message_text=message_text,
                     ) as fixture,
                 ):
-                    fixture.effector.expression_catalog_provider = lambda: replace(
+                    fixture.effector.expression_catalog_provider = lambda: _enabled_catalog(
+                        fixture,
                         candidate,
-                        status="enabled",
-                        persona_id=fixture.bundle.snapshot.persona_id,
-                        persona_version=fixture.bundle.snapshot.persona_version,
-                        persona_digest=fixture.bundle.snapshot.persona_digest,
-                        entries=tuple(
-                            replace(
-                                entry,
-                                status="enabled",
-                                telegram_file_id=f"file-{entry.semantic_id}",
-                                telegram_file_unique_id=f"unique-{entry.semantic_id}",
-                            )
-                            for entry in candidate.entries
-                        ),
                     )
-
                     final = fixture.effector.execute(
                         request=fixture.request,
                         bundle=fixture.bundle,
+                        vision_evidence=VisionEvidence(
+                            summary="A provider-authored serious description.",
+                            visible_text=(),
+                            observations=(),
+                            inferences=(),
+                            uncertainties=(),
+                            safety_flags=("medical",),
+                            media_sha256="a" * 64,
+                            model_id="vision-test",
+                        ),
+                        vision_error_code="provider_uncertain",
+                    )
+                    self.assertEqual(FinalEffectKind(decision_kind), final.kind)
+                    self.assertEqual(selected.semantic_id, final.sticker_id)
+                    self.assertEqual(
+                        "model_selected_nonsemantic_valid",
+                        final.sticker_eligibility_reason,
                     )
 
-                    self.assertIsNone(final.sticker_id)
-                    self.assertEqual("sticker_serious_context", final.reason_code)
-                    if decision_kind == "sticker":
-                        self.assertEqual(FinalEffectKind.FAILURE_REPLY, final.kind)
-                    else:
-                        self.assertEqual(FinalEffectKind.REPLY, final.kind)
-                        self.assertEqual(payload["text"], final.text)
+    def test_invalid_sticker_degrades_composite_to_text_and_sticker_only_to_silence(
+        self,
+    ) -> None:
+        candidate, selected = _candidate_catalog_and_public_entry()
+        for decision_kind, expected_kind in (
+            ("reply_with_sticker", FinalEffectKind.REPLY),
+            ("sticker", FinalEffectKind.SILENCE),
+        ):
+            payload: dict[str, object] = {
+                "kind": decision_kind,
+                "reason_code": "model_context_decision",
+                "sticker_id": selected.semantic_id,
+                "catalog_version": "wrong-version",
+                "catalog_digest": candidate.digest,
+                "mood_signal": "gentle",
+            }
+            if decision_kind == "sticker":
+                payload["fallback_text"] = "我在。"
+            else:
+                payload["text"] = "保留这条已验证文字。"
+            with (
+                self.subTest(decision_kind=decision_kind),
+                EffectorFixtureContext(StructuredModelResult(payload)) as fixture,
+            ):
+                fixture.effector.expression_catalog_provider = lambda: _enabled_catalog(
+                    fixture,
+                    candidate,
+                )
+                final = fixture.effector.execute(
+                    request=fixture.request,
+                    bundle=fixture.bundle,
+                )
+                self.assertEqual(expected_kind, final.kind)
+                self.assertIsNone(final.sticker_id)
+                self.assertEqual("sticker_catalog_snapshot_mismatch", final.reason_code)
+                if decision_kind == "reply_with_sticker":
+                    self.assertEqual(payload["text"], final.text)
+                else:
+                    self.assertIsNone(final.text)
+
+    def test_exhausted_invalid_writer_result_is_silence_even_for_direct_trigger(self) -> None:
+        invalid = StructuredModelResult({"kind": "unknown", "reason_code": "invalid"})
+        with EffectorFixtureContext(invalid, invalid, invalid) as fixture:
+            final = fixture.effector.execute(
+                request=fixture.request,
+                bundle=fixture.bundle,
+            )
+            self.assertEqual(FinalEffectKind.SILENCE, final.kind)
+            self.assertTrue(final.reason_code.startswith("writer_"))
+
+
+def _candidate_catalog_and_public_entry() -> tuple[ExpressionCatalog, ExpressionEntry]:
+    catalog_path = (
+        Path(__file__).parents[1]
+        / "src/group_llm_agent/expression_assets/lezhi/lezhi-expression-v0.3/catalog.json"
+    )
+    candidate = load_expression_catalog(
+        catalog_path,
+        expected_sha256=file_sha256(catalog_path),
+        allowed_statuses=frozenset({"candidate"}),
+    )
+    selected = next(entry for entry in candidate.entries if entry.minimum_relationship == "public")
+    return candidate, selected
+
+
+def _enabled_catalog(
+    fixture: EffectorFixture,
+    candidate: ExpressionCatalog,
+) -> ExpressionCatalog:
+    return replace(
+        candidate,
+        status="enabled",
+        persona_id=fixture.bundle.snapshot.persona_id,
+        persona_version=fixture.bundle.snapshot.persona_version,
+        persona_digest=fixture.bundle.snapshot.persona_digest,
+        entries=tuple(
+            replace(
+                entry,
+                status="enabled",
+                telegram_file_id=f"file-{entry.semantic_id}",
+                telegram_file_unique_id=f"unique-{entry.semantic_id}",
+            )
+            for entry in candidate.entries
+        ),
+    )
 
 
 class EffectorFixture:

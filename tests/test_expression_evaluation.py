@@ -84,7 +84,7 @@ class ExpressionEvaluationTests(unittest.TestCase):
         )
         self.assertEqual(summary, loaded)
 
-    def test_frequency_outside_target_fails_even_when_self_reported_consistently(self) -> None:
+    def test_frequency_outside_reference_remains_valid(self) -> None:
         report = self._report()
         for index in range(3, 6):
             report["results"][index] = {
@@ -92,7 +92,6 @@ class ExpressionEvaluationTests(unittest.TestCase):
                 "output_kind": "reply",
                 "sticker_id": None,
             }
-        report["passed"] = False
         summary = verify_expression_evaluation_report(
             report,
             case_set=self.cases,
@@ -101,35 +100,34 @@ class ExpressionEvaluationTests(unittest.TestCase):
             require_pass=False,
         )
         self.assertEqual(0.3, summary.sticker_only_rate)
-        with self.assertRaisesRegex(ExpressionEvaluationError, "expression_evaluation_failed"):
-            verify_expression_evaluation_report(
-                report,
-                case_set=self.cases,
-                catalog=self.catalog,
-                expected_catalog_sha256=self.catalog_sha,
-            )
+        self.assertTrue(summary.passed)
 
-    def test_must_text_sticker_and_consecutive_repeat_fail(self) -> None:
-        for mutation in ("must_text", "repeat"):
-            with self.subTest(mutation=mutation):
-                report = self._report()
-                if mutation == "must_text":
-                    report["results"][10] = {
-                        "case_id": "EXPR-011",
-                        "output_kind": "sticker",
-                        "sticker_id": _STICKERS[0],
-                    }
-                else:
-                    report["results"][1]["sticker_id"] = _STICKERS[0]
-                report["passed"] = False
-                summary = verify_expression_evaluation_report(
-                    report,
-                    case_set=self.cases,
-                    catalog=self.catalog,
-                    expected_catalog_sha256=self.catalog_sha,
-                    require_pass=False,
-                )
-                self.assertFalse(summary.passed)
+    def test_semantic_case_label_is_observational_and_repeat_fails(self) -> None:
+        must_text = self._report()
+        must_text["results"][10] = {
+            "case_id": "EXPR-011",
+            "output_kind": "sticker",
+            "sticker_id": _STICKERS[0],
+        }
+        summary = verify_expression_evaluation_report(
+            must_text,
+            case_set=self.cases,
+            catalog=self.catalog,
+            expected_catalog_sha256=self.catalog_sha,
+        )
+        self.assertTrue(summary.passed)
+
+        repeated = self._report()
+        repeated["results"][1]["sticker_id"] = _STICKERS[0]
+        repeated["passed"] = False
+        summary = verify_expression_evaluation_report(
+            repeated,
+            case_set=self.cases,
+            catalog=self.catalog,
+            expected_catalog_sha256=self.catalog_sha,
+            require_pass=False,
+        )
+        self.assertFalse(summary.passed)
 
     def test_unknown_or_unapproved_sticker_fails_closed(self) -> None:
         report = self._report()
