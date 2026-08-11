@@ -6,10 +6,12 @@ from datetime import UTC, datetime
 
 from group_llm_agent.temporal import (
     AutomationGroupTimezoneProvider,
+    FreshnessMode,
     TemporalContextError,
     TemporalContextFactory,
     TemporalSession,
     TimezoneSelection,
+    finalize_temporal_text,
     validate_iana_timezone,
 )
 
@@ -35,6 +37,15 @@ class ConfigReader:
 
     def get_config(self, *, chat_id: str) -> object | None:
         return self.value
+
+
+@dataclass(frozen=True)
+class Evidence:
+    result_id: str
+    normalized_url: str
+    retrieved_at: datetime
+    search_audit_id: int
+    fetch_audit_id: int | None = None
 
 
 class TemporalContextTests(unittest.TestCase):
@@ -122,6 +133,64 @@ class TemporalContextTests(unittest.TestCase):
                 chat_id="group-a"
             )
 
+    def test_verified_and_unverified_text_render_application_owned_boundaries(self) -> None:
+        context = TemporalContextFactory(
+            clock=lambda: datetime(2026, 8, 11, 4, 30, tzinfo=UTC)
+        ).sample(group_timezone="Asia/Shanghai")
+        verified = finalize_temporal_text(
+            text="目前有更新。",
+            context=context,
+            freshness_mode=FreshnessMode.CURRENT_VERIFIED,
+            evidence=(
+                Evidence(
+                    result_id="web:1",
+                    normalized_url="https://example.com/a",
+                    retrieved_at=datetime(2026, 8, 11, 4, 42, tzinfo=UTC),
+                    search_audit_id=11,
+                    fetch_audit_id=12,
+                ),
+            ),
+        )
+        self.assertIn("截至 2026-08-11 12:42（Asia/Shanghai）", verified.text)
+        self.assertIn("来源：https://example.com/a", verified.text)
+        self.assertEqual((11, 12), verified.source_audit_ids)
+        self.assertEqual(("https://example.com/a",), verified.source_urls)
+
+        unverified = finalize_temporal_text(
+            text="我只能先给稳定背景。",
+            context=context,
+            freshness_mode=FreshnessMode.CURRENT_UNVERIFIED,
+        )
+        self.assertEqual(
+            "当前状态尚未可靠核实。\n我只能先给稳定背景。",
+            unverified.text,
+        )
+
+    def test_stable_or_verified_source_mismatch_fails_closed(self) -> None:
+        context = TemporalContextFactory(
+            clock=lambda: datetime(2026, 8, 11, tzinfo=UTC)
+        ).sample(group_timezone="Asia/Shanghai")
+        evidence = Evidence(
+            result_id="web:1",
+            normalized_url="https://example.com/a",
+            retrieved_at=datetime(2026, 8, 11, tzinfo=UTC),
+            search_audit_id=1,
+        )
+        with self.assertRaisesRegex(TemporalContextError, "freshness_sources_invalid"):
+            finalize_temporal_text(
+                text="stable",
+                context=context,
+                freshness_mode=FreshnessMode.STABLE,
+                evidence=(evidence,),
+            )
+        with self.assertRaisesRegex(TemporalContextError, "freshness_sources_invalid"):
+            finalize_temporal_text(
+                text="current",
+                context=context,
+                freshness_mode=FreshnessMode.CURRENT_VERIFIED,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
+    FreshnessMode,

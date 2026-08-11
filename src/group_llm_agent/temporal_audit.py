@@ -146,8 +146,6 @@ class TemporalAuditRepository:
             raise ValueError("latest Web retrieval time must be timezone-aware")
         if freshness_mode is FreshnessMode.CURRENT_VERIFIED and not web_audit_ids:
             raise ValueError("verified current answer requires Web audit ids")
-        if freshness_mode in {FreshnessMode.STABLE, FreshnessMode.CLOCK} and web_audit_ids:
-            raise ValueError("stable and clock answers cannot cite Web audit ids")
         now = _utc_now()
         web_json = json.dumps(web_audit_ids, separators=(",", ":"))
         values = (

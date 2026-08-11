@@ -100,6 +100,22 @@ class GroupTimezoneProvider(Protocol):
     def timezone_for(self, *, chat_id: str) -> str: ...
 
 
+class TemporalWebEvidence(Protocol):
+    result_id: str
+    normalized_url: str
+    retrieved_at: datetime
+    search_audit_id: int
+    fetch_audit_id: int | None
+
+
+@dataclass(frozen=True)
+class FinalizedTemporalText:
+    text: str
+    source_urls: tuple[str, ...]
+    source_audit_ids: tuple[int, ...]
+    latest_retrieved_at: datetime | None
+
+
 class StaticGroupTimezoneProvider:
     """Deterministic fallback for tests and callers without automation composition."""
 
@@ -261,6 +277,66 @@ def validate_iana_timezone(value: str) -> str:
     if not getattr(zone, "key", None):
         raise TemporalContextError("invalid_iana_timezone")
     return value
+
+
+def finalize_temporal_text(
+    *,
+    text: str,
+    context: TemporalContext,
+    freshness_mode: FreshnessMode,
+    evidence: tuple[TemporalWebEvidence, ...] = (),
+    maximum_length: int = 4_096,
+) -> FinalizedTemporalText:
+    if not text.strip() or len(text) > maximum_length:
+        raise TemporalContextError("invalid_temporal_answer_text")
+    if freshness_mode in {FreshnessMode.STABLE, FreshnessMode.CLOCK}:
+        if evidence:
+            raise TemporalContextError("freshness_sources_invalid")
+        return FinalizedTemporalText(text=text, source_urls=(), source_audit_ids=(), latest_retrieved_at=None)
+    if freshness_mode is FreshnessMode.CURRENT_UNVERIFIED:
+        rendered = f"当前状态尚未可靠核实。\n{text}"
+        if len(rendered) > maximum_length:
+            raise TemporalContextError("temporal_answer_too_long")
+        return FinalizedTemporalText(
+            text=rendered,
+            source_urls=(),
+            source_audit_ids=(),
+            latest_retrieved_at=None,
+        )
+    if not 1 <= len(evidence) <= 3:
+        raise TemporalContextError("freshness_sources_invalid")
+    result_ids = tuple(item.result_id for item in evidence)
+    urls = tuple(item.normalized_url for item in evidence)
+    if len(set(result_ids)) != len(result_ids) or len(set(urls)) != len(urls):
+        raise TemporalContextError("freshness_sources_invalid")
+    retrievals = tuple(_aware_utc(item.retrieved_at, code="invalid_web_retrieval_time") for item in evidence)
+    latest = max(retrievals)
+    try:
+        local = latest.astimezone(ZoneInfo(context.answer_timezone))
+    except (OverflowError, ValueError, ZoneInfoNotFoundError):
+        raise TemporalContextError("web_retrieval_time_conversion_failed") from None
+    footer = (
+        f"截至 {local.strftime('%Y-%m-%d %H:%M')}（{context.answer_timezone}）\n"
+        + "来源："
+        + " · ".join(urls)
+    )
+    rendered = f"{text}\n{footer}"
+    if len(rendered) > maximum_length:
+        raise TemporalContextError("temporal_answer_too_long")
+    audit_ids = sorted(
+        {
+            audit_id
+            for item in evidence
+            for audit_id in (item.search_audit_id, item.fetch_audit_id)
+            if audit_id is not None
+        }
+    )
+    return FinalizedTemporalText(
+        text=rendered,
+        source_urls=urls,
+        source_audit_ids=tuple(audit_ids),
+        latest_retrieved_at=latest,
+    )
 
 
 def _aware_utc(value: datetime, *, code: str) -> datetime:

@@ -50,6 +50,7 @@ from group_llm_agent.runtime import (
 )
 from group_llm_agent.scheduled_food import ScheduledFoodProcessor
 from group_llm_agent.tavily import TavilyClient
+from group_llm_agent.temporal import AutomationGroupTimezoneProvider
 from group_llm_agent.tools import ReadOnlyToolRegistry
 from group_llm_agent.trigger import (
     PersonaTriggerDecider,
@@ -274,6 +275,7 @@ def _persona_runtime(
     )
     memory = MemoryRepository(database)
     runs = RunRepository(database)
+    automation_repository = AutomationRepository(database)
     bundles = EffectBundleRepository(database)
     contexts = ContextAssembler(
         messages=messages,
@@ -323,6 +325,7 @@ def _persona_runtime(
         ),
         expression_catalog_provider=catalog_provider,
         web_session_factory=web_session_factory,
+        timezone_provider=AutomationGroupTimezoneProvider(automation_repository),
     )
     platform_gate = PlatformTriggerGate(
         allowed_chat_id=settings.telegram_chat_id,
@@ -357,7 +360,6 @@ def _persona_runtime(
         runs=runs,
         capability_available=settings.member_memory_capability == "available",
     )
-    automation_repository = AutomationRepository(database)
     automation_controls = AutomationControlService(
         allowed_chat_id=settings.telegram_chat_id,
         bot_user_id=bot_user_id,
