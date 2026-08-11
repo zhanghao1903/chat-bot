@@ -46,6 +46,8 @@ _EXPECTED_RUNTIME_TABLES = {
     "recognition_change_audit",
     "recognition_jobs",
     "schema_migrations",
+    "temporal_answer_audit",
+    "temporal_context_samples",
     "tool_call_audit",
     "trigger_evaluations",
     "trigger_runs",
@@ -98,6 +100,7 @@ class DatabaseMigrationTests(unittest.TestCase):
                     (4, "avatar_global_provenance"),
                     (5, "scheduled_food_automation_v0_4"),
                     (6, "composite_effect_bundles_v0_3_1"),
+                    (7, "temporal_awareness_v1"),
                 ],
                 [tuple(row) for row in migrations],
             )

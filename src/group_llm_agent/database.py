@@ -778,6 +778,64 @@ _MIGRATIONS: tuple[tuple[int, str, str], ...] = (
             WHERE operation_id IS NOT NULL;
         """,
     ),
+    (
+        7,
+        "temporal_awareness_v1",
+        """
+        CREATE TABLE temporal_context_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            effect_run_id INTEGER NOT NULL,
+            model_call_ordinal INTEGER NOT NULL CHECK (model_call_ordinal BETWEEN 1 AND 12),
+            context_version TEXT,
+            context_id TEXT,
+            captured_at_utc TEXT,
+            answer_timezone TEXT,
+            utc_offset TEXT,
+            timezone_selection TEXT
+                CHECK (
+                    timezone_selection IS NULL OR timezone_selection IN (
+                        'group_default', 'writer_explicit_override'
+                    )
+                ),
+            source_class TEXT CHECK (source_class IS NULL OR source_class = 'system_clock'),
+            status TEXT NOT NULL CHECK (status IN ('valid', 'failed')),
+            error_code TEXT,
+            created_at TEXT NOT NULL,
+            UNIQUE(effect_run_id, model_call_ordinal),
+            FOREIGN KEY (effect_run_id) REFERENCES effect_runs(id)
+        );
+        CREATE INDEX idx_temporal_context_samples_effect
+            ON temporal_context_samples(effect_run_id, model_call_ordinal);
+
+        CREATE TABLE temporal_answer_audit (
+            effect_run_id INTEGER PRIMARY KEY,
+            chat_id TEXT NOT NULL,
+            trigger_event_id TEXT NOT NULL,
+            source_kind TEXT NOT NULL CHECK (source_kind IN ('inbound', 'scheduled')),
+            final_context_id TEXT,
+            final_captured_at_utc TEXT,
+            answer_timezone TEXT,
+            utc_offset TEXT,
+            freshness_mode TEXT
+                CHECK (
+                    freshness_mode IS NULL OR freshness_mode IN (
+                        'stable', 'clock', 'current_verified', 'current_unverified'
+                    )
+                ),
+            web_requested INTEGER NOT NULL DEFAULT 0 CHECK (web_requested IN (0, 1)),
+            web_audit_ids_json TEXT NOT NULL DEFAULT '[]',
+            latest_web_retrieved_at TEXT,
+            status TEXT NOT NULL
+                CHECK (status IN ('completed', 'degraded', 'failed', 'silence')),
+            degradation_reason TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            FOREIGN KEY (effect_run_id) REFERENCES effect_runs(id)
+        );
+        CREATE INDEX idx_temporal_answer_audit_scope
+            ON temporal_answer_audit(chat_id, trigger_event_id);
+        """,
+    ),
 )
 
 
