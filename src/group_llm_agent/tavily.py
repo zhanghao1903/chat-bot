@@ -34,6 +34,9 @@ class TavilySearchResult:
     url: str
     content: str
     score: float
+    published_at: datetime | None = None
+    updated_at: datetime | None = None
+    provider_time_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,9 @@ class TavilySearchResponse:
 class TavilyExtractResult:
     url: str
     content: str
+    published_at: datetime | None = None
+    updated_at: datetime | None = None
+    provider_time_text: str | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,7 @@ class TavilyClient:
         timeout_seconds: float = 8.0,
         project_id: str | None = None,
         opener: UrlOpener | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._api_key = _secret(api_key)
         if not 3 <= timeout_seconds <= 10:
@@ -80,6 +87,7 @@ class TavilyClient:
         self.timeout_seconds = timeout_seconds
         self.project_id = project_id
         self._opener = opener or _urlopen
+        self._clock = clock or (lambda: datetime.now(UTC))
 
     def __repr__(self) -> str:
         return "TavilyClient(api_key=<redacted>, base_url=<fixed>)"
@@ -127,19 +135,24 @@ class TavilyClient:
             total += len(title) + len(url) + len(content)
             if total > _MAX_TOTAL_CONTENT:
                 raise TavilyApiError("search", "result_too_large")
+            published_at, updated_at, provider_time_text = _provider_time_fields(raw)
             results.append(
                 TavilySearchResult(
                     title=title,
                     url=url,
                     content=content,
                     score=float(score),
+                    published_at=published_at,
+                    updated_at=updated_at,
+                    provider_time_text=provider_time_text,
                 )
             )
+        retrieved_at = _aware_utc(self._clock())
         return TavilySearchResponse(
             results=tuple(results),
             request_id=_optional_text(envelope.get("request_id"), maximum=256),
             credits=_credits(envelope),
-            retrieved_at=datetime.now(UTC),
+            retrieved_at=retrieved_at,
         )
 
     def extract(
@@ -182,11 +195,18 @@ class TavilyClient:
         content = _bounded_text(content_value, maximum=_MAX_EXTRACT_CONTENT)
         if not content.strip():
             raise TavilyApiError("extract", "empty_result")
+        published_at, updated_at, provider_time_text = _provider_time_fields(raw)
         return TavilyExtractResponse(
-            result=TavilyExtractResult(url=result_url, content=content),
+            result=TavilyExtractResult(
+                url=result_url,
+                content=content,
+                published_at=published_at,
+                updated_at=updated_at,
+                provider_time_text=provider_time_text,
+            ),
             request_id=_optional_text(envelope.get("request_id"), maximum=256),
             credits=_credits(envelope),
-            retrieved_at=datetime.now(UTC),
+            retrieved_at=_aware_utc(self._clock()),
         )
 
     def _request(
@@ -282,6 +302,40 @@ def _credits(envelope: dict[str, Any]) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
         raise TavilyApiError("response", "invalid_response")
     return float(value)
+
+
+def _provider_time_fields(
+    raw: dict[str, Any],
+) -> tuple[datetime | None, datetime | None, str | None]:
+    published, published_text = _provider_datetime(
+        raw.get("published_at", raw.get("published_date"))
+    )
+    updated, updated_text = _provider_datetime(
+        raw.get("updated_at", raw.get("last_updated"))
+    )
+    provider_text = published_text or updated_text
+    return published, updated, provider_text
+
+
+def _provider_datetime(value: object) -> tuple[datetime | None, str | None]:
+    if value is None:
+        return None, None
+    if not isinstance(value, str) or not value.strip() or len(value) > 128:
+        raise TavilyApiError("response", "invalid_response")
+    text = value.strip()
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None, text
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None, text
+    return parsed.astimezone(UTC), None
+
+
+def _aware_utc(value: datetime) -> datetime:
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise TavilyApiError("response", "invalid_retrieval_time")
+    return value.astimezone(UTC)
 
 
 def _http_category(status: int) -> str:

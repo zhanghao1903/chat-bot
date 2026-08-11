@@ -40,6 +40,7 @@ class FakeTavily:
                     url="https://example.com/menu",
                     content="Lunch menu and address",
                     score=0.95,
+                    published_at=datetime(2026, 8, 2, tzinfo=UTC),
                 ),
                 TavilySearchResult(
                     title="Unsafe",
@@ -96,6 +97,8 @@ class WebToolSessionTests(unittest.TestCase):
             self.assertEqual("success", search.status)
             self.assertEqual(1, search.result_count)
             self.assertIn('"result_id":"web:1"', search.content_json)
+            self.assertIn('"retrieved_at":"2026-08-03T00:00:00+00:00"', search.content_json)
+            self.assertIn('"published_at":"2026-08-02T00:00:00+00:00"', search.content_json)
             self.assertNotIn("127.0.0.1", search.content_json)
 
             fetched = session.execute(
@@ -112,6 +115,10 @@ class WebToolSessionTests(unittest.TestCase):
                 ).fetchall()
             self.assertEqual(["web", "web"], [row["budget_kind"] for row in audit])
             self.assertEqual("extract-1", audit[-1]["provider_request_id"])
+            evidence = session.evidence_for(("web:1",))
+            self.assertEqual("https://example.com/menu", evidence[0].normalized_url)
+            self.assertEqual(fetched.audit_id, evidence[0].fetch_audit_id)
+            self.assertEqual(search.audit_id, evidence[0].search_audit_id)
 
     def test_fetch_before_search_and_duplicate_calls_fail_before_provider(self) -> None:
         with temporary_database() as database:
