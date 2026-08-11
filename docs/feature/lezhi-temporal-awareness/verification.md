@@ -26,6 +26,7 @@ Implementation history before this verification carrier:
 - `13d1af7` — isolated temporal execution/finalization state;
 - `7852190` — effect-and-model-call snapshot identity, leakage boundary, final formatting.
 - `6692735` — safe final-clock boundary and restart-safe temporal execution attempts.
+- `0941cba` — atomic execution-attempt ownership through effect-bundle delivery.
 
 No provider, Tavily, Telegram, deployment, container, production SQLite, sticker, or
 avatar operation was performed.
@@ -66,7 +67,7 @@ git diff --check 71c7eb3b60b08f3dd0d2229dee9873a8a76cca93..HEAD
 
 Results:
 
-- full unittest discovery: **327 tests passed**;
+- full unittest discovery: **328 tests passed**;
 - Ruff: all source/test files checked and formatted;
 - Mypy: no issues in **55 source files**;
 - wheel and sdist built successfully and include `temporal.py`, `temporal_audit.py`,
@@ -94,12 +95,18 @@ the command terminated `OK` with exit code 0.
   existing persona snapshot, deadline, one-effect, and bundle-idempotency boundaries.
 - Migration 7 is additive and migration 6 fixtures upgrade without rewriting existing
   rows; SQLite `PRAGMA quick_check` remains `ok` in migration tests.
+- Visible inbound bundles persist the owning effect run and execution attempt. Bundle
+  preparation validates the current terminal run and temporal audit in the same write
+  transaction; starting another attempt is rejected after a bundle has been prepared.
 
 ## 5. Review Finding Remediation
 
 The immutable ReviewResult for dispatch
 `0ad8efb8c334188d565ea5fd434da4e1eaebdf0cebce9f1c33a5be10d4ca29bc`
-was accepted before remediation. Both retained high-severity findings are addressed:
+and its exact-head re-review result for dispatch
+`451a94b27e34981201c7a432a8de58597d1218340a61acc8dfac77a785bf28c7`
+were accepted before their respective remediation. Both retained high-severity
+findings are addressed:
 
 - **FINDING-001 fixed:** every final/deadline clock read now crosses one typed safe
   boundary. Exceptions become `final_clock_unavailable`; non-datetime, naive, or
@@ -110,21 +117,26 @@ was accepted before remediation. Both retained high-severity findings are addres
   increasing durable `execution_attempt`. Temporal samples are unique by effect,
   attempt, and model-call ordinal; the terminal audit binds the successful attempt.
   A crash-after-sample restart records a later attempt-2 ordinal-1 sample without
-  overwriting attempt-1 evidence, completes one terminal audit, and the existing
-  external-effect uniqueness boundary permits at most one claim.
+  overwriting attempt-1 evidence and completes one terminal audit. `FinalEffect` now
+  carries that identity through delivery, while `effect_bundles` records it.
 - Attempt ownership is checked while recording samples, finalizing the temporal
   audit, and completing the effect run. A stale attempt cannot terminalize a newer
   attempt, and a newer valid attempt may replace an audit written immediately before
   an earlier process crash.
+- Bundle preparation atomically checks the effect run's current attempt, terminal
+  status/reason, and matching temporal audit. In the exact attempt-1-result / attempt-2
+  completion race, delivery of attempt 1 is rejected without a Telegram call; only
+  attempt 2 can own and send the bundle, and all three durable records identify
+  attempt 2. Once prepared, the bundle also prevents a later attempt from starting.
 
-Focused remediation verification passed **31 tests** across temporal audit, Writer
-effector, and scheduled-food effect paths. Exact full verification passed **327
+The second-remediation focused suite passed **34 tests** across effect-bundle,
+delivery, temporal-audit, and Writer-effector paths. Exact full verification passed **328
 tests**, Ruff check/format for **110 files**, Mypy for **55 source files**, package
 build, shell syntax, Compose rendering, and Git whitespace validation. The rebuilt
 artifacts were:
 
-- sdist SHA-256 `2ea259532ee5575439feb69dca0963a4ac0a5472fa67dd9b5056ec076fef7c9a`;
-- wheel SHA-256 `dda090996d16d94d04f06dbffa0746d4ae687e5fda5c997ece844df0ec47e9a5`.
+- sdist SHA-256 `b3bb0881949e9c27ba17dacb9a0a99c0e312c81c0bffb6786b96d441b7704ed4`;
+- wheel SHA-256 `deca6ceaeafe1ffcf9a29d3cc069aaf2a4001336c2862be139ee19e07f3b3fef`.
 
 ## 6. Operational Limitations
 
