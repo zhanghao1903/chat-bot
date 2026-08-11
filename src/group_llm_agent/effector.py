@@ -5,7 +5,6 @@ import re
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import cast
 
 from group_llm_agent.context import ContextAssembler, EffectContext
 from group_llm_agent.events import (
@@ -35,17 +34,15 @@ from group_llm_agent.tools import ReadOnlyToolRegistry, ToolExecutionResult, Too
 from group_llm_agent.temporal import (
     FreshnessMode,
     SELECT_ANSWER_TIMEZONE,
-    FinalizedTemporalText,
     GroupTimezoneProvider,
     StaticGroupTimezoneProvider,
     TemporalContext,
     TemporalContextError,
     TemporalContextFactory,
     TemporalSession,
-    TemporalWebEvidence,
-    finalize_temporal_text,
 )
-from group_llm_agent.temporal_audit import TemporalAnswerStatus, TemporalAuditRepository
+from group_llm_agent.temporal_audit import TemporalAuditRepository
+from group_llm_agent.temporal_execution import TemporalRunState, finalize_decision_text
 from group_llm_agent.vision import VisionEvidence
 from group_llm_agent.web_tools import (
     WEB_TOOLS,
@@ -72,78 +69,6 @@ _LEAKAGE_MARKER_PATTERN = re.compile(
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
-
-
-@dataclass
-class _TemporalRunState:
-    repository: TemporalAuditRepository
-    request: EffectRequest
-    effect_run_id: int
-    last_context: TemporalContext | None = None
-    web_audit_ids: set[int] | None = None
-    web_requested: bool = False
-
-    def __post_init__(self) -> None:
-        if self.web_audit_ids is None:
-            self.web_audit_ids = set()
-
-    def record_sample(self, *, ordinal: int, context: TemporalContext) -> None:
-        self.repository.record_sample(
-            effect_run_id=self.effect_run_id,
-            model_call_ordinal=ordinal,
-            context=context,
-        )
-        self.last_context = context
-
-    def record_failed_sample(self, *, ordinal: int, error_code: str) -> None:
-        self.last_context = None
-        self.repository.record_sample(
-            effect_run_id=self.effect_run_id,
-            model_call_ordinal=ordinal,
-            context=None,
-            error_code=error_code,
-        )
-
-    def note_web(self, result: WebToolExecutionResult) -> None:
-        assert self.web_audit_ids is not None
-        self.web_requested = True
-        self.web_audit_ids.add(result.audit_id)
-
-    def finalize(
-        self,
-        *,
-        final: FinalEffect,
-        freshness_mode: FreshnessMode | None,
-        context: TemporalContext | None = None,
-        latest_web_retrieved_at: datetime | None = None,
-        degradation_reason: str | None = None,
-    ) -> None:
-        final_context = context or self.last_context
-        scheduled = self.request.scheduled
-        message = self.request.message
-        status: TemporalAnswerStatus = (
-            "degraded"
-            if final.kind is FinalEffectKind.FAILURE_REPLY
-            else "silence"
-            if final.kind is FinalEffectKind.SILENCE
-            else "completed"
-        )
-        assert self.web_audit_ids is not None
-        self.repository.finalize(
-            effect_run_id=self.effect_run_id,
-            chat_id=scheduled.chat_id if scheduled is not None else message.group_id,  # type: ignore[union-attr]
-            trigger_event_id=(
-                scheduled.occurrence_id if scheduled is not None else message.event_id  # type: ignore[union-attr]
-            ),
-            source_kind="scheduled" if scheduled is not None else "inbound",
-            context=final_context,
-            freshness_mode=freshness_mode,
-            web_requested=self.web_requested,
-            web_audit_ids=tuple(sorted(self.web_audit_ids)),
-            latest_web_retrieved_at=latest_web_retrieved_at,
-            status=status,
-            degradation_reason=degradation_reason,
-        )
 
 
 @dataclass(frozen=True)
@@ -210,7 +135,7 @@ class WriterEffector:
         vision_error_code: str | None = None,
     ) -> FinalEffect:
         effect_run_id = self.runs.start_effect_run(request)
-        temporal_run = _TemporalRunState(
+        temporal_run = TemporalRunState(
             repository=self.temporal_audit,
             request=request,
             effect_run_id=effect_run_id,
@@ -535,7 +460,7 @@ class WriterEffector:
             if decision.kind is WriterDecisionKind.REPLY:
                 assert decision.text is not None
                 try:
-                    temporal_text = _finalize_decision_text(
+                    temporal_text = finalize_decision_text(
                         text=decision.text,
                         freshness_mode=decision.freshness_mode,
                         source_result_ids=decision.source_result_ids,
@@ -595,7 +520,7 @@ class WriterEffector:
             if decision.kind is WriterDecisionKind.REPLY_WITH_STICKER:
                 assert decision.text is not None
                 try:
-                    temporal_text = _finalize_decision_text(
+                    temporal_text = finalize_decision_text(
                         text=decision.text,
                         freshness_mode=decision.freshness_mode,
                         source_result_ids=decision.source_result_ids,
@@ -961,7 +886,7 @@ class WriterEffector:
         tool_call_count: int,
         used_tool_call_ids: tuple[int, ...],
         reason_code: str,
-        temporal_run: _TemporalRunState | None = None,
+        temporal_run: TemporalRunState | None = None,
     ) -> FinalEffect:
         if request.trigger_path is TriggerPath.DIRECT:
             final = FinalEffect(
@@ -998,7 +923,7 @@ class WriterEffector:
         tool_call_count: int,
         used_tool_call_ids: tuple[int, ...],
         reason_code: str,
-        temporal_run: _TemporalRunState | None = None,
+        temporal_run: TemporalRunState | None = None,
     ) -> FinalEffect:
         final = FinalEffect(
             kind=FinalEffectKind.SILENCE,
@@ -1024,7 +949,7 @@ class WriterEffector:
         effect: FinalEffect,
         model_call_count: int,
         tool_call_count: int,
-        temporal_run: _TemporalRunState | None,
+        temporal_run: TemporalRunState | None,
         freshness_mode: FreshnessMode | None,
         context: TemporalContext | None = None,
         latest_web_retrieved_at: datetime | None = None,
@@ -1098,32 +1023,3 @@ def _final_effect_validation_error(
 
 def _tool_result_fingerprint(result: ToolExecutionResult | WebToolExecutionResult) -> str:
     return f"{result.capability}:{result.content_json}"
-
-
-def _finalize_decision_text(
-    *,
-    text: str,
-    freshness_mode: FreshnessMode | None,
-    source_result_ids: tuple[str, ...],
-    temporal_context: TemporalContext,
-    web_session: WebToolSession | None,
-) -> FinalizedTemporalText:
-    if freshness_mode is None:
-        raise TemporalContextError("missing_freshness_mode")
-    evidence: tuple[TemporalWebEvidence, ...] = ()
-    if source_result_ids:
-        if web_session is None:
-            raise TemporalContextError("freshness_sources_invalid")
-        try:
-            evidence = tuple(
-                cast(TemporalWebEvidence, item)
-                for item in web_session.evidence_for(source_result_ids)
-            )
-        except ValueError:
-            raise TemporalContextError("freshness_sources_invalid") from None
-    return finalize_temporal_text(
-        text=text,
-        context=temporal_context,
-        freshness_mode=freshness_mode,
-        evidence=(evidence if freshness_mode is FreshnessMode.CURRENT_VERIFIED else ()),
-    )
