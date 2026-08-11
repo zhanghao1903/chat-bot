@@ -10,6 +10,27 @@ _MOOD_SIGNAL = {
     "type": "string",
     "enum": ["neutral", "joyful", "playful", "gentle", "pouty"],
 }
+_TEMPORAL_CONTEXT_ID = {
+    "type": "string",
+    "pattern": "^time:v1:[0-9a-f]{64}$",
+}
+_FRESHNESS = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["mode", "source_result_ids"],
+    "properties": {
+        "mode": {
+            "enum": ["stable", "clock", "current_verified", "current_unverified"]
+        },
+        "source_result_ids": {
+            "type": "array",
+            "minItems": 0,
+            "maxItems": 3,
+            "uniqueItems": True,
+            "items": {"type": "string", "pattern": "^web:[1-9][0-9]{0,2}$"},
+        },
+    },
+}
 _CATALOG_FIELDS = {
     "sticker_id": {"type": "string", "minLength": 1, "maxLength": 128},
     "catalog_version": {"type": "string", "minLength": 1, "maxLength": 128},
@@ -27,10 +48,11 @@ def _object_schema(
     return {
         "type": "object",
         "additionalProperties": False,
-        "required": ["kind", "reason_code", *required],
+        "required": ["kind", "reason_code", "temporal_context_id", *required],
         "properties": {
             "kind": {"const": kind},
             "reason_code": _REASON_CODE,
+            "temporal_context_id": _TEMPORAL_CONTEXT_ID,
             **properties,
             **({"mood_signal": _MOOD_SIGNAL} if include_mood else {}),
         },
@@ -55,15 +77,25 @@ WRITER_RESPONSE_SCHEMA = {
         ),
         _object_schema(
             kind="reply",
-            required=("text",),
-            properties={"text": {"type": "string", "minLength": 1, "maxLength": 4096}},
+            required=("text", "freshness"),
+            properties={
+                "text": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "freshness": _FRESHNESS,
+            },
         ),
         _object_schema(
             kind="reply_with_sticker",
-            required=("text", "sticker_id", "catalog_version", "catalog_digest"),
+            required=(
+                "text",
+                "sticker_id",
+                "catalog_version",
+                "catalog_digest",
+                "freshness",
+            ),
             properties={
                 "text": {"type": "string", "minLength": 1, "maxLength": 4096},
                 **_CATALOG_FIELDS,
+                "freshness": _FRESHNESS,
             },
         ),
         _object_schema(kind="silence", required=(), properties={}),
@@ -90,14 +122,22 @@ WRITER_FINAL_KINDS = frozenset(
 def writer_protocol_text() -> str:
     return (
         "Return exactly one JSON object in one of these shapes:\n"
-        '{"kind":"reply","reason_code":"snake_case","text":"reply text",'
+        '{"kind":"reply","reason_code":"snake_case",'
+        '"temporal_context_id":"current_time_context_id","text":"reply text",'
+        '"freshness":{"mode":"stable|clock|current_verified|current_unverified",'
+        '"source_result_ids":[]},'
         '"mood_signal":"neutral"}\n'
         '{"kind":"reply_with_sticker","reason_code":"snake_case",'
+        '"temporal_context_id":"current_time_context_id",'
         '"text":"one Telegram text message","sticker_id":"semantic_id",'
         '"catalog_version":"version","catalog_digest":"sha256",'
+        '"freshness":{"mode":"stable|clock|current_verified|current_unverified",'
+        '"source_result_ids":[]},'
         '"mood_signal":"neutral"}\n'
-        '{"kind":"silence","reason_code":"snake_case","mood_signal":"neutral"}\n'
+        '{"kind":"silence","reason_code":"snake_case",'
+        '"temporal_context_id":"current_time_context_id","mood_signal":"neutral"}\n'
         '{"kind":"sticker","reason_code":"snake_case","sticker_id":"semantic_id",'
+        '"temporal_context_id":"current_time_context_id",'
         '"catalog_version":"version","catalog_digest":"sha256",'
         '"fallback_text":null,"mood_signal":"neutral"}\n'
     )

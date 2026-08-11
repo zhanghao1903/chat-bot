@@ -55,12 +55,23 @@ FOOD_CHOICE_SCHEMA = {
 FOOD_RECOMMENDATION_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["kind", "reason_code", "mode", "primary", "alternatives"],
+    "required": [
+        "kind",
+        "reason_code",
+        "temporal_context_id",
+        "mode",
+        "primary",
+        "alternatives",
+    ],
     "properties": {
         "kind": {"const": "food_recommendation"},
         "reason_code": {
             "type": "string",
             "pattern": "^[a-z0-9][a-z0-9_]{0,63}$",
+        },
+        "temporal_context_id": {
+            "type": "string",
+            "pattern": "^time:v1:[0-9a-f]{64}$",
         },
         "mode": {"enum": ["generic", "sourced"]},
         "primary": FOOD_CHOICE_SCHEMA,
@@ -74,7 +85,8 @@ FOOD_RECOMMENDATION_SCHEMA = {
 }
 
 FOOD_WRITER_PROTOCOL = (
-    '{"kind":"food_recommendation","reason_code":"snake_case","mode":"generic|sourced",'
+    '{"kind":"food_recommendation","reason_code":"snake_case",'
+    '"temporal_context_id":"current_time_context_id","mode":"generic|sourced",'
     '"primary":{"choice_type":"generic_dish|merchant","generic_dish_id":'
     '"registered_id_or_null","source_result_id":"current_web_id_or_null",'
     '"reason_tag":"warming|hearty|light|shareable|quick|variety"},'

@@ -100,6 +100,18 @@ class GroupTimezoneProvider(Protocol):
     def timezone_for(self, *, chat_id: str) -> str: ...
 
 
+class StaticGroupTimezoneProvider:
+    """Deterministic fallback for tests and callers without automation composition."""
+
+    def __init__(self, timezone: str = DEFAULT_GROUP_TIMEZONE) -> None:
+        self.timezone = validate_iana_timezone(timezone)
+
+    def timezone_for(self, *, chat_id: str) -> str:
+        if not chat_id:
+            raise TemporalContextError("invalid_chat_scope")
+        return self.timezone
+
+
 class AutomationGroupTimezoneProvider:
     """Read the existing automation config without creating a second timezone source."""
 

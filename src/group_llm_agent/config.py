@@ -248,9 +248,9 @@ class Settings:
         effect_max_model_calls = _integer(
             env,
             "EFFECT_MAX_MODEL_CALLS",
-            default=11,
+            default=12,
             minimum=1,
-            maximum=11,
+            maximum=12,
         )
         effect_max_tool_calls = _integer(
             env,

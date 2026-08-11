@@ -23,6 +23,7 @@ from group_llm_agent.events import (
     PersonaTriggerKind,
 )
 from group_llm_agent.memory_safety import resolve_memory_semantic
+from group_llm_agent.temporal import FreshnessMode
 
 _MAX_RESPONSE_BYTES = 256_000
 _MAX_MESSAGES = 32
@@ -31,6 +32,8 @@ _MAX_TOOL_ARGUMENT_BYTES = 8_000
 _MAX_RESPONSE_SCHEMA_BYTES = 32_000
 _REASON_CODE = re.compile(r"^[a-z0-9][a-z0-9_]{0,63}$")
 _SAFE_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$")
+_TEMPORAL_CONTEXT_ID = re.compile(r"^time:v1:[0-9a-f]{64}$")
+_WEB_RESULT_ID = re.compile(r"^web:[1-9][0-9]{0,2}$")
 
 
 class ModelRole(StrEnum):
@@ -101,6 +104,9 @@ class FoodChoice:
 class WriterDecision:
     kind: WriterDecisionKind
     reason_code: str
+    temporal_context_id: str | None = None
+    freshness_mode: FreshnessMode | None = None
+    source_result_ids: tuple[str, ...] = ()
     text: str | None = None
     sticker_id: str | None = None
     catalog_version: str | None = None
@@ -320,6 +326,7 @@ def parse_writer_decision(
     result: StructuredModelResult,
     *,
     allowed_tools: frozenset[str],
+    expected_temporal_context_id: str | None = None,
 ) -> WriterDecision:
     payload = result.payload
     kind_value = payload.get("kind")
@@ -331,11 +338,26 @@ def parse_writer_decision(
         raise ModelResultError("invalid_writer_kind") from None
 
     if kind is WriterDecisionKind.REPLY:
-        _require_optional_mood_fields(payload, {"kind", "reason_code", "text"})
+        expected = {"kind", "reason_code", "text"}
+        _add_temporal_fields(
+            payload,
+            expected,
+            require=expected_temporal_context_id is not None,
+            include_freshness=True,
+        )
+        _require_optional_mood_fields(payload, expected)
         text = _parse_text(payload["text"], maximum=4_096, category="invalid_reply_text")
+        temporal_id = _parse_temporal_context_id(payload, expected_temporal_context_id)
+        freshness_mode, source_result_ids = _parse_freshness(
+            payload,
+            required=expected_temporal_context_id is not None,
+        )
         return WriterDecision(
             kind=kind,
             reason_code=_parse_reason_code(payload["reason_code"]),
+            temporal_context_id=temporal_id,
+            freshness_mode=freshness_mode,
+            source_result_ids=source_result_ids,
             text=text,
             mood_signal=_parse_mood_signal(payload.get("mood_signal")),
         )
@@ -348,7 +370,18 @@ def parse_writer_decision(
             "catalog_version",
             "catalog_digest",
         }
+        _add_temporal_fields(
+            payload,
+            required_composite,
+            require=expected_temporal_context_id is not None,
+            include_freshness=True,
+        )
         _require_optional_mood_fields(payload, required_composite)
+        temporal_id = _parse_temporal_context_id(payload, expected_temporal_context_id)
+        freshness_mode, source_result_ids = _parse_freshness(
+            payload,
+            required=expected_temporal_context_id is not None,
+        )
         digest = payload["catalog_digest"]
         if (
             not isinstance(digest, str)
@@ -359,6 +392,9 @@ def parse_writer_decision(
         return WriterDecision(
             kind=kind,
             reason_code=_parse_reason_code(payload["reason_code"]),
+            temporal_context_id=temporal_id,
+            freshness_mode=freshness_mode,
+            source_result_ids=source_result_ids,
             text=_parse_text(payload["text"], maximum=4_096, category="invalid_reply_text"),
             sticker_id=_parse_identifier(
                 payload["sticker_id"], maximum=128, category="invalid_sticker_id"
@@ -380,7 +416,13 @@ def parse_writer_decision(
             "catalog_digest",
             "fallback_text",
         }
+        _add_temporal_fields(
+            payload,
+            required_sticker,
+            require=expected_temporal_context_id is not None,
+        )
         _require_optional_mood_fields(payload, required_sticker)
+        temporal_id = _parse_temporal_context_id(payload, expected_temporal_context_id)
         fallback = payload["fallback_text"]
         if fallback is not None:
             fallback = _parse_text(fallback, maximum=4_096, category="invalid_fallback_text")
@@ -394,6 +436,7 @@ def parse_writer_decision(
         return WriterDecision(
             kind=kind,
             reason_code=_parse_reason_code(payload["reason_code"]),
+            temporal_context_id=temporal_id,
             sticker_id=_parse_identifier(
                 payload["sticker_id"], maximum=128, category="invalid_sticker_id"
             ),
@@ -405,23 +448,35 @@ def parse_writer_decision(
             mood_signal=_parse_mood_signal(payload.get("mood_signal")),
         )
     if kind is WriterDecisionKind.SILENCE:
-        _require_optional_mood_fields(payload, {"kind", "reason_code"})
+        expected = {"kind", "reason_code"}
+        _add_temporal_fields(
+            payload,
+            expected,
+            require=expected_temporal_context_id is not None,
+        )
+        _require_optional_mood_fields(payload, expected)
         return WriterDecision(
             kind=kind,
             reason_code=_parse_reason_code(payload["reason_code"]),
+            temporal_context_id=_parse_temporal_context_id(
+                payload, expected_temporal_context_id
+            ),
             mood_signal=_parse_mood_signal(payload.get("mood_signal")),
         )
     if kind is WriterDecisionKind.FOOD_RECOMMENDATION:
-        _require_fields(
+        expected = {
+            "kind",
+            "reason_code",
+            "mode",
+            "primary",
+            "alternatives",
+        }
+        _add_temporal_fields(
             payload,
-            {
-                "kind",
-                "reason_code",
-                "mode",
-                "primary",
-                "alternatives",
-            },
+            expected,
+            require=expected_temporal_context_id is not None,
         )
+        _require_fields(payload, expected)
         mode = payload["mode"]
         if mode not in {"generic", "sourced"}:
             raise ModelResultError("invalid_food_mode")
@@ -431,12 +486,20 @@ def parse_writer_decision(
         return WriterDecision(
             kind=kind,
             reason_code=_parse_reason_code(payload["reason_code"]),
+            temporal_context_id=_parse_temporal_context_id(
+                payload, expected_temporal_context_id
+            ),
             food_mode=str(mode),
             food_primary=_parse_food_choice(payload["primary"]),
             food_alternatives=tuple(_parse_food_choice(item) for item in alternatives),
         )
 
     required = {"kind", "reason_code", "tool_name", "tool_arguments", "tool_purpose_code"}
+    _add_temporal_fields(
+        payload,
+        required,
+        require=expected_temporal_context_id is not None,
+    )
     actual_fields = frozenset(payload)
     if actual_fields not in {
         frozenset(required),
@@ -457,6 +520,7 @@ def parse_writer_decision(
     return WriterDecision(
         kind=kind,
         reason_code=_parse_reason_code(payload["reason_code"]),
+        temporal_context_id=_parse_temporal_context_id(payload, expected_temporal_context_id),
         tool_name=tool_name,
         tool_arguments=arguments,
         tool_purpose_code=_parse_reason_code(payload["tool_purpose_code"]),
@@ -626,6 +690,65 @@ def _require_optional_mood_fields(payload: dict[str, Any], expected: set[str]) -
     actual = set(payload)
     if actual != expected and actual != {*expected, "mood_signal"}:
         raise ModelResultError("unexpected_fields")
+
+
+def _add_temporal_fields(
+    payload: dict[str, Any],
+    expected: set[str],
+    *,
+    require: bool,
+    include_freshness: bool = False,
+) -> None:
+    if require or "temporal_context_id" in payload:
+        expected.add("temporal_context_id")
+    if include_freshness and (require or "freshness" in payload):
+        expected.add("freshness")
+
+
+def _parse_temporal_context_id(
+    payload: dict[str, Any],
+    expected: str | None,
+) -> str | None:
+    value = payload.get("temporal_context_id")
+    if value is None and expected is None:
+        return None
+    if not isinstance(value, str) or _TEMPORAL_CONTEXT_ID.fullmatch(value) is None:
+        raise ModelResultError("invalid_temporal_context_id")
+    if expected is not None and value != expected:
+        raise ModelResultError("stale_temporal_context")
+    return value
+
+
+def _parse_freshness(
+    payload: dict[str, Any],
+    *,
+    required: bool,
+) -> tuple[FreshnessMode, tuple[str, ...]]:
+    value = payload.get("freshness")
+    if value is None and not required:
+        return FreshnessMode.STABLE, ()
+    if not isinstance(value, dict) or set(value) != {"mode", "source_result_ids"}:
+        raise ModelResultError("invalid_freshness")
+    try:
+        mode = FreshnessMode(value["mode"])
+    except (TypeError, ValueError):
+        raise ModelResultError("invalid_freshness_mode") from None
+    source_ids = value["source_result_ids"]
+    if (
+        not isinstance(source_ids, list)
+        or len(source_ids) > 3
+        or not all(
+            isinstance(item, str) and _WEB_RESULT_ID.fullmatch(item) is not None
+            for item in source_ids
+        )
+        or len(set(source_ids)) != len(source_ids)
+    ):
+        raise ModelResultError("invalid_freshness_sources")
+    if mode in {FreshnessMode.STABLE, FreshnessMode.CLOCK} and source_ids:
+        raise ModelResultError("invalid_freshness_sources")
+    if mode is FreshnessMode.CURRENT_VERIFIED and not source_ids:
+        raise ModelResultError("invalid_freshness_sources")
+    return mode, tuple(source_ids)
 
 
 def _parse_mood_signal(value: object) -> str | None:

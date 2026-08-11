@@ -31,6 +31,14 @@ from group_llm_agent.model import (
 from group_llm_agent.persona import CharacterBundle
 from group_llm_agent.runs import RunRepository
 from group_llm_agent.tools import ReadOnlyToolRegistry, ToolExecutionResult, ToolExecutionScope
+from group_llm_agent.temporal import (
+    SELECT_ANSWER_TIMEZONE,
+    GroupTimezoneProvider,
+    StaticGroupTimezoneProvider,
+    TemporalContextError,
+    TemporalContextFactory,
+    TemporalSession,
+)
 from group_llm_agent.vision import VisionEvidence
 from group_llm_agent.web_tools import (
     WEB_TOOLS,
@@ -61,15 +69,15 @@ def _utc_now() -> datetime:
 
 @dataclass(frozen=True)
 class EffectorBudgets:
-    maximum_model_calls: int = 11
+    maximum_model_calls: int = 12
     ordinary_tool_calls: int = 3
     maximum_tool_calls: int = 5
     maximum_web_tool_calls: int = 5
     maximum_result_characters: int = 16_384
 
     def __post_init__(self) -> None:
-        if not 1 <= self.maximum_model_calls <= 11:
-            raise ValueError("maximum_model_calls must be in [1, 11]")
+        if not 1 <= self.maximum_model_calls <= 12:
+            raise ValueError("maximum_model_calls must be in [1, 12]")
         if not 0 <= self.ordinary_tool_calls <= 3:
             raise ValueError("ordinary_tool_calls must be in [0, 3]")
         if not self.ordinary_tool_calls <= self.maximum_tool_calls <= 5:
@@ -95,6 +103,8 @@ class WriterEffector:
         clock: Callable[[], datetime] = _utc_now,
         expression_catalog_provider: Callable[[], ExpressionCatalog] | None = None,
         web_session_factory: Callable[[], WebToolSession] | None = None,
+        timezone_provider: GroupTimezoneProvider | None = None,
+        temporal_factory: TemporalContextFactory | None = None,
     ) -> None:
         if not failure_reply_text.strip() or len(failure_reply_text) > 4_096:
             raise ValueError("failure_reply_text must be non-empty and at most 4096 characters")
@@ -107,6 +117,8 @@ class WriterEffector:
         self.clock = clock
         self.expression_catalog_provider = expression_catalog_provider
         self.web_session_factory = web_session_factory
+        self.timezone_provider = timezone_provider or StaticGroupTimezoneProvider()
+        self.temporal_factory = temporal_factory or TemporalContextFactory(clock=clock)
 
     def execute(
         self,
@@ -125,6 +137,25 @@ class WriterEffector:
                 tool_call_count=0,
                 used_tool_call_ids=(),
                 reason_code="persona_snapshot_mismatch",
+            )
+        chat_id = (
+            request.scheduled.chat_id
+            if request.scheduled is not None
+            else request.message.group_id  # type: ignore[union-attr]
+        )
+        try:
+            temporal_session = TemporalSession(
+                group_timezone=self.timezone_provider.timezone_for(chat_id=chat_id),
+                factory=self.temporal_factory,
+            )
+        except TemporalContextError as error:
+            return self._degrade(
+                request=request,
+                effect_run_id=effect_run_id,
+                model_call_count=0,
+                tool_call_count=0,
+                used_tool_call_ids=(),
+                reason_code=error.code,
             )
         if request.scheduled is not None:
             context = self.contexts.scheduled_effect_context(
@@ -159,6 +190,17 @@ class WriterEffector:
         result_character_count = 0
 
         for model_call_number in range(1, self.budgets.maximum_model_calls + 1):
+            try:
+                temporal_context = temporal_session.sample_for_model_call()
+            except TemporalContextError as error:
+                return self._degrade(
+                    request=request,
+                    effect_run_id=effect_run_id,
+                    model_call_count=model_call_number - 1,
+                    tool_call_count=tool_call_count,
+                    used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                    reason_code=error.code,
+                )
             can_call_tool = model_call_number < self.budgets.maximum_model_calls
             allowed_context_tools = (
                 self.tools.allowed_tools
@@ -172,10 +214,16 @@ class WriterEffector:
                 and web_tool_call_count < self.budgets.maximum_web_tool_calls
                 else frozenset()
             )
-            allowed_tools = allowed_context_tools | allowed_web_tools
+            allowed_temporal_tools = (
+                frozenset({SELECT_ANSWER_TIMEZONE})
+                if can_call_tool and temporal_session.selection_available
+                else frozenset()
+            )
+            allowed_tools = allowed_context_tools | allowed_web_tools | allowed_temporal_tools
             tools_enabled = bool(allowed_tools)
             messages = build_writer_model_messages(
                 context,
+                temporal_context=temporal_context,
                 allowed_tools=allowed_tools,
                 history=tuple(history),
                 tool_results=tuple(tool_results),
@@ -203,7 +251,11 @@ class WriterEffector:
                     reason_code=f"model_{error.category.value}",
                 )
             try:
-                decision = parse_writer_decision(result, allowed_tools=allowed_tools)
+                decision = parse_writer_decision(
+                    result,
+                    allowed_tools=allowed_tools,
+                    expected_temporal_context_id=temporal_context.context_id,
+                )
             except ModelResultError as error:
                 raw_kind = result.payload.get("kind")
                 if raw_kind == WriterDecisionKind.CALL_TOOL.value and can_call_tool:
@@ -328,6 +380,35 @@ class WriterEffector:
                     tool_call_count=tool_call_count,
                 )
                 return final
+
+            if (
+                decision.kind is WriterDecisionKind.CALL_TOOL
+                and decision.tool_name == SELECT_ANSWER_TIMEZONE
+            ):
+                arguments = decision.tool_arguments
+                try:
+                    if not isinstance(arguments, dict) or set(arguments) != {"timezone"}:
+                        raise TemporalContextError("invalid_timezone_selection_arguments")
+                    timezone = arguments["timezone"]
+                    if not isinstance(timezone, str):
+                        raise TemporalContextError("invalid_timezone_selection_arguments")
+                    temporal_session.select_answer_timezone(timezone)
+                except TemporalContextError as error:
+                    if model_call_number < self.budgets.maximum_model_calls:
+                        history.append(f"writer_protocol_error:{error.code}")
+                        continue
+                    return self._silence(
+                        request=request,
+                        effect_run_id=effect_run_id,
+                        model_call_count=model_call_number,
+                        tool_call_count=tool_call_count,
+                        used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                        reason_code=error.code,
+                    )
+                history.append(
+                    f"answer_timezone_selected:{temporal_session.answer_timezone}"
+                )
+                continue
 
             if request.scheduled is not None and decision.kind not in {
                 WriterDecisionKind.SILENCE,
