@@ -64,12 +64,12 @@ class TemporalContextTests(unittest.TestCase):
         self.assertTrue(context.context_id.startswith("time:v1:"))
 
     def test_new_york_uses_iana_dst_rules(self) -> None:
-        winter = TemporalContextFactory(
-            clock=lambda: datetime(2026, 1, 15, 12, tzinfo=UTC)
-        ).sample(group_timezone="America/New_York")
-        summer = TemporalContextFactory(
-            clock=lambda: datetime(2026, 7, 15, 12, tzinfo=UTC)
-        ).sample(group_timezone="America/New_York")
+        winter = TemporalContextFactory(clock=lambda: datetime(2026, 1, 15, 12, tzinfo=UTC)).sample(
+            group_timezone="America/New_York"
+        )
+        summer = TemporalContextFactory(clock=lambda: datetime(2026, 7, 15, 12, tzinfo=UTC)).sample(
+            group_timezone="America/New_York"
+        )
 
         self.assertEqual("-05:00", winter.utc_offset)
         self.assertEqual(7, winter.current_local.hour)
@@ -85,6 +85,7 @@ class TemporalContextTests(unittest.TestCase):
                     datetime(2026, 8, 11, 4, 40, tzinfo=UTC),
                 )
             ),
+            scope_id="effect:one",
         )
         first = session.sample_for_model_call()
         session.select_answer_timezone("America/New_York")
@@ -98,6 +99,28 @@ class TemporalContextTests(unittest.TestCase):
         with self.assertRaisesRegex(TemporalContextError, "timezone_selection_already_used"):
             session.select_answer_timezone("Asia/Tokyo")
 
+    def test_session_context_ids_are_unique_at_same_instant_and_across_effects(self) -> None:
+        instant = datetime(2026, 8, 11, 4, 30, tzinfo=UTC)
+        factory = TemporalContextFactory(clock=lambda: instant)
+        first_session = TemporalSession(
+            group_timezone="Asia/Shanghai",
+            factory=factory,
+            scope_id="effect:one",
+        )
+        other_session = TemporalSession(
+            group_timezone="Asia/Shanghai",
+            factory=factory,
+            scope_id="effect:two",
+        )
+
+        first = first_session.sample_for_model_call()
+        second = first_session.sample_for_model_call()
+        other = other_session.sample_for_model_call()
+
+        self.assertNotEqual(first.context_id, second.context_id)
+        self.assertNotEqual(first.context_id, other.context_id)
+        self.assertTrue(first.context_id.startswith("time:v1:"))
+
     def test_occurrence_metadata_has_utc_and_target_local_time(self) -> None:
         context = TemporalContextFactory(
             clock=lambda: datetime(2026, 8, 11, 12, tzinfo=UTC)
@@ -110,9 +133,9 @@ class TemporalContextTests(unittest.TestCase):
 
     def test_invalid_clock_and_timezone_fail_closed(self) -> None:
         with self.assertRaisesRegex(TemporalContextError, "invalid_clock"):
-            TemporalContextFactory(clock=lambda: datetime(2026, 8, 11)).sample(
-                group_timezone="Asia/Shanghai"
-            )
+            TemporalContextFactory(
+                clock=lambda: datetime(2026, 8, 11)  # noqa: DTZ001 - negative fixture
+            ).sample(group_timezone="Asia/Shanghai")
         for value in ("+08:00", "Mars/Olympus", "", "Asia/ Shanghai"):
             with self.subTest(value=value), self.assertRaises(TemporalContextError):
                 validate_iana_timezone(value)
@@ -167,9 +190,9 @@ class TemporalContextTests(unittest.TestCase):
         )
 
     def test_stable_or_verified_source_mismatch_fails_closed(self) -> None:
-        context = TemporalContextFactory(
-            clock=lambda: datetime(2026, 8, 11, tzinfo=UTC)
-        ).sample(group_timezone="Asia/Shanghai")
+        context = TemporalContextFactory(clock=lambda: datetime(2026, 8, 11, tzinfo=UTC)).sample(
+            group_timezone="Asia/Shanghai"
+        )
         evidence = Evidence(
             result_id="web:1",
             normalized_url="https://example.com/a",
@@ -193,4 +216,3 @@ class TemporalContextTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-    FreshnessMode,

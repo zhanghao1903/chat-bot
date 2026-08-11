@@ -52,9 +52,7 @@ class TavilyClientTests(unittest.TestCase):
                 "usage": {"credits": 1},
             }
         )
-        client = TavilyClient(
-            api_key="secret-key", opener=opener, clock=lambda: retrieved_at
-        )
+        client = TavilyClient(api_key="secret-key", opener=opener, clock=lambda: retrieved_at)
         result = client.search(
             query="Shanghai lunch noodles",
             deadline=datetime.now(UTC) + timedelta(seconds=30),

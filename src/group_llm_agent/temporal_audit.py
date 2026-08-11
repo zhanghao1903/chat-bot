@@ -69,18 +69,10 @@ class TemporalAuditRepository:
                         model_call_ordinal,
                         context.version if context is not None else None,
                         context.context_id if context is not None else None,
-                        (
-                            context.captured_at_utc.isoformat()
-                            if context is not None
-                            else None
-                        ),
+                        (context.captured_at_utc.isoformat() if context is not None else None),
                         context.answer_timezone if context is not None else None,
                         context.utc_offset if context is not None else None,
-                        (
-                            context.timezone_selection.value
-                            if context is not None
-                            else None
-                        ),
+                        (context.timezone_selection.value if context is not None else None),
                         context.source_class if context is not None else None,
                         "valid" if context is not None else "failed",
                         error_code,
@@ -96,15 +88,14 @@ class TemporalAuditRepository:
                     """,
                     (effect_run_id, model_call_ordinal),
                 ).fetchone()
-                if row is None or (
-                    str(row["context_id"]) if row["context_id"] is not None else None
-                ) != (context.context_id if context is not None else None) or str(
-                    row["status"]
-                ) != (
-                    "valid" if context is not None else "failed"
-                ) or (
-                    str(row["error_code"]) if row["error_code"] is not None else None
-                ) != error_code:
+                if (
+                    row is None
+                    or (str(row["context_id"]) if row["context_id"] is not None else None)
+                    != (context.context_id if context is not None else None)
+                    or str(row["status"]) != ("valid" if context is not None else "failed")
+                    or (str(row["error_code"]) if row["error_code"] is not None else None)
+                    != error_code
+                ):
                     raise ValueError("conflicting temporal sample") from None
                 return int(row["id"])
             row_id = cursor.lastrowid
@@ -140,8 +131,7 @@ class TemporalAuditRepository:
         if tuple(sorted(set(web_audit_ids))) != web_audit_ids:
             raise ValueError("Web audit ids must be sorted and unique")
         if latest_web_retrieved_at is not None and (
-            latest_web_retrieved_at.tzinfo is None
-            or latest_web_retrieved_at.utcoffset() is None
+            latest_web_retrieved_at.tzinfo is None or latest_web_retrieved_at.utcoffset() is None
         ):
             raise ValueError("latest Web retrieval time must be timezone-aware")
         if freshness_mode is FreshnessMode.CURRENT_VERIFIED and not web_audit_ids:
@@ -160,11 +150,7 @@ class TemporalAuditRepository:
             freshness_mode.value if freshness_mode is not None else None,
             int(web_requested),
             web_json,
-            (
-                latest_web_retrieved_at.isoformat()
-                if latest_web_retrieved_at is not None
-                else None
-            ),
+            (latest_web_retrieved_at.isoformat() if latest_web_retrieved_at is not None else None),
             status,
             degradation_reason,
             now,
@@ -219,15 +205,11 @@ class TemporalAuditRepository:
             trigger_event_id=str(row["trigger_event_id"]),
             source_kind=str(row["source_kind"]),  # type: ignore[arg-type]
             final_context_id=(
-                str(row["final_context_id"])
-                if row["final_context_id"] is not None
-                else None
+                str(row["final_context_id"]) if row["final_context_id"] is not None else None
             ),
             final_captured_at_utc=_optional_datetime(row["final_captured_at_utc"]),
             answer_timezone=(
-                str(row["answer_timezone"])
-                if row["answer_timezone"] is not None
-                else None
+                str(row["answer_timezone"]) if row["answer_timezone"] is not None else None
             ),
             utc_offset=str(row["utc_offset"]) if row["utc_offset"] is not None else None,
             freshness_mode=(
@@ -238,9 +220,7 @@ class TemporalAuditRepository:
             latest_web_retrieved_at=_optional_datetime(row["latest_web_retrieved_at"]),
             status=str(row["status"]),  # type: ignore[arg-type]
             degradation_reason=(
-                str(row["degradation_reason"])
-                if row["degradation_reason"] is not None
-                else None
+                str(row["degradation_reason"]) if row["degradation_reason"] is not None else None
             ),
         )
 
@@ -282,7 +262,7 @@ class TemporalAuditRepository:
             SELECT id FROM tool_call_audit
             WHERE owner_kind = 'effect' AND owner_id = ?
               AND budget_kind = 'web' AND id IN ({placeholders})
-            """,  # noqa: S608 - placeholders are generated from bounded integer count
+            """,
             (effect_run_id, *audit_ids),
         ).fetchall()
         if {int(row["id"]) for row in rows} != set(audit_ids):
@@ -295,11 +275,7 @@ def _stored_final_values(row: sqlite3.Row) -> tuple[object, ...]:
         str(row["trigger_event_id"]),
         str(row["source_kind"]),
         str(row["final_context_id"]) if row["final_context_id"] is not None else None,
-        (
-            str(row["final_captured_at_utc"])
-            if row["final_captured_at_utc"] is not None
-            else None
-        ),
+        (str(row["final_captured_at_utc"]) if row["final_captured_at_utc"] is not None else None),
         str(row["answer_timezone"]) if row["answer_timezone"] is not None else None,
         str(row["utc_offset"]) if row["utc_offset"] is not None else None,
         str(row["freshness_mode"]) if row["freshness_mode"] is not None else None,
@@ -311,11 +287,7 @@ def _stored_final_values(row: sqlite3.Row) -> tuple[object, ...]:
             else None
         ),
         str(row["status"]),
-        (
-            str(row["degradation_reason"])
-            if row["degradation_reason"] is not None
-            else None
-        ),
+        (str(row["degradation_reason"]) if row["degradation_reason"] is not None else None),
     )
 
 
@@ -329,6 +301,10 @@ def _optional_datetime(value: object) -> datetime | None:
 
 
 def _safe_code(value: str) -> bool:
-    return bool(value) and len(value) <= 64 and all(
-        character.islower() or character.isdigit() or character == "_" for character in value
+    return (
+        bool(value)
+        and len(value) <= 64
+        and all(
+            character.islower() or character.isdigit() or character == "_" for character in value
+        )
     )

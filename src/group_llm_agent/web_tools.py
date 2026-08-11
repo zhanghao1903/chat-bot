@@ -235,9 +235,7 @@ class WebToolSession:
                     "score": round(result.score, 6),
                     "retrieved_at": response.retrieved_at.isoformat(),
                     "published_at": (
-                        result.published_at.isoformat()
-                        if result.published_at is not None
-                        else None
+                        result.published_at.isoformat() if result.published_at is not None else None
                     ),
                     "updated_at": (
                         result.updated_at.isoformat() if result.updated_at is not None else None

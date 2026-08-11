@@ -310,9 +310,7 @@ def _provider_time_fields(
     published, published_text = _provider_datetime(
         raw.get("published_at", raw.get("published_date"))
     )
-    updated, updated_text = _provider_datetime(
-        raw.get("updated_at", raw.get("last_updated"))
-    )
+    updated, updated_text = _provider_datetime(raw.get("updated_at", raw.get("last_updated")))
     provider_text = published_text or updated_text
     return published, updated, provider_text
 
@@ -324,7 +322,7 @@ def _provider_datetime(value: object) -> tuple[datetime | None, str | None]:
         raise TavilyApiError("response", "invalid_response")
     text = value.strip()
     try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(text)
     except ValueError:
         return None, text
     if parsed.tzinfo is None or parsed.utcoffset() is None:

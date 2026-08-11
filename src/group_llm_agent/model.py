@@ -458,9 +458,7 @@ def parse_writer_decision(
         return WriterDecision(
             kind=kind,
             reason_code=_parse_reason_code(payload["reason_code"]),
-            temporal_context_id=_parse_temporal_context_id(
-                payload, expected_temporal_context_id
-            ),
+            temporal_context_id=_parse_temporal_context_id(payload, expected_temporal_context_id),
             mood_signal=_parse_mood_signal(payload.get("mood_signal")),
         )
     if kind is WriterDecisionKind.FOOD_RECOMMENDATION:
@@ -486,9 +484,7 @@ def parse_writer_decision(
         return WriterDecision(
             kind=kind,
             reason_code=_parse_reason_code(payload["reason_code"]),
-            temporal_context_id=_parse_temporal_context_id(
-                payload, expected_temporal_context_id
-            ),
+            temporal_context_id=_parse_temporal_context_id(payload, expected_temporal_context_id),
             food_mode=str(mode),
             food_primary=_parse_food_choice(payload["primary"]),
             food_alternatives=tuple(_parse_food_choice(item) for item in alternatives),

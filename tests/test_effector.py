@@ -703,15 +703,15 @@ class EffectorFixtureContext:
             budgets=self.budgets,
             clock=lambda: completed_at,
             web_session_factory=(
-                lambda: WebToolSession(
-                    client=self.web_client,  # type: ignore[arg-type]
-                    runs=runs,
-                    resolver=lambda host, port: [
-                        (2, 1, 6, "", ("93.184.216.34", port))
-                    ],
+                lambda: (
+                    WebToolSession(
+                        client=self.web_client,  # type: ignore[arg-type]
+                        runs=runs,
+                        resolver=lambda host, port: [(2, 1, 6, "", ("93.184.216.34", port))],
+                    )
+                    if self.web_client is not None
+                    else None
                 )
-                if self.web_client is not None
-                else None
             ),
         )
         request = EffectRequest(

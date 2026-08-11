@@ -106,9 +106,7 @@ class TemporalAuditRepositoryTests(unittest.TestCase):
         with temporary_database() as database:
             runs = RunRepository(database)
             first_id = runs.start_effect_run(_request())
-            other_id = runs.start_effect_run(
-                _request(event_id="event-b", message_id="message-b")
-            )
+            other_id = runs.start_effect_run(_request(event_id="event-b", message_id="message-b"))
             valid_web = _web_audit(runs, effect_run_id=first_id)
             foreign_web = _web_audit(runs, effect_run_id=other_id)
             context = TemporalContextFactory(
@@ -163,9 +161,7 @@ def _request(
     event_id: str = "event-a",
     message_id: str = "message-a",
 ) -> EffectRequest:
-    bundle = load_character_bundle(
-        Path("src/group_llm_agent/persona_bundles/lezhi/lezhi-v2.0")
-    )
+    bundle = load_character_bundle(Path("src/group_llm_agent/persona_bundles/lezhi/lezhi-v2.0"))
     message = TelegramTextMessage(
         event_id=event_id,
         group_id="group-a",

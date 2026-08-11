@@ -30,10 +30,9 @@ from group_llm_agent.model import (
 )
 from group_llm_agent.persona import CharacterBundle
 from group_llm_agent.runs import RunRepository
-from group_llm_agent.tools import ReadOnlyToolRegistry, ToolExecutionResult, ToolExecutionScope
 from group_llm_agent.temporal import (
-    FreshnessMode,
     SELECT_ANSWER_TIMEZONE,
+    FreshnessMode,
     GroupTimezoneProvider,
     StaticGroupTimezoneProvider,
     TemporalContext,
@@ -43,6 +42,7 @@ from group_llm_agent.temporal import (
 )
 from group_llm_agent.temporal_audit import TemporalAuditRepository
 from group_llm_agent.temporal_execution import TemporalRunState, finalize_decision_text
+from group_llm_agent.tools import ReadOnlyToolRegistry, ToolExecutionResult, ToolExecutionScope
 from group_llm_agent.vision import VisionEvidence
 from group_llm_agent.web_tools import (
     WEB_TOOLS,
@@ -57,11 +57,12 @@ _DEFAULT_FAILURE_REPLY = "我这会儿有点卡住了，稍后再试试。"
 _LEAKAGE_MARKER_PATTERN = re.compile(
     r"(?:BEGIN|END)_UNTRUSTED|"
     r"AVAILABLE_TOOLS|CHARACTER_(?:EFFECTOR|TRIGGER|RECOGNITION)_POLICY|"
+    r"AUTHORITATIVE_TEMPORAL_(?:CONTEXT|RULES)|"
     r"CHARACTER_EXAMPLES|UNTRUSTED_(?:GROUP_CONTEXT|GROUP_EVIDENCE|TOOL_RESULT|VISION_EVIDENCE)|"
     r"\b(?:member_memory|memory_id|source_message_ids?|effective_confidence|"
     r"persona_digest|persona_version|recognition_policy_version|tool_name|"
     r"tool_arguments|tool_purpose_code|used_memory_ids|used_tool_call_ids|"
-    r"protocol_history|model_calls_remaining|tool_calls_remaining)\b|"
+    r"protocol_history|model_calls_remaining|tool_calls_remaining|temporal_context_id)\b|"
     r"\b(?:system prompt|internal instructions?)\b|系统提示词|内部指令",
     re.IGNORECASE,
 )
@@ -151,14 +152,13 @@ class WriterEffector:
                 temporal_run=temporal_run,
             )
         chat_id = (
-            request.scheduled.chat_id
-            if request.scheduled is not None
-            else request.message.group_id  # type: ignore[union-attr]
+            request.scheduled.chat_id if request.scheduled is not None else request.message.group_id  # type: ignore[union-attr]
         )
         try:
             temporal_session = TemporalSession(
                 group_timezone=self.timezone_provider.timezone_for(chat_id=chat_id),
                 factory=self.temporal_factory,
+                scope_id=f"effect:{effect_run_id}",
             )
         except TemporalContextError as error:
             temporal_run.record_failed_sample(ordinal=1, error_code=error.code)
@@ -438,9 +438,7 @@ class WriterEffector:
                         reason_code=error.code,
                         temporal_run=temporal_run,
                     )
-                history.append(
-                    f"answer_timezone_selected:{temporal_session.answer_timezone}"
-                )
+                history.append(f"answer_timezone_selected:{temporal_session.answer_timezone}")
                 continue
 
             if request.scheduled is not None and decision.kind not in {

@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Protocol
@@ -220,9 +220,13 @@ class TemporalSession:
         *,
         group_timezone: str,
         factory: TemporalContextFactory,
+        scope_id: str = "unscoped",
     ) -> None:
         self.group_timezone = validate_iana_timezone(group_timezone)
+        if not isinstance(scope_id, str) or not scope_id or len(scope_id) > 128:
+            raise TemporalContextError("invalid_temporal_scope")
         self.factory = factory
+        self.scope_id = scope_id
         self._answer_timezone = self.group_timezone
         self._selection = TimezoneSelection.GROUP_DEFAULT
         self._selection_used = False
@@ -250,10 +254,18 @@ class TemporalSession:
 
     def sample_for_model_call(self) -> TemporalContext:
         self._model_call_ordinal += 1
-        return self.factory.sample(
+        context = self.factory.sample(
             group_timezone=self.group_timezone,
             answer_timezone=self._answer_timezone,
             selection=self._selection,
+        )
+        return replace(
+            context,
+            context_id=_bound_context_id(
+                base_context_id=context.context_id,
+                scope_id=self.scope_id,
+                model_call_ordinal=self._model_call_ordinal,
+            ),
         )
 
 
@@ -292,7 +304,9 @@ def finalize_temporal_text(
     if freshness_mode in {FreshnessMode.STABLE, FreshnessMode.CLOCK}:
         if evidence:
             raise TemporalContextError("freshness_sources_invalid")
-        return FinalizedTemporalText(text=text, source_urls=(), source_audit_ids=(), latest_retrieved_at=None)
+        return FinalizedTemporalText(
+            text=text, source_urls=(), source_audit_ids=(), latest_retrieved_at=None
+        )
     if freshness_mode is FreshnessMode.CURRENT_UNVERIFIED:
         rendered = f"当前状态尚未可靠核实。\n{text}"
         if len(rendered) > maximum_length:
@@ -309,7 +323,9 @@ def finalize_temporal_text(
     urls = tuple(item.normalized_url for item in evidence)
     if len(set(result_ids)) != len(result_ids) or len(set(urls)) != len(urls):
         raise TemporalContextError("freshness_sources_invalid")
-    retrievals = tuple(_aware_utc(item.retrieved_at, code="invalid_web_retrieval_time") for item in evidence)
+    retrievals = tuple(
+        _aware_utc(item.retrieved_at, code="invalid_web_retrieval_time") for item in evidence
+    )
     latest = max(retrievals)
     try:
         local = latest.astimezone(ZoneInfo(context.answer_timezone))
@@ -378,6 +394,24 @@ def _context_id(
             "answer_timezone": answer_timezone,
             "utc_offset": utc_offset,
             "timezone_selection": selection.value,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "time:v1:" + hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _bound_context_id(
+    *,
+    base_context_id: str,
+    scope_id: str,
+    model_call_ordinal: int,
+) -> str:
+    canonical = json.dumps(
+        {
+            "base_context_id": base_context_id,
+            "scope_id": scope_id,
+            "model_call_ordinal": model_call_ordinal,
         },
         sort_keys=True,
         separators=(",", ":"),

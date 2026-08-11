@@ -19,9 +19,7 @@ _FRESHNESS = {
     "additionalProperties": False,
     "required": ["mode", "source_result_ids"],
     "properties": {
-        "mode": {
-            "enum": ["stable", "clock", "current_verified", "current_unverified"]
-        },
+        "mode": {"enum": ["stable", "clock", "current_verified", "current_unverified"]},
         "source_result_ids": {
             "type": "array",
             "minItems": 0,
