@@ -1,6 +1,6 @@
 # Verification: 乐枝当前时间与时效信息感知
 
-- Status: Implementation Verified — Awaiting Independent Review
+- Status: Review Findings Remediated — Awaiting Exact-Head Re-review
 - Branch: `codex/lezhi-temporal-awareness`
 - Forward baseline: `main@71c7eb3b60b08f3dd0d2229dee9873a8a76cca93`
 - Confirmed requirements: `12e200df19dc168f2c6d476359fceef9b0251bd6`
@@ -25,6 +25,7 @@ Implementation history before this verification carrier:
 - `536850c` — per-model-call sampling, timezone selection, final source binding;
 - `13d1af7` — isolated temporal execution/finalization state;
 - `7852190` — effect-and-model-call snapshot identity, leakage boundary, final formatting.
+- `6692735` — safe final-clock boundary and restart-safe temporal execution attempts.
 
 No provider, Tavily, Telegram, deployment, container, production SQLite, sticker, or
 avatar operation was performed.
@@ -42,7 +43,7 @@ avatar operation was performed.
 | AC-008 | Context 3/5 and Web 0–5 counters remain independent; time injection and one timezone selection consume neither; model-call ceiling is 12. | PASS |
 | AC-009 | Missing/failed/insufficient Web evidence uses `current_unverified` or safe degradation; clock-only answers remain independent of Web. | PASS |
 | AC-010 | Web envelopes remain untrusted, queries retain scope/privacy bounds, and temporal/system markers are blocked from final text leakage. | PASS |
-| AC-011 | Naive clock, invalid IANA, invalid conversion, sample failure, unknown/stale context ID, and conflicting audit finalization fail closed with bounded reason codes. | PASS |
+| AC-011 | Naive clock, invalid IANA, invalid conversion, sample/final-clock failure, unknown/stale context ID, and conflicting audit finalization fail closed with bounded reason codes and terminal run/audit state. | PASS |
 | AC-012 | Controlled Shanghai and New York DST cases, occurrence conversion, per-call resampling, and date/weekday/offset consistency checks pass. | PASS |
 | AC-013 | Closed response schema, exact context/result IDs, tool/URL/budget validation, evidence ownership, and application-owned footer/fallback remain deterministic. | PASS |
 | AC-014 | Full regression passes on the exact source snapshot without rollback of existing modules or migrations. | PASS |
@@ -65,7 +66,7 @@ git diff --check 71c7eb3b60b08f3dd0d2229dee9873a8a76cca93..HEAD
 
 Results:
 
-- full unittest discovery: **323 tests passed**;
+- full unittest discovery: **327 tests passed**;
 - Ruff: all source/test files checked and formatted;
 - Mypy: no issues in **55 source files**;
 - wheel and sdist built successfully and include `temporal.py`, `temporal_audit.py`,
@@ -94,7 +95,38 @@ the command terminated `OK` with exit code 0.
 - Migration 7 is additive and migration 6 fixtures upgrade without rewriting existing
   rows; SQLite `PRAGMA quick_check` remains `ok` in migration tests.
 
-## 5. Operational Limitations
+## 5. Review Finding Remediation
+
+The immutable ReviewResult for dispatch
+`0ad8efb8c334188d565ea5fd434da4e1eaebdf0cebce9f1c33a5be10d4ca29bc`
+was accepted before remediation. Both retained high-severity findings are addressed:
+
+- **FINDING-001 fixed:** every final/deadline clock read now crosses one typed safe
+  boundary. Exceptions become `final_clock_unavailable`; non-datetime, naive, or
+  invalid-conversion values become `final_clock_invalid`. Text, composite, sticker,
+  silence, and scheduled-food regressions prove both modes terminally finalize the
+  `effect_runs` row and `temporal_answer_audit` instead of escaping.
+- **FINDING-002 fixed:** migration 7 gives each reused effect run a monotonically
+  increasing durable `execution_attempt`. Temporal samples are unique by effect,
+  attempt, and model-call ordinal; the terminal audit binds the successful attempt.
+  A crash-after-sample restart records a later attempt-2 ordinal-1 sample without
+  overwriting attempt-1 evidence, completes one terminal audit, and the existing
+  external-effect uniqueness boundary permits at most one claim.
+- Attempt ownership is checked while recording samples, finalizing the temporal
+  audit, and completing the effect run. A stale attempt cannot terminalize a newer
+  attempt, and a newer valid attempt may replace an audit written immediately before
+  an earlier process crash.
+
+Focused remediation verification passed **31 tests** across temporal audit, Writer
+effector, and scheduled-food effect paths. Exact full verification passed **327
+tests**, Ruff check/format for **110 files**, Mypy for **55 source files**, package
+build, shell syntax, Compose rendering, and Git whitespace validation. The rebuilt
+artifacts were:
+
+- sdist SHA-256 `2ea259532ee5575439feb69dca0963a4ac0a5472fa67dd9b5056ec076fef7c9a`;
+- wheel SHA-256 `dda090996d16d94d04f06dbffa0746d4ae687e5fda5c997ece844df0ec47e9a5`.
+
+## 6. Operational Limitations
 
 - No configured model-provider temporal-quality probe was authorized or run.
 - No real Tavily Search/Extract call or provider credit was authorized or consumed.
