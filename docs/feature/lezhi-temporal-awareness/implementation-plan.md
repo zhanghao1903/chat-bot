@@ -1,7 +1,7 @@
 # Implementation Plan: 乐枝当前时间与时效信息感知
 
 - Phase: F3 Implementation Plan
-- Status: Complete — Awaiting Implementation Authorization
+- Status: Implemented And Verified — Awaiting Exact-Head Review
 - Confirmed requirements: `12e200df19dc168f2c6d476359fceef9b0251bd6`
 - Requirements handoff: `ef5321a8655cc8cc2d0232e673eb8ee78d755893e8fe07ae30da56e23a990964`
 - Technical design: `b7f09f6bf021aa4e98bfaf7fa38b70f2d749cdbf`
@@ -25,10 +25,10 @@ The completed feature must satisfy REQ-001–REQ-025 and AC-001–AC-014 without
 - regressing v0.4 automation/Web, v0.3.1 reply forms, migrations 1–6, trigger behavior,
   expression delivery, member memory, or effect idempotency.
 
-The confirmed Requirements handoff authorizes F2 and F3 only. Therefore this plan is
-ready but code implementation must not begin until Main receives explicit continuation
-authorization. Real model/Tavily calls, deployment, container replacement, production
-SQLite work, and Telegram operations require their own later gates.
+The confirmed Requirements handoff first authorized F2 and F3. The later authorized
+GoalRun continued this plan through implementation and deterministic verification.
+Real model/Tavily calls, deployment, container replacement, production SQLite work,
+and Telegram operations require their own later gates.
 
 ## 2. Delivery Order And Commit Strategy
 
@@ -519,6 +519,6 @@ backup/runbook; migration 7 tables are additive and need not be destructively dr
 The implementation plan is complete, ordered, testable, and traceable to every accepted
 requirement and acceptance criterion. It introduces no new unresolved product choice.
 
-Per ASM-010 and DEC-012, the current authorization stops here. Main must obtain explicit
-permission to continue into implementation; external provider, deployment, container,
-Telegram, and production database gates remain separately closed.
+The authorized implementation completed every local slice and is ready for exact-head
+independent review. External provider, deployment, container, Telegram, and production
+database gates remain separately closed.

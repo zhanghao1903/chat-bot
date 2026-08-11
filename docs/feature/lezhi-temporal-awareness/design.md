@@ -1,6 +1,6 @@
 # Technical Design: 乐枝当前时间与时效信息感知
 
-- Status: Design Complete
+- Status: Implemented — Awaiting Exact-Head Review
 - Feature branch: `codex/lezhi-temporal-awareness`
 - Confirmed requirements commit: `12e200df19dc168f2c6d476359fceef9b0251bd6`
 - Forward baseline: `origin/main@71c7eb3b60b08f3dd0d2229dee9873a8a76cca93`
@@ -32,9 +32,10 @@ natural-language parser decides whether Web verification is needed. This feature
 not change trigger eligibility, reply form, member memory, automation subscription,
 expression selection, external-effect idempotency, or production capability flags.
 
-The confirmed handoff authorizes F2 and F3 only. Real provider/Tavily calls,
-deployment, container replacement, Telegram operations, and production SQLite changes
-remain outside this design-stage authorization.
+The confirmed handoff first authorized F2 and F3; the subsequently authorized GoalRun
+continued through deterministic implementation and verification. Real provider/Tavily
+calls, deployment, container replacement, Telegram operations, and production SQLite
+changes remain outside the current authorization.
 
 ## 2. Current-State Gaps
 
@@ -488,5 +489,5 @@ The design is complete and introduces no unresolved product decision. It selects
 injection-plus-budget-free-timezone-capability option allowed by DEC-003, preserves all
 accepted assumptions and decisions, and is ready for an implementation plan.
 
-Implementation remains gated on F3 completion. Provider, deployment, container,
-Telegram, and production data operations remain unauthorized.
+Implementation followed this design and completed its deterministic gates. Provider,
+deployment, container, Telegram, and production data operations remain unauthorized.
