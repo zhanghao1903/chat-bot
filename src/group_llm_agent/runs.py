@@ -139,8 +139,17 @@ class RunRepository:
                 """
                 SELECT 1 FROM external_effects
                 WHERE chat_id = ? AND trigger_event_id = ?
+                UNION ALL
+                SELECT 1 FROM effect_bundles
+                WHERE chat_id = ? AND trigger_event_id = ?
+                LIMIT 1
                 """,
-                (request.chat_id, request.trigger_event_id),
+                (
+                    request.chat_id,
+                    request.trigger_event_id,
+                    request.chat_id,
+                    request.trigger_event_id,
+                ),
             ).fetchone()
             if claimed is not None:
                 raise ValueError("External effect already claimed")

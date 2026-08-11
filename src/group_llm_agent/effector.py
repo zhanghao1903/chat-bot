@@ -397,6 +397,8 @@ class WriterEffector:
                     kind=FinalEffectKind.REPLY,
                     reason_code=decision.reason_code,
                     persona=request.persona,
+                    effect_run_id=effect_run_id,
+                    execution_attempt=temporal_run.execution_attempt,
                     text=food.text,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                     primary_key=food.primary_key,
@@ -495,6 +497,8 @@ class WriterEffector:
                     kind=FinalEffectKind.REPLY,
                     reason_code=decision.reason_code,
                     persona=request.persona,
+                    effect_run_id=effect_run_id,
+                    execution_attempt=temporal_run.execution_attempt,
                     text=temporal_text.text,
                     catalog_version=(catalog.catalog_version if catalog is not None else None),
                     catalog_digest=(catalog.digest if catalog is not None else None),
@@ -574,6 +578,8 @@ class WriterEffector:
                         kind=FinalEffectKind.REPLY,
                         reason_code=f"sticker_{error.code}",
                         persona=request.persona,
+                        effect_run_id=effect_run_id,
+                        execution_attempt=temporal_run.execution_attempt,
                         text=temporal_text.text,
                         catalog_version=(catalog.catalog_version if catalog is not None else None),
                         catalog_digest=(catalog.digest if catalog is not None else None),
@@ -598,6 +604,8 @@ class WriterEffector:
                     kind=FinalEffectKind.REPLY_WITH_STICKER,
                     reason_code=decision.reason_code,
                     persona=request.persona,
+                    effect_run_id=effect_run_id,
+                    execution_attempt=temporal_run.execution_attempt,
                     text=temporal_text.text,
                     sticker_id=entry.semantic_id,
                     catalog_version=current_catalog.catalog_version,
@@ -668,6 +676,8 @@ class WriterEffector:
                     kind=FinalEffectKind.STICKER,
                     reason_code=decision.reason_code,
                     persona=request.persona,
+                    effect_run_id=effect_run_id,
+                    execution_attempt=temporal_run.execution_attempt,
                     sticker_id=entry.semantic_id,
                     catalog_version=current_catalog.catalog_version,
                     catalog_digest=current_catalog.digest,
@@ -708,6 +718,8 @@ class WriterEffector:
                     kind=FinalEffectKind.SILENCE,
                     reason_code=decision.reason_code,
                     persona=request.persona,
+                    effect_run_id=effect_run_id,
+                    execution_attempt=temporal_run.execution_attempt,
                     mood_signal=decision.mood_signal,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                 )
@@ -898,6 +910,10 @@ class WriterEffector:
                 kind=FinalEffectKind.FAILURE_REPLY,
                 reason_code=reason_code,
                 persona=request.persona,
+                effect_run_id=effect_run_id,
+                execution_attempt=(
+                    temporal_run.execution_attempt if temporal_run is not None else None
+                ),
                 text=self.failure_reply_text,
                 used_tool_call_ids=used_tool_call_ids,
             )
@@ -906,6 +922,10 @@ class WriterEffector:
                 kind=FinalEffectKind.SILENCE,
                 reason_code=reason_code,
                 persona=request.persona,
+                effect_run_id=effect_run_id,
+                execution_attempt=(
+                    temporal_run.execution_attempt if temporal_run is not None else None
+                ),
                 used_tool_call_ids=used_tool_call_ids,
             )
         self._complete_effect(
@@ -934,6 +954,10 @@ class WriterEffector:
             kind=FinalEffectKind.SILENCE,
             reason_code=reason_code,
             persona=request.persona,
+            effect_run_id=effect_run_id,
+            execution_attempt=(
+                temporal_run.execution_attempt if temporal_run is not None else None
+            ),
             used_tool_call_ids=used_tool_call_ids,
         )
         self._complete_effect(

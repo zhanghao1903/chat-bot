@@ -784,6 +784,13 @@ _MIGRATIONS: tuple[tuple[int, str, str], ...] = (
         """
         ALTER TABLE effect_runs ADD COLUMN execution_attempt INTEGER NOT NULL DEFAULT 0
             CHECK (execution_attempt >= 0);
+        ALTER TABLE effect_bundles ADD COLUMN effect_run_id INTEGER
+            CHECK (effect_run_id IS NULL OR effect_run_id > 0);
+        ALTER TABLE effect_bundles ADD COLUMN execution_attempt INTEGER
+            CHECK (execution_attempt IS NULL OR execution_attempt > 0);
+        CREATE UNIQUE INDEX idx_effect_bundles_effect_attempt
+            ON effect_bundles(effect_run_id, execution_attempt)
+            WHERE effect_run_id IS NOT NULL;
 
         CREATE TABLE temporal_context_samples (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

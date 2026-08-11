@@ -50,6 +50,8 @@ class EffectBundleRecord:
     chat_id: str
     trigger_event_id: str
     trigger_message_id: str
+    effect_run_id: int | None
+    execution_attempt: int | None
     persona_version: str
     persona_digest: str
     catalog_version: str | None
@@ -83,15 +85,22 @@ class EffectBundleRepository:
         timestamp = current.isoformat()
         eligibility_reason = final.sticker_eligibility_reason or "not_eligible"
         with self.database.transaction() as connection:
+            if not _active_attempt_owns_final(
+                connection,
+                event=event,
+                final=final,
+            ):
+                return None
             cursor = connection.execute(
                 """
                 INSERT OR IGNORE INTO effect_bundles (
                     bundle_id, bot_user_id, chat_id, trigger_event_id,
-                    trigger_message_id, persona_version, persona_digest,
+                    trigger_message_id, effect_run_id, execution_attempt,
+                    persona_version, persona_digest,
                     catalog_version, catalog_digest, requested_form, reason_code,
                     sticker_eligible, eligibility_reason, status,
                     created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?, ?)
                 """,
                 (
                     bundle_id,
@@ -99,6 +108,8 @@ class EffectBundleRepository:
                     event.group_id,
                     event.event_id,
                     event.message_id,
+                    final.effect_run_id,
+                    final.execution_attempt,
                     final.persona.persona_version,
                     final.persona.persona_digest,
                     final.catalog_version,
@@ -395,6 +406,10 @@ def _bundle_record(
         chat_id=str(row["chat_id"]),
         trigger_event_id=str(row["trigger_event_id"]),
         trigger_message_id=str(row["trigger_message_id"]),
+        effect_run_id=(int(row["effect_run_id"]) if row["effect_run_id"] is not None else None),
+        execution_attempt=(
+            int(row["execution_attempt"]) if row["execution_attempt"] is not None else None
+        ),
         persona_version=str(row["persona_version"]),
         persona_digest=str(row["persona_digest"]),
         catalog_version=(
@@ -436,3 +451,47 @@ def _aware(value: datetime) -> datetime:
     if value.tzinfo is None:
         raise ValueError("datetime must be timezone-aware")
     return value
+
+
+def _active_attempt_owns_final(
+    connection: sqlite3.Connection,
+    *,
+    event: TelegramMessage,
+    final: FinalEffect,
+) -> bool:
+    effect_run_id = final.effect_run_id
+    execution_attempt = final.execution_attempt
+    if (effect_run_id is None) != (execution_attempt is None):
+        return False
+    if effect_run_id is None or execution_attempt is None:
+        existing = connection.execute(
+            """
+            SELECT 1 FROM effect_runs
+            WHERE chat_id = ? AND trigger_event_id = ?
+            """,
+            (event.group_id, event.event_id),
+        ).fetchone()
+        return existing is None
+    if effect_run_id <= 0 or execution_attempt <= 0:
+        return False
+    expected_status = (
+        FinalEffectKind.REPLY.value
+        if final.kind is FinalEffectKind.REPLY_WITH_STICKER
+        else final.kind.value
+    )
+    row = connection.execute(
+        """
+        SELECT runs.execution_attempt, runs.status, runs.reason_code,
+               audit.execution_attempt AS audit_attempt
+        FROM effect_runs AS runs
+        LEFT JOIN temporal_answer_audit AS audit ON audit.effect_run_id = runs.id
+        WHERE runs.id = ? AND runs.chat_id = ? AND runs.trigger_event_id = ?
+        """,
+        (effect_run_id, event.group_id, event.event_id),
+    ).fetchone()
+    return row is not None and (
+        int(row["execution_attempt"]),
+        str(row["status"]),
+        str(row["reason_code"]),
+        int(row["audit_attempt"]) if row["audit_attempt"] is not None else None,
+    ) == (execution_attempt, expected_status, final.reason_code, execution_attempt)
