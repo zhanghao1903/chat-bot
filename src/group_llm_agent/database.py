@@ -782,9 +782,13 @@ _MIGRATIONS: tuple[tuple[int, str, str], ...] = (
         7,
         "temporal_awareness_v1",
         """
+        ALTER TABLE effect_runs ADD COLUMN execution_attempt INTEGER NOT NULL DEFAULT 0
+            CHECK (execution_attempt >= 0);
+
         CREATE TABLE temporal_context_samples (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             effect_run_id INTEGER NOT NULL,
+            execution_attempt INTEGER NOT NULL CHECK (execution_attempt >= 1),
             model_call_ordinal INTEGER NOT NULL CHECK (model_call_ordinal BETWEEN 1 AND 12),
             context_version TEXT,
             context_id TEXT,
@@ -801,14 +805,15 @@ _MIGRATIONS: tuple[tuple[int, str, str], ...] = (
             status TEXT NOT NULL CHECK (status IN ('valid', 'failed')),
             error_code TEXT,
             created_at TEXT NOT NULL,
-            UNIQUE(effect_run_id, model_call_ordinal),
+            UNIQUE(effect_run_id, execution_attempt, model_call_ordinal),
             FOREIGN KEY (effect_run_id) REFERENCES effect_runs(id)
         );
         CREATE INDEX idx_temporal_context_samples_effect
-            ON temporal_context_samples(effect_run_id, model_call_ordinal);
+            ON temporal_context_samples(effect_run_id, execution_attempt, model_call_ordinal);
 
         CREATE TABLE temporal_answer_audit (
             effect_run_id INTEGER PRIMARY KEY,
+            execution_attempt INTEGER NOT NULL CHECK (execution_attempt >= 1),
             chat_id TEXT NOT NULL,
             trigger_event_id TEXT NOT NULL,
             source_kind TEXT NOT NULL CHECK (source_kind IN ('inbound', 'scheduled')),

@@ -8,6 +8,8 @@ from helpers import temporary_database
 
 from group_llm_agent.events import (
     EffectRequest,
+    FinalEffect,
+    FinalEffectKind,
     TelegramTextMessage,
     TriggerCategory,
     TriggerPath,
@@ -30,6 +32,7 @@ class TemporalAuditRepositoryTests(unittest.TestCase):
 
             sample_id = repository.record_sample(
                 effect_run_id=effect_run_id,
+                execution_attempt=1,
                 model_call_ordinal=1,
                 context=context,
             )
@@ -37,12 +40,14 @@ class TemporalAuditRepositoryTests(unittest.TestCase):
                 sample_id,
                 repository.record_sample(
                     effect_run_id=effect_run_id,
+                    execution_attempt=1,
                     model_call_ordinal=1,
                     context=context,
                 ),
             )
             repository.finalize(
                 effect_run_id=effect_run_id,
+                execution_attempt=1,
                 chat_id="group-a",
                 trigger_event_id="event-a",
                 source_kind="inbound",
@@ -53,6 +58,7 @@ class TemporalAuditRepositoryTests(unittest.TestCase):
             )
             repository.finalize(
                 effect_run_id=effect_run_id,
+                execution_attempt=1,
                 chat_id="group-a",
                 trigger_event_id="event-a",
                 source_kind="inbound",
@@ -74,12 +80,14 @@ class TemporalAuditRepositoryTests(unittest.TestCase):
             repository = TemporalAuditRepository(database)
             repository.record_sample(
                 effect_run_id=effect_run_id,
+                execution_attempt=1,
                 model_call_ordinal=1,
                 context=None,
                 error_code="invalid_clock",
             )
             repository.finalize(
                 effect_run_id=effect_run_id,
+                execution_attempt=1,
                 chat_id="group-a",
                 trigger_event_id="event-a",
                 source_kind="inbound",
@@ -92,6 +100,7 @@ class TemporalAuditRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "conflicting terminal"):
                 repository.finalize(
                     effect_run_id=effect_run_id,
+                    execution_attempt=1,
                     chat_id="group-a",
                     trigger_event_id="event-a",
                     source_kind="inbound",
@@ -117,6 +126,7 @@ class TemporalAuditRepositoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "ownership mismatch"):
                 repository.finalize(
                     effect_run_id=first_id,
+                    execution_attempt=1,
                     chat_id="group-a",
                     trigger_event_id="event-a",
                     source_kind="inbound",
@@ -129,6 +139,7 @@ class TemporalAuditRepositoryTests(unittest.TestCase):
                 )
             repository.finalize(
                 effect_run_id=first_id,
+                execution_attempt=1,
                 chat_id="group-a",
                 trigger_event_id="event-a",
                 source_kind="inbound",
@@ -139,6 +150,81 @@ class TemporalAuditRepositoryTests(unittest.TestCase):
                 latest_web_retrieved_at=context.current_utc,
                 status="completed",
             )
+
+    def test_new_attempt_replaces_precompletion_audit_and_stale_attempt_cannot_finish(self) -> None:
+        with temporary_database() as database:
+            request = _request()
+            runs = RunRepository(database)
+            repository = TemporalAuditRepository(database)
+            first = runs.start_effect_attempt(request)
+            first_context = TemporalContextFactory(
+                clock=lambda: datetime(2026, 8, 11, 4, 34, tzinfo=UTC)
+            ).sample(group_timezone="Asia/Shanghai")
+            repository.record_sample(
+                effect_run_id=first.effect_run_id,
+                execution_attempt=first.execution_attempt,
+                model_call_ordinal=1,
+                context=first_context,
+            )
+            repository.finalize(
+                effect_run_id=first.effect_run_id,
+                execution_attempt=first.execution_attempt,
+                chat_id="group-a",
+                trigger_event_id="event-a",
+                source_kind="inbound",
+                context=first_context,
+                freshness_mode=FreshnessMode.CLOCK,
+                web_requested=False,
+                status="completed",
+            )
+
+            second = runs.start_effect_attempt(request)
+            second_context = TemporalContextFactory(
+                clock=lambda: datetime(2026, 8, 11, 4, 35, tzinfo=UTC)
+            ).sample(group_timezone="Asia/Shanghai")
+            repository.record_sample(
+                effect_run_id=second.effect_run_id,
+                execution_attempt=second.execution_attempt,
+                model_call_ordinal=1,
+                context=second_context,
+            )
+            repository.finalize(
+                effect_run_id=second.effect_run_id,
+                execution_attempt=second.execution_attempt,
+                chat_id="group-a",
+                trigger_event_id="event-a",
+                source_kind="inbound",
+                context=second_context,
+                freshness_mode=FreshnessMode.CLOCK,
+                web_requested=False,
+                status="completed",
+            )
+            effect = FinalEffect(
+                kind=FinalEffectKind.REPLY,
+                reason_code="restart_answer",
+                persona=request.persona,
+                text="重新回答。",
+            )
+            with self.assertRaisesRegex(ValueError, "Unknown or completed"):
+                runs.complete_effect_run(
+                    effect_run_id=first.effect_run_id,
+                    effect=effect,
+                    model_call_count=1,
+                    tool_call_count=0,
+                    execution_attempt=first.execution_attempt,
+                )
+            runs.complete_effect_run(
+                effect_run_id=second.effect_run_id,
+                effect=effect,
+                model_call_count=1,
+                tool_call_count=0,
+                execution_attempt=second.execution_attempt,
+            )
+
+            stored = repository.get(effect_run_id=second.effect_run_id)
+            assert stored is not None
+            self.assertEqual(2, stored.execution_attempt)
+            self.assertEqual(second_context.context_id, stored.final_context_id)
 
     def test_migration_seven_is_additive_and_database_is_healthy(self) -> None:
         with temporary_database() as database:
@@ -151,9 +237,19 @@ class TemporalAuditRepositoryTests(unittest.TestCase):
                     str(row["name"])
                     for row in connection.execute("PRAGMA table_info(temporal_answer_audit)")
                 }
+                sample_columns = {
+                    str(row["name"])
+                    for row in connection.execute("PRAGMA table_info(temporal_context_samples)")
+                }
+                effect_columns = {
+                    str(row["name"]) for row in connection.execute("PRAGMA table_info(effect_runs)")
+                }
             self.assertEqual((7, "temporal_awareness_v1"), tuple(versions[-1]))
             self.assertEqual("ok", quick_check)
             self.assertIn("web_audit_ids_json", temporal_columns)
+            self.assertIn("execution_attempt", temporal_columns)
+            self.assertIn("execution_attempt", sample_columns)
+            self.assertIn("execution_attempt", effect_columns)
 
 
 def _request(

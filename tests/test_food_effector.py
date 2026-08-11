@@ -159,6 +159,29 @@ class FoodEffectorTests(unittest.TestCase):
                 '"web_search"', sixth_system.split("AVAILABLE_TOOLS=", 1)[1].split("\n", 1)[0]
             )
 
+    def test_scheduled_final_clock_failures_terminally_degrade_to_silence(self) -> None:
+        for failure_mode, expected_reason in (
+            ("raise", "final_clock_unavailable"),
+            ("naive", "final_clock_invalid"),
+        ):
+            with (
+                self.subTest(failure_mode=failure_mode),
+                food_fixture(_food_result(), final_clock_failure=failure_mode) as fixture,
+            ):
+                final = fixture.effector.execute(request=fixture.request, bundle=fixture.bundle)
+
+                self.assertEqual(FinalEffectKind.SILENCE, final.kind)
+                self.assertEqual(expected_reason, final.reason_code)
+                with fixture.database.connect() as connection:
+                    run = connection.execute(
+                        "SELECT status, reason_code FROM effect_runs"
+                    ).fetchone()
+                    audit = connection.execute(
+                        "SELECT status, degradation_reason FROM temporal_answer_audit"
+                    ).fetchone()
+                self.assertEqual(("silence", expected_reason), tuple(run))
+                self.assertEqual(("silence", expected_reason), tuple(audit))
+
 
 class FoodFixture:
     def __init__(
@@ -193,6 +216,7 @@ def food_fixture(
     recent_primary_keys: tuple[str, ...] = (),
     web_client: FakeTavilyClient | None = None,
     budgets: EffectorBudgets | None = None,
+    final_clock_failure: str | None = None,
 ) -> Iterator[FoodFixture]:
     with temporary_database() as database:
         bundle = load_character_bundle(Path(__file__).parent / "fixtures/personas/test-original/v1")
@@ -215,6 +239,17 @@ def food_fixture(
                 resolver=_public_resolver,
             )
         now = datetime.now(UTC)
+        clock_calls = 0
+
+        def clock() -> datetime:
+            nonlocal clock_calls
+            clock_calls += 1
+            if clock_calls > 1 and final_clock_failure == "raise":
+                raise RuntimeError("injected final clock failure")
+            if clock_calls > 1 and final_clock_failure == "naive":
+                return now.replace(tzinfo=None)
+            return now
+
         effector = WriterEffector(
             model=model,
             contexts=contexts,
@@ -228,7 +263,7 @@ def food_fixture(
                 maximum_web_tool_calls=3,
             ),
             web_session_factory=web_factory,
-            clock=lambda: now,
+            clock=clock,
         )
         scheduled = ScheduledOccurrenceSource(
             occurrence_id="occurrence-1",

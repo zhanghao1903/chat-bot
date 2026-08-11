@@ -20,6 +20,7 @@ def _utc_now() -> str:
 @dataclass(frozen=True)
 class TemporalAnswerAudit:
     effect_run_id: int
+    execution_attempt: int
     chat_id: str
     trigger_event_id: str
     source_kind: SourceKind
@@ -43,11 +44,12 @@ class TemporalAuditRepository:
         self,
         *,
         effect_run_id: int,
+        execution_attempt: int,
         model_call_ordinal: int,
         context: TemporalContext | None,
         error_code: str | None = None,
     ) -> int:
-        if effect_run_id <= 0 or not 1 <= model_call_ordinal <= 12:
+        if effect_run_id <= 0 or execution_attempt <= 0 or not 1 <= model_call_ordinal <= 12:
             raise ValueError("invalid temporal sample identity")
         if (context is None) == (error_code is None):
             raise ValueError("sample requires exactly one of context or error_code")
@@ -55,17 +57,23 @@ class TemporalAuditRepository:
             raise ValueError("invalid temporal sample error code")
         now = _utc_now()
         with self.database.transaction() as connection:
+            self._validate_active_attempt(
+                connection,
+                effect_run_id=effect_run_id,
+                execution_attempt=execution_attempt,
+            )
             try:
                 cursor = connection.execute(
                     """
                     INSERT INTO temporal_context_samples (
-                        effect_run_id, model_call_ordinal, context_version,
+                        effect_run_id, execution_attempt, model_call_ordinal, context_version,
                         context_id, captured_at_utc, answer_timezone, utc_offset,
                         timezone_selection, source_class, status, error_code, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         effect_run_id,
+                        execution_attempt,
                         model_call_ordinal,
                         context.version if context is not None else None,
                         context.context_id if context is not None else None,
@@ -84,9 +92,10 @@ class TemporalAuditRepository:
                     """
                     SELECT id, context_id, status, error_code
                     FROM temporal_context_samples
-                    WHERE effect_run_id = ? AND model_call_ordinal = ?
+                    WHERE effect_run_id = ? AND execution_attempt = ?
+                      AND model_call_ordinal = ?
                     """,
-                    (effect_run_id, model_call_ordinal),
+                    (effect_run_id, execution_attempt, model_call_ordinal),
                 ).fetchone()
                 if (
                     row is None
@@ -107,6 +116,7 @@ class TemporalAuditRepository:
         self,
         *,
         effect_run_id: int,
+        execution_attempt: int,
         chat_id: str,
         trigger_event_id: str,
         source_kind: SourceKind,
@@ -118,7 +128,7 @@ class TemporalAuditRepository:
         status: TemporalAnswerStatus,
         degradation_reason: str | None = None,
     ) -> None:
-        if effect_run_id <= 0 or not chat_id or not trigger_event_id:
+        if effect_run_id <= 0 or execution_attempt <= 0 or not chat_id or not trigger_event_id:
             raise ValueError("invalid temporal answer identity")
         if source_kind not in {"inbound", "scheduled"}:
             raise ValueError("invalid temporal answer source")
@@ -140,6 +150,7 @@ class TemporalAuditRepository:
         web_json = json.dumps(web_audit_ids, separators=(",", ":"))
         values = (
             effect_run_id,
+            execution_attempt,
             chat_id,
             trigger_event_id,
             source_kind,
@@ -160,6 +171,7 @@ class TemporalAuditRepository:
             self._validate_effect_scope(
                 connection,
                 effect_run_id=effect_run_id,
+                execution_attempt=execution_attempt,
                 chat_id=chat_id,
                 trigger_event_id=trigger_event_id,
                 source_kind=source_kind,
@@ -171,13 +183,30 @@ class TemporalAuditRepository:
             )
             cursor = connection.execute(
                 """
-                INSERT OR IGNORE INTO temporal_answer_audit (
-                    effect_run_id, chat_id, trigger_event_id, source_kind,
+                INSERT INTO temporal_answer_audit (
+                    effect_run_id, execution_attempt, chat_id, trigger_event_id, source_kind,
                     final_context_id, final_captured_at_utc, answer_timezone,
                     utc_offset, freshness_mode, web_requested,
                     web_audit_ids_json, latest_web_retrieved_at, status,
                     degradation_reason, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(effect_run_id) DO UPDATE SET
+                    execution_attempt = excluded.execution_attempt,
+                    chat_id = excluded.chat_id,
+                    trigger_event_id = excluded.trigger_event_id,
+                    source_kind = excluded.source_kind,
+                    final_context_id = excluded.final_context_id,
+                    final_captured_at_utc = excluded.final_captured_at_utc,
+                    answer_timezone = excluded.answer_timezone,
+                    utc_offset = excluded.utc_offset,
+                    freshness_mode = excluded.freshness_mode,
+                    web_requested = excluded.web_requested,
+                    web_audit_ids_json = excluded.web_audit_ids_json,
+                    latest_web_retrieved_at = excluded.latest_web_retrieved_at,
+                    status = excluded.status,
+                    degradation_reason = excluded.degradation_reason,
+                    updated_at = excluded.updated_at
+                WHERE temporal_answer_audit.execution_attempt < excluded.execution_attempt
                 """,
                 values,
             )
@@ -187,7 +216,7 @@ class TemporalAuditRepository:
                 "SELECT * FROM temporal_answer_audit WHERE effect_run_id = ?",
                 (effect_run_id,),
             ).fetchone()
-            if row is None or _stored_final_values(row) != values[1:14]:
+            if row is None or _stored_final_values(row) != values[1:15]:
                 raise ValueError("conflicting terminal temporal audit")
 
     def get(self, *, effect_run_id: int) -> TemporalAnswerAudit | None:
@@ -201,6 +230,7 @@ class TemporalAuditRepository:
         freshness_value = row["freshness_mode"]
         return TemporalAnswerAudit(
             effect_run_id=int(row["effect_run_id"]),
+            execution_attempt=int(row["execution_attempt"]),
             chat_id=str(row["chat_id"]),
             trigger_event_id=str(row["trigger_event_id"]),
             source_kind=str(row["source_kind"]),  # type: ignore[arg-type]
@@ -229,23 +259,43 @@ class TemporalAuditRepository:
         connection: sqlite3.Connection,
         *,
         effect_run_id: int,
+        execution_attempt: int,
         chat_id: str,
         trigger_event_id: str,
         source_kind: SourceKind,
     ) -> None:
         row = connection.execute(
             """
-            SELECT chat_id, trigger_event_id, source_kind
+            SELECT execution_attempt, chat_id, trigger_event_id, source_kind, status
             FROM effect_runs WHERE id = ?
             """,
             (effect_run_id,),
         ).fetchone()
         if row is None or (
+            int(row["execution_attempt"]),
             str(row["chat_id"]),
             str(row["trigger_event_id"]),
             str(row["source_kind"]),
-        ) != (chat_id, trigger_event_id, source_kind):
+            str(row["status"]),
+        ) != (execution_attempt, chat_id, trigger_event_id, source_kind, "processing"):
             raise ValueError("temporal audit effect scope mismatch")
+
+    @staticmethod
+    def _validate_active_attempt(
+        connection: sqlite3.Connection,
+        *,
+        effect_run_id: int,
+        execution_attempt: int,
+    ) -> None:
+        row = connection.execute(
+            "SELECT execution_attempt, status FROM effect_runs WHERE id = ?",
+            (effect_run_id,),
+        ).fetchone()
+        if row is None or (
+            int(row["execution_attempt"]),
+            str(row["status"]),
+        ) != (execution_attempt, "processing"):
+            raise ValueError("temporal sample attempt mismatch")
 
     @staticmethod
     def _validate_web_audits(
@@ -271,6 +321,7 @@ class TemporalAuditRepository:
 
 def _stored_final_values(row: sqlite3.Row) -> tuple[object, ...]:
     return (
+        int(row["execution_attempt"]),
         str(row["chat_id"]),
         str(row["trigger_event_id"]),
         str(row["source_kind"]),

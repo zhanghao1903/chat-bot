@@ -135,11 +135,13 @@ class WriterEffector:
         vision_evidence: VisionEvidence | None = None,
         vision_error_code: str | None = None,
     ) -> FinalEffect:
-        effect_run_id = self.runs.start_effect_run(request)
+        attempt = self.runs.start_effect_attempt(request)
+        effect_run_id = attempt.effect_run_id
         temporal_run = TemporalRunState(
             repository=self.temporal_audit,
             request=request,
             effect_run_id=effect_run_id,
+            execution_attempt=attempt.execution_attempt,
         )
         if request.persona != bundle.snapshot:
             return self._degrade(
@@ -158,7 +160,7 @@ class WriterEffector:
             temporal_session = TemporalSession(
                 group_timezone=self.timezone_provider.timezone_for(chat_id=chat_id),
                 factory=self.temporal_factory,
-                scope_id=f"effect:{effect_run_id}",
+                scope_id=f"effect:{effect_run_id}:attempt:{attempt.execution_attempt}",
             )
         except TemporalContextError as error:
             temporal_run.record_failed_sample(ordinal=1, error_code=error.code)
@@ -364,17 +366,15 @@ class WriterEffector:
                         reason_code="food_not_scheduled",
                         temporal_run=temporal_run,
                     )
-                completed_at = self.clock()
 
                 def validate_food_text(
                     text: str | None,
-                    completed_at: datetime = completed_at,
                 ) -> str | None:
-                    return _final_effect_validation_error(
+                    return _final_effect_validation_error_with_clock(
                         request=request,
                         bundle=bundle,
                         text=text,
-                        completed_at=completed_at,
+                        clock=self.clock,
                     )
 
                 food, validation_error = validate_food_recommendation(
@@ -475,11 +475,11 @@ class WriterEffector:
                         reason_code=error.code,
                         temporal_run=temporal_run,
                     )
-                validation_error = _final_effect_validation_error(
+                validation_error = _final_effect_validation_error_with_clock(
                     request=request,
                     bundle=bundle,
                     text=temporal_text.text,
-                    completed_at=self.clock(),
+                    clock=self.clock,
                 )
                 if validation_error is not None:
                     return self._degrade(
@@ -535,12 +535,11 @@ class WriterEffector:
                         reason_code=error.code,
                         temporal_run=temporal_run,
                     )
-                completed_at = self.clock()
-                validation_error = _final_effect_validation_error(
+                validation_error = _final_effect_validation_error_with_clock(
                     request=request,
                     bundle=bundle,
                     text=temporal_text.text,
-                    completed_at=completed_at,
+                    clock=self.clock,
                 )
                 if validation_error is not None:
                     return self._degrade(
@@ -639,14 +638,22 @@ class WriterEffector:
                     )
                     if sticker_error is not None:
                         raise ExpressionCatalogError(sticker_error)
-                    fallback_error = _final_effect_validation_error(
+                    fallback_error = _final_effect_validation_error_with_clock(
                         request=request,
                         bundle=bundle,
                         text=decision.fallback_text,
-                        completed_at=self.clock(),
+                        clock=self.clock,
                     )
                     if fallback_error is not None:
-                        raise ExpressionCatalogError(fallback_error)
+                        return self._degrade(
+                            request=request,
+                            effect_run_id=effect_run_id,
+                            model_call_count=model_call_number,
+                            tool_call_count=tool_call_count,
+                            used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                            reason_code=fallback_error,
+                            temporal_run=temporal_run,
+                        )
                 except ExpressionCatalogError as error:
                     return self._silence(
                         request=request,
@@ -681,11 +688,11 @@ class WriterEffector:
                 )
                 return final
             if decision.kind is WriterDecisionKind.SILENCE:
-                validation_error = _final_effect_validation_error(
+                validation_error = _final_effect_validation_error_with_clock(
                     request=request,
                     bundle=bundle,
                     text=None,
-                    completed_at=self.clock(),
+                    clock=self.clock,
                 )
                 if validation_error is not None:
                     return self._degrade(
@@ -966,6 +973,9 @@ class WriterEffector:
             effect=effect,
             model_call_count=model_call_count,
             tool_call_count=tool_call_count,
+            execution_attempt=(
+                temporal_run.execution_attempt if temporal_run is not None else None
+            ),
         )
 
     def _load_catalog(self, *, required: bool = False) -> ExpressionCatalog | None:
@@ -1017,6 +1027,33 @@ def _final_effect_validation_error(
             if isinstance(parsed, (dict, list)):
                 return "final_protocol_text"
     return None
+
+
+def _final_effect_validation_error_with_clock(
+    *,
+    request: EffectRequest,
+    bundle: CharacterBundle,
+    text: str | None,
+    clock: Callable[[], datetime],
+) -> str | None:
+    try:
+        completed_at = clock()
+    except Exception:  # noqa: BLE001 - final clock failures become a typed safe boundary
+        return "final_clock_unavailable"
+    if not isinstance(completed_at, datetime):
+        return "final_clock_invalid"
+    if completed_at.tzinfo is None or completed_at.utcoffset() is None:
+        return "final_clock_invalid"
+    try:
+        normalized = completed_at.astimezone(UTC)
+    except (OverflowError, ValueError):
+        return "final_clock_invalid"
+    return _final_effect_validation_error(
+        request=request,
+        bundle=bundle,
+        text=text,
+        completed_at=normalized,
+    )
 
 
 def _tool_result_fingerprint(result: ToolExecutionResult | WebToolExecutionResult) -> str:

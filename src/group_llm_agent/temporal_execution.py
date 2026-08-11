@@ -22,6 +22,7 @@ class TemporalRunState:
     repository: TemporalAuditRepository
     request: EffectRequest
     effect_run_id: int
+    execution_attempt: int
     last_context: TemporalContext | None = None
     web_audit_ids: set[int] = field(default_factory=set)
     web_requested: bool = False
@@ -29,6 +30,7 @@ class TemporalRunState:
     def record_sample(self, *, ordinal: int, context: TemporalContext) -> None:
         self.repository.record_sample(
             effect_run_id=self.effect_run_id,
+            execution_attempt=self.execution_attempt,
             model_call_ordinal=ordinal,
             context=context,
         )
@@ -38,6 +40,7 @@ class TemporalRunState:
         self.last_context = None
         self.repository.record_sample(
             effect_run_id=self.effect_run_id,
+            execution_attempt=self.execution_attempt,
             model_call_ordinal=ordinal,
             context=None,
             error_code=error_code,
@@ -65,6 +68,7 @@ class TemporalRunState:
         )
         self.repository.finalize(
             effect_run_id=self.effect_run_id,
+            execution_attempt=self.execution_attempt,
             chat_id=self.request.chat_id,
             trigger_event_id=self.request.trigger_event_id,
             source_kind="scheduled" if self.request.scheduled is not None else "inbound",
