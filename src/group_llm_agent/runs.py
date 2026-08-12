@@ -64,6 +64,12 @@ class TriggerEvaluationRecord:
     continuity_anchor_message_id: str | None
 
 
+@dataclass(frozen=True)
+class EffectRunAttempt:
+    effect_run_id: int
+    execution_attempt: int
+
+
 class RunRepository:
     """Persists run metadata without message, prompt, or model-response content."""
 
@@ -126,15 +132,24 @@ class RunRepository:
             assert row is not None
             return int(row["id"])
 
-    def start_effect_run(self, request: EffectRequest) -> int:
+    def start_effect_attempt(self, request: EffectRequest) -> EffectRunAttempt:
         now = _utc_now()
         with self.database.transaction() as connection:
             claimed = connection.execute(
                 """
                 SELECT 1 FROM external_effects
                 WHERE chat_id = ? AND trigger_event_id = ?
+                UNION ALL
+                SELECT 1 FROM effect_bundles
+                WHERE chat_id = ? AND trigger_event_id = ?
+                LIMIT 1
                 """,
-                (request.chat_id, request.trigger_event_id),
+                (
+                    request.chat_id,
+                    request.trigger_event_id,
+                    request.chat_id,
+                    request.trigger_event_id,
+                ),
             ).fetchone()
             if claimed is not None:
                 raise ValueError("External effect already claimed")
@@ -144,9 +159,9 @@ class RunRepository:
                     request_id, chat_id, trigger_event_id, trigger_message_id,
                     trigger_path, trigger_category, persona_id, persona_version,
                     persona_digest, source_kind, scheduled_occurrence_id,
-                    status, deadline_at, created_at, updated_at
+                    status, execution_attempt, deadline_at, created_at, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'processing', 1, ?, ?, ?)
                 ON CONFLICT(request_id) DO UPDATE SET
                     chat_id = excluded.chat_id,
                     trigger_event_id = excluded.trigger_event_id,
@@ -159,6 +174,7 @@ class RunRepository:
                     persona_version = excluded.persona_version,
                     persona_digest = excluded.persona_digest,
                     status = 'processing',
+                    execution_attempt = effect_runs.execution_attempt + 1,
                     model_call_count = 0,
                     tool_call_count = 0,
                     reason_code = NULL,
@@ -184,11 +200,19 @@ class RunRepository:
                 ),
             )
             row = connection.execute(
-                "SELECT id FROM effect_runs WHERE request_id = ?",
+                "SELECT id, execution_attempt FROM effect_runs WHERE request_id = ?",
                 (request.request_id,),
             ).fetchone()
             assert row is not None
-            return int(row["id"])
+            return EffectRunAttempt(
+                effect_run_id=int(row["id"]),
+                execution_attempt=int(row["execution_attempt"]),
+            )
+
+    def start_effect_run(self, request: EffectRequest) -> int:
+        """Compatibility wrapper for callers that do not own temporal attempt state."""
+
+        return self.start_effect_attempt(request).effect_run_id
 
     def record_trigger_evaluation(
         self,
@@ -343,6 +367,7 @@ class RunRepository:
         effect: FinalEffect,
         model_call_count: int,
         tool_call_count: int,
+        execution_attempt: int | None = None,
     ) -> None:
         status = (
             EffectRunStatus.REPLY
@@ -356,6 +381,7 @@ class RunRepository:
             tool_call_count=tool_call_count,
             reason_code=effect.reason_code,
             error_code=None,
+            execution_attempt=execution_attempt,
         )
 
     def fail_effect_run(
@@ -365,6 +391,7 @@ class RunRepository:
         model_call_count: int,
         tool_call_count: int,
         error_code: str,
+        execution_attempt: int | None = None,
     ) -> None:
         self._finish_effect_run(
             effect_run_id=effect_run_id,
@@ -373,6 +400,7 @@ class RunRepository:
             tool_call_count=tool_call_count,
             reason_code=None,
             error_code=error_code,
+            execution_attempt=execution_attempt,
         )
 
     def record_tool_call(
@@ -707,26 +735,31 @@ class RunRepository:
         tool_call_count: int,
         reason_code: str | None,
         error_code: str | None,
+        execution_attempt: int | None = None,
     ) -> None:
         if min(model_call_count, tool_call_count) < 0:
             raise ValueError("Run counts must be non-negative")
         with self.database.transaction() as connection:
+            attempt_clause = " AND execution_attempt = ?" if execution_attempt is not None else ""
+            parameters: tuple[object, ...] = (
+                status.value,
+                model_call_count,
+                tool_call_count,
+                reason_code,
+                error_code,
+                _utc_now(),
+                effect_run_id,
+            )
+            if execution_attempt is not None:
+                parameters += (execution_attempt,)
             cursor = connection.execute(
-                """
+                f"""
                 UPDATE effect_runs
                 SET status = ?, model_call_count = ?, tool_call_count = ?,
                     reason_code = ?, error_code = ?, updated_at = ?
-                WHERE id = ? AND status = 'processing'
+                WHERE id = ? AND status = 'processing'{attempt_clause}
                 """,
-                (
-                    status.value,
-                    model_call_count,
-                    tool_call_count,
-                    reason_code,
-                    error_code,
-                    _utc_now(),
-                    effect_run_id,
-                ),
+                parameters,
             )
             if cursor.rowcount != 1:
                 raise ValueError(f"Unknown or completed effect run id: {effect_run_id}")

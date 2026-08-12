@@ -29,7 +29,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(settings.scheduled_effect_deadline_seconds, 60)
         self.assertEqual(settings.tavily_web_capability, "disabled")
         self.assertIsNone(settings.tavily_api_key)
-        self.assertEqual(11, settings.effect_max_model_calls)
+        self.assertEqual(12, settings.effect_max_model_calls)
         self.assertEqual(5, settings.web_tool_limit)
         self.assertEqual(16_384, settings.tool_result_total_chars)
         self.assertNotIn("123456:test-token", repr(settings))

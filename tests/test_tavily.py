@@ -35,6 +35,7 @@ class RecordingOpener:
 
 class TavilyClientTests(unittest.TestCase):
     def test_search_uses_fixed_bounded_contract(self) -> None:
+        retrieved_at = datetime(2026, 8, 11, 4, 35, tzinfo=UTC)
         opener = RecordingOpener(
             {
                 "results": [
@@ -43,18 +44,27 @@ class TavilyClientTests(unittest.TestCase):
                         "url": "https://example.com/food",
                         "content": "Open for lunch.",
                         "score": 0.9,
+                        "published_date": "2026-08-10T09:30:00+08:00",
+                        "last_updated": "2 hours ago",
                     }
                 ],
                 "request_id": "request-1",
                 "usage": {"credits": 1},
             }
         )
-        client = TavilyClient(api_key="secret-key", opener=opener)
+        client = TavilyClient(api_key="secret-key", opener=opener, clock=lambda: retrieved_at)
         result = client.search(
             query="Shanghai lunch noodles",
             deadline=datetime.now(UTC) + timedelta(seconds=30),
         )
         self.assertEqual(1, len(result.results))
+        self.assertEqual(retrieved_at, result.retrieved_at)
+        self.assertEqual(
+            datetime(2026, 8, 10, 1, 30, tzinfo=UTC),
+            result.results[0].published_at,
+        )
+        self.assertIsNone(result.results[0].updated_at)
+        self.assertEqual("2 hours ago", result.results[0].provider_time_text)
         request, timeout = opener.requests[0]
         self.assertEqual("https://api.tavily.com/search", request.full_url)
         self.assertEqual("Bearer secret-key", request.headers["Authorization"])
@@ -130,6 +140,31 @@ class TavilyClientTests(unittest.TestCase):
                 query="food",
                 deadline=datetime.now(UTC) + timedelta(seconds=30),
             )
+
+    def test_naive_provider_time_stays_bounded_untrusted_text(self) -> None:
+        client = TavilyClient(
+            api_key="secret",
+            clock=lambda: datetime(2026, 8, 11, tzinfo=UTC),
+            opener=RecordingOpener(
+                {
+                    "results": [
+                        {
+                            "title": "x",
+                            "url": "https://example.com",
+                            "content": "x",
+                            "score": 1,
+                            "published_at": "2026-08-11 09:00",
+                        }
+                    ]
+                }
+            ),
+        )
+        result = client.search(
+            query="current fact",
+            deadline=datetime.now(UTC) + timedelta(seconds=30),
+        )
+        self.assertIsNone(result.results[0].published_at)
+        self.assertEqual("2026-08-11 09:00", result.results[0].provider_time_text)
 
 
 if __name__ == "__main__":

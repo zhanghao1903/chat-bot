@@ -289,3 +289,5 @@ class FinalEffect:
     used_tool_call_ids: tuple[int, ...] = ()
     primary_key: str | None = None
     source_urls: tuple[str, ...] = ()
+    effect_run_id: int | None = None
+    execution_attempt: int | None = None

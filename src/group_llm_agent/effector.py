@@ -30,6 +30,18 @@ from group_llm_agent.model import (
 )
 from group_llm_agent.persona import CharacterBundle
 from group_llm_agent.runs import RunRepository
+from group_llm_agent.temporal import (
+    SELECT_ANSWER_TIMEZONE,
+    FreshnessMode,
+    GroupTimezoneProvider,
+    StaticGroupTimezoneProvider,
+    TemporalContext,
+    TemporalContextError,
+    TemporalContextFactory,
+    TemporalSession,
+)
+from group_llm_agent.temporal_audit import TemporalAuditRepository
+from group_llm_agent.temporal_execution import TemporalRunState, finalize_decision_text
 from group_llm_agent.tools import ReadOnlyToolRegistry, ToolExecutionResult, ToolExecutionScope
 from group_llm_agent.vision import VisionEvidence
 from group_llm_agent.web_tools import (
@@ -45,11 +57,12 @@ _DEFAULT_FAILURE_REPLY = "我这会儿有点卡住了，稍后再试试。"
 _LEAKAGE_MARKER_PATTERN = re.compile(
     r"(?:BEGIN|END)_UNTRUSTED|"
     r"AVAILABLE_TOOLS|CHARACTER_(?:EFFECTOR|TRIGGER|RECOGNITION)_POLICY|"
+    r"AUTHORITATIVE_TEMPORAL_(?:CONTEXT|RULES)|"
     r"CHARACTER_EXAMPLES|UNTRUSTED_(?:GROUP_CONTEXT|GROUP_EVIDENCE|TOOL_RESULT|VISION_EVIDENCE)|"
     r"\b(?:member_memory|memory_id|source_message_ids?|effective_confidence|"
     r"persona_digest|persona_version|recognition_policy_version|tool_name|"
     r"tool_arguments|tool_purpose_code|used_memory_ids|used_tool_call_ids|"
-    r"protocol_history|model_calls_remaining|tool_calls_remaining)\b|"
+    r"protocol_history|model_calls_remaining|tool_calls_remaining|temporal_context_id)\b|"
     r"\b(?:system prompt|internal instructions?)\b|系统提示词|内部指令",
     re.IGNORECASE,
 )
@@ -61,15 +74,15 @@ def _utc_now() -> datetime:
 
 @dataclass(frozen=True)
 class EffectorBudgets:
-    maximum_model_calls: int = 11
+    maximum_model_calls: int = 12
     ordinary_tool_calls: int = 3
     maximum_tool_calls: int = 5
     maximum_web_tool_calls: int = 5
     maximum_result_characters: int = 16_384
 
     def __post_init__(self) -> None:
-        if not 1 <= self.maximum_model_calls <= 11:
-            raise ValueError("maximum_model_calls must be in [1, 11]")
+        if not 1 <= self.maximum_model_calls <= 12:
+            raise ValueError("maximum_model_calls must be in [1, 12]")
         if not 0 <= self.ordinary_tool_calls <= 3:
             raise ValueError("ordinary_tool_calls must be in [0, 3]")
         if not self.ordinary_tool_calls <= self.maximum_tool_calls <= 5:
@@ -95,6 +108,9 @@ class WriterEffector:
         clock: Callable[[], datetime] = _utc_now,
         expression_catalog_provider: Callable[[], ExpressionCatalog] | None = None,
         web_session_factory: Callable[[], WebToolSession] | None = None,
+        timezone_provider: GroupTimezoneProvider | None = None,
+        temporal_factory: TemporalContextFactory | None = None,
+        temporal_audit: TemporalAuditRepository | None = None,
     ) -> None:
         if not failure_reply_text.strip() or len(failure_reply_text) > 4_096:
             raise ValueError("failure_reply_text must be non-empty and at most 4096 characters")
@@ -107,6 +123,9 @@ class WriterEffector:
         self.clock = clock
         self.expression_catalog_provider = expression_catalog_provider
         self.web_session_factory = web_session_factory
+        self.timezone_provider = timezone_provider or StaticGroupTimezoneProvider()
+        self.temporal_factory = temporal_factory or TemporalContextFactory(clock=clock)
+        self.temporal_audit = temporal_audit or TemporalAuditRepository(runs.database)
 
     def execute(
         self,
@@ -116,7 +135,14 @@ class WriterEffector:
         vision_evidence: VisionEvidence | None = None,
         vision_error_code: str | None = None,
     ) -> FinalEffect:
-        effect_run_id = self.runs.start_effect_run(request)
+        attempt = self.runs.start_effect_attempt(request)
+        effect_run_id = attempt.effect_run_id
+        temporal_run = TemporalRunState(
+            repository=self.temporal_audit,
+            request=request,
+            effect_run_id=effect_run_id,
+            execution_attempt=attempt.execution_attempt,
+        )
         if request.persona != bundle.snapshot:
             return self._degrade(
                 request=request,
@@ -125,6 +151,27 @@ class WriterEffector:
                 tool_call_count=0,
                 used_tool_call_ids=(),
                 reason_code="persona_snapshot_mismatch",
+                temporal_run=temporal_run,
+            )
+        chat_id = (
+            request.scheduled.chat_id if request.scheduled is not None else request.message.group_id  # type: ignore[union-attr]
+        )
+        try:
+            temporal_session = TemporalSession(
+                group_timezone=self.timezone_provider.timezone_for(chat_id=chat_id),
+                factory=self.temporal_factory,
+                scope_id=f"effect:{effect_run_id}:attempt:{attempt.execution_attempt}",
+            )
+        except TemporalContextError as error:
+            temporal_run.record_failed_sample(ordinal=1, error_code=error.code)
+            return self._degrade(
+                request=request,
+                effect_run_id=effect_run_id,
+                model_call_count=0,
+                tool_call_count=0,
+                used_tool_call_ids=(),
+                reason_code=error.code,
+                temporal_run=temporal_run,
             )
         if request.scheduled is not None:
             context = self.contexts.scheduled_effect_context(
@@ -159,6 +206,23 @@ class WriterEffector:
         result_character_count = 0
 
         for model_call_number in range(1, self.budgets.maximum_model_calls + 1):
+            try:
+                temporal_context = temporal_session.sample_for_model_call()
+            except TemporalContextError as error:
+                temporal_run.record_failed_sample(
+                    ordinal=model_call_number,
+                    error_code=error.code,
+                )
+                return self._degrade(
+                    request=request,
+                    effect_run_id=effect_run_id,
+                    model_call_count=model_call_number - 1,
+                    tool_call_count=tool_call_count,
+                    used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                    reason_code=error.code,
+                    temporal_run=temporal_run,
+                )
+            temporal_run.record_sample(ordinal=model_call_number, context=temporal_context)
             can_call_tool = model_call_number < self.budgets.maximum_model_calls
             allowed_context_tools = (
                 self.tools.allowed_tools
@@ -172,10 +236,16 @@ class WriterEffector:
                 and web_tool_call_count < self.budgets.maximum_web_tool_calls
                 else frozenset()
             )
-            allowed_tools = allowed_context_tools | allowed_web_tools
+            allowed_temporal_tools = (
+                frozenset({SELECT_ANSWER_TIMEZONE})
+                if can_call_tool and temporal_session.selection_available
+                else frozenset()
+            )
+            allowed_tools = allowed_context_tools | allowed_web_tools | allowed_temporal_tools
             tools_enabled = bool(allowed_tools)
             messages = build_writer_model_messages(
                 context,
+                temporal_context=temporal_context,
                 allowed_tools=allowed_tools,
                 history=tuple(history),
                 tool_results=tuple(tool_results),
@@ -201,9 +271,14 @@ class WriterEffector:
                     tool_call_count=tool_call_count,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                     reason_code=f"model_{error.category.value}",
+                    temporal_run=temporal_run,
                 )
             try:
-                decision = parse_writer_decision(result, allowed_tools=allowed_tools)
+                decision = parse_writer_decision(
+                    result,
+                    allowed_tools=allowed_tools,
+                    expected_temporal_context_id=temporal_context.context_id,
+                )
             except ModelResultError as error:
                 raw_kind = result.payload.get("kind")
                 if raw_kind == WriterDecisionKind.CALL_TOOL.value and can_call_tool:
@@ -211,7 +286,9 @@ class WriterEffector:
                     purpose_code = str(result.payload.get("tool_purpose_code") or "invalid")
                     rejected: ToolExecutionResult | WebToolExecutionResult | None = None
                     budget_ordinal = 0
-                    if capability in WEB_TOOLS:
+                    if capability == SELECT_ANSWER_TIMEZONE:
+                        history.append("writer_protocol_error:invalid_timezone_selection")
+                    elif capability in WEB_TOOLS:
                         if (
                             web_session is not None
                             and web_tool_call_count < self.budgets.maximum_web_tool_calls
@@ -242,6 +319,8 @@ class WriterEffector:
                         context_tool_call_count += 1
                         budget_ordinal = context_tool_call_count
                     if rejected is not None:
+                        if isinstance(rejected, WebToolExecutionResult):
+                            temporal_run.note_web(rejected)
                         tool_results.append(rejected)
                         tool_call_count += 1
                         result_character_count += rejected.result_char_count
@@ -261,6 +340,7 @@ class WriterEffector:
                                 tool_call_count=tool_call_count,
                                 used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                                 reason_code="tool_result_budget_exhausted",
+                                temporal_run=temporal_run,
                             )
                 if model_call_number < self.budgets.maximum_model_calls:
                     history.append(f"writer_protocol_error:{error.category}")
@@ -272,6 +352,7 @@ class WriterEffector:
                     tool_call_count=tool_call_count,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                     reason_code=f"writer_{error.category}",
+                    temporal_run=temporal_run,
                 )
 
             if decision.kind is WriterDecisionKind.FOOD_RECOMMENDATION:
@@ -283,18 +364,17 @@ class WriterEffector:
                         tool_call_count=tool_call_count,
                         used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                         reason_code="food_not_scheduled",
+                        temporal_run=temporal_run,
                     )
-                completed_at = self.clock()
 
                 def validate_food_text(
                     text: str | None,
-                    completed_at: datetime = completed_at,
                 ) -> str | None:
-                    return _final_effect_validation_error(
+                    return _final_effect_validation_error_with_clock(
                         request=request,
                         bundle=bundle,
                         text=text,
-                        completed_at=completed_at,
+                        clock=self.clock,
                     )
 
                 food, validation_error = validate_food_recommendation(
@@ -311,23 +391,57 @@ class WriterEffector:
                         tool_call_count=tool_call_count,
                         used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                         reason_code=validation_error or "food_invalid",
+                        temporal_run=temporal_run,
                     )
                 final = FinalEffect(
                     kind=FinalEffectKind.REPLY,
                     reason_code=decision.reason_code,
                     persona=request.persona,
+                    effect_run_id=effect_run_id,
+                    execution_attempt=temporal_run.execution_attempt,
                     text=food.text,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                     primary_key=food.primary_key,
                     source_urls=food.source_urls,
                 )
-                self.runs.complete_effect_run(
+                self._complete_effect(
                     effect_run_id=effect_run_id,
                     effect=final,
                     model_call_count=model_call_number,
                     tool_call_count=tool_call_count,
+                    temporal_run=temporal_run,
+                    freshness_mode=None,
+                    context=temporal_context,
                 )
                 return final
+
+            if (
+                decision.kind is WriterDecisionKind.CALL_TOOL
+                and decision.tool_name == SELECT_ANSWER_TIMEZONE
+            ):
+                arguments = decision.tool_arguments
+                try:
+                    if not isinstance(arguments, dict) or set(arguments) != {"timezone"}:
+                        raise TemporalContextError("invalid_timezone_selection_arguments")
+                    timezone = arguments["timezone"]
+                    if not isinstance(timezone, str):
+                        raise TemporalContextError("invalid_timezone_selection_arguments")
+                    temporal_session.select_answer_timezone(timezone)
+                except TemporalContextError as error:
+                    if model_call_number < self.budgets.maximum_model_calls:
+                        history.append(f"writer_protocol_error:{error.code}")
+                        continue
+                    return self._silence(
+                        request=request,
+                        effect_run_id=effect_run_id,
+                        model_call_count=model_call_number,
+                        tool_call_count=tool_call_count,
+                        used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                        reason_code=error.code,
+                        temporal_run=temporal_run,
+                    )
+                history.append(f"answer_timezone_selected:{temporal_session.answer_timezone}")
+                continue
 
             if request.scheduled is not None and decision.kind not in {
                 WriterDecisionKind.SILENCE,
@@ -340,15 +454,34 @@ class WriterEffector:
                     tool_call_count=tool_call_count,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                     reason_code="scheduled_invalid_final_kind",
+                    temporal_run=temporal_run,
                 )
 
             if decision.kind is WriterDecisionKind.REPLY:
                 assert decision.text is not None
-                validation_error = _final_effect_validation_error(
+                try:
+                    temporal_text = finalize_decision_text(
+                        text=decision.text,
+                        freshness_mode=decision.freshness_mode,
+                        source_result_ids=decision.source_result_ids,
+                        temporal_context=temporal_context,
+                        web_session=web_session,
+                    )
+                except TemporalContextError as error:
+                    return self._degrade(
+                        request=request,
+                        effect_run_id=effect_run_id,
+                        model_call_count=model_call_number,
+                        tool_call_count=tool_call_count,
+                        used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                        reason_code=error.code,
+                        temporal_run=temporal_run,
+                    )
+                validation_error = _final_effect_validation_error_with_clock(
                     request=request,
                     bundle=bundle,
-                    text=decision.text,
-                    completed_at=self.clock(),
+                    text=temporal_text.text,
+                    clock=self.clock,
                 )
                 if validation_error is not None:
                     return self._degrade(
@@ -358,34 +491,59 @@ class WriterEffector:
                         tool_call_count=tool_call_count,
                         used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                         reason_code=validation_error,
+                        temporal_run=temporal_run,
                     )
                 final = FinalEffect(
                     kind=FinalEffectKind.REPLY,
                     reason_code=decision.reason_code,
                     persona=request.persona,
-                    text=decision.text,
+                    effect_run_id=effect_run_id,
+                    execution_attempt=temporal_run.execution_attempt,
+                    text=temporal_text.text,
                     catalog_version=(catalog.catalog_version if catalog is not None else None),
                     catalog_digest=(catalog.digest if catalog is not None else None),
                     sticker_eligible=False,
                     sticker_eligibility_reason="model_selected_text",
                     mood_signal=decision.mood_signal,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                    source_urls=temporal_text.source_urls,
                 )
-                self.runs.complete_effect_run(
+                self._complete_effect(
                     effect_run_id=effect_run_id,
                     effect=final,
                     model_call_count=model_call_number,
                     tool_call_count=tool_call_count,
+                    temporal_run=temporal_run,
+                    freshness_mode=decision.freshness_mode,
+                    context=temporal_context,
+                    latest_web_retrieved_at=temporal_text.latest_retrieved_at,
                 )
                 return final
             if decision.kind is WriterDecisionKind.REPLY_WITH_STICKER:
                 assert decision.text is not None
-                completed_at = self.clock()
-                validation_error = _final_effect_validation_error(
+                try:
+                    temporal_text = finalize_decision_text(
+                        text=decision.text,
+                        freshness_mode=decision.freshness_mode,
+                        source_result_ids=decision.source_result_ids,
+                        temporal_context=temporal_context,
+                        web_session=web_session,
+                    )
+                except TemporalContextError as error:
+                    return self._degrade(
+                        request=request,
+                        effect_run_id=effect_run_id,
+                        model_call_count=model_call_number,
+                        tool_call_count=tool_call_count,
+                        used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                        reason_code=error.code,
+                        temporal_run=temporal_run,
+                    )
+                validation_error = _final_effect_validation_error_with_clock(
                     request=request,
                     bundle=bundle,
-                    text=decision.text,
-                    completed_at=completed_at,
+                    text=temporal_text.text,
+                    clock=self.clock,
                 )
                 if validation_error is not None:
                     return self._degrade(
@@ -395,6 +553,7 @@ class WriterEffector:
                         tool_call_count=tool_call_count,
                         used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                         reason_code=validation_error,
+                        temporal_run=temporal_run,
                     )
                 try:
                     current_catalog = self._load_catalog(required=True)
@@ -419,26 +578,35 @@ class WriterEffector:
                         kind=FinalEffectKind.REPLY,
                         reason_code=f"sticker_{error.code}",
                         persona=request.persona,
-                        text=decision.text,
+                        effect_run_id=effect_run_id,
+                        execution_attempt=temporal_run.execution_attempt,
+                        text=temporal_text.text,
                         catalog_version=(catalog.catalog_version if catalog is not None else None),
                         catalog_digest=(catalog.digest if catalog is not None else None),
                         sticker_eligible=False,
                         sticker_eligibility_reason=f"sticker_{error.code}",
                         mood_signal=decision.mood_signal,
                         used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                        source_urls=temporal_text.source_urls,
                     )
-                    self.runs.complete_effect_run(
+                    self._complete_effect(
                         effect_run_id=effect_run_id,
                         effect=final,
                         model_call_count=model_call_number,
                         tool_call_count=tool_call_count,
+                        temporal_run=temporal_run,
+                        freshness_mode=decision.freshness_mode,
+                        context=temporal_context,
+                        latest_web_retrieved_at=temporal_text.latest_retrieved_at,
                     )
                     return final
                 final = FinalEffect(
                     kind=FinalEffectKind.REPLY_WITH_STICKER,
                     reason_code=decision.reason_code,
                     persona=request.persona,
-                    text=decision.text,
+                    effect_run_id=effect_run_id,
+                    execution_attempt=temporal_run.execution_attempt,
+                    text=temporal_text.text,
                     sticker_id=entry.semantic_id,
                     catalog_version=current_catalog.catalog_version,
                     catalog_digest=current_catalog.digest,
@@ -446,12 +614,17 @@ class WriterEffector:
                     sticker_eligibility_reason="model_selected_nonsemantic_valid",
                     mood_signal=decision.mood_signal,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                    source_urls=temporal_text.source_urls,
                 )
-                self.runs.complete_effect_run(
+                self._complete_effect(
                     effect_run_id=effect_run_id,
                     effect=final,
                     model_call_count=model_call_number,
                     tool_call_count=tool_call_count,
+                    temporal_run=temporal_run,
+                    freshness_mode=decision.freshness_mode,
+                    context=temporal_context,
+                    latest_web_retrieved_at=temporal_text.latest_retrieved_at,
                 )
                 return final
             if decision.kind is WriterDecisionKind.STICKER:
@@ -473,14 +646,22 @@ class WriterEffector:
                     )
                     if sticker_error is not None:
                         raise ExpressionCatalogError(sticker_error)
-                    fallback_error = _final_effect_validation_error(
+                    fallback_error = _final_effect_validation_error_with_clock(
                         request=request,
                         bundle=bundle,
                         text=decision.fallback_text,
-                        completed_at=self.clock(),
+                        clock=self.clock,
                     )
                     if fallback_error is not None:
-                        raise ExpressionCatalogError(fallback_error)
+                        return self._degrade(
+                            request=request,
+                            effect_run_id=effect_run_id,
+                            model_call_count=model_call_number,
+                            tool_call_count=tool_call_count,
+                            used_tool_call_ids=tuple(item.audit_id for item in tool_results),
+                            reason_code=fallback_error,
+                            temporal_run=temporal_run,
+                        )
                 except ExpressionCatalogError as error:
                     return self._silence(
                         request=request,
@@ -489,11 +670,14 @@ class WriterEffector:
                         tool_call_count=tool_call_count,
                         used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                         reason_code=f"sticker_{error.code}",
+                        temporal_run=temporal_run,
                     )
                 final = FinalEffect(
                     kind=FinalEffectKind.STICKER,
                     reason_code=decision.reason_code,
                     persona=request.persona,
+                    effect_run_id=effect_run_id,
+                    execution_attempt=temporal_run.execution_attempt,
                     sticker_id=entry.semantic_id,
                     catalog_version=current_catalog.catalog_version,
                     catalog_digest=current_catalog.digest,
@@ -503,19 +687,22 @@ class WriterEffector:
                     mood_signal=decision.mood_signal,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                 )
-                self.runs.complete_effect_run(
+                self._complete_effect(
                     effect_run_id=effect_run_id,
                     effect=final,
                     model_call_count=model_call_number,
                     tool_call_count=tool_call_count,
+                    temporal_run=temporal_run,
+                    freshness_mode=None,
+                    context=temporal_context,
                 )
                 return final
             if decision.kind is WriterDecisionKind.SILENCE:
-                validation_error = _final_effect_validation_error(
+                validation_error = _final_effect_validation_error_with_clock(
                     request=request,
                     bundle=bundle,
                     text=None,
-                    completed_at=self.clock(),
+                    clock=self.clock,
                 )
                 if validation_error is not None:
                     return self._degrade(
@@ -525,19 +712,25 @@ class WriterEffector:
                         tool_call_count=tool_call_count,
                         used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                         reason_code=validation_error,
+                        temporal_run=temporal_run,
                     )
                 final = FinalEffect(
                     kind=FinalEffectKind.SILENCE,
                     reason_code=decision.reason_code,
                     persona=request.persona,
+                    effect_run_id=effect_run_id,
+                    execution_attempt=temporal_run.execution_attempt,
                     mood_signal=decision.mood_signal,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                 )
-                self.runs.complete_effect_run(
+                self._complete_effect(
                     effect_run_id=effect_run_id,
                     effect=final,
                     model_call_count=model_call_number,
                     tool_call_count=tool_call_count,
+                    temporal_run=temporal_run,
+                    freshness_mode=None,
+                    context=temporal_context,
                 )
                 return final
 
@@ -549,6 +742,7 @@ class WriterEffector:
                     tool_call_count=tool_call_count,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                     reason_code="tool_requested_after_budget",
+                    temporal_run=temporal_run,
                 )
             extension_reason = decision.tool_extension_reason_code
             is_web_tool = decision.tool_name in WEB_TOOLS
@@ -562,6 +756,7 @@ class WriterEffector:
                         tool_call_count=tool_call_count,
                         used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                         reason_code="web_tool_unavailable",
+                        temporal_run=temporal_run,
                     )
                 tool_result = web_session.execute(
                     decision,
@@ -604,6 +799,7 @@ class WriterEffector:
                             tool_call_count=tool_call_count,
                             used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                             reason_code="tool_result_budget_exhausted",
+                            temporal_run=temporal_run,
                         )
                     continue
                 tool_result = self.tools.execute(decision, scope=scope)
@@ -616,6 +812,8 @@ class WriterEffector:
                 )
 
             tool_results.append(tool_result)
+            if isinstance(tool_result, WebToolExecutionResult):
+                temporal_run.note_web(tool_result)
             tool_call_count += 1
             result_character_count += tool_result.result_char_count
             if result_character_count > self.budgets.maximum_result_characters:
@@ -632,6 +830,7 @@ class WriterEffector:
                     tool_call_count=tool_call_count,
                     used_tool_call_ids=tuple(item.audit_id for item in tool_results),
                     reason_code="tool_result_budget_exhausted",
+                    temporal_run=temporal_run,
                 )
             fingerprint = _tool_result_fingerprint(tool_result)
             novel = (
@@ -657,6 +856,7 @@ class WriterEffector:
             tool_call_count=tool_call_count,
             used_tool_call_ids=tuple(item.audit_id for item in tool_results),
             reason_code="writer_budget_exhausted",
+            temporal_run=temporal_run,
         )
 
     def _tool_scope(
@@ -703,12 +903,17 @@ class WriterEffector:
         tool_call_count: int,
         used_tool_call_ids: tuple[int, ...],
         reason_code: str,
+        temporal_run: TemporalRunState | None = None,
     ) -> FinalEffect:
         if request.trigger_path is TriggerPath.DIRECT:
             final = FinalEffect(
                 kind=FinalEffectKind.FAILURE_REPLY,
                 reason_code=reason_code,
                 persona=request.persona,
+                effect_run_id=effect_run_id,
+                execution_attempt=(
+                    temporal_run.execution_attempt if temporal_run is not None else None
+                ),
                 text=self.failure_reply_text,
                 used_tool_call_ids=used_tool_call_ids,
             )
@@ -717,13 +922,20 @@ class WriterEffector:
                 kind=FinalEffectKind.SILENCE,
                 reason_code=reason_code,
                 persona=request.persona,
+                effect_run_id=effect_run_id,
+                execution_attempt=(
+                    temporal_run.execution_attempt if temporal_run is not None else None
+                ),
                 used_tool_call_ids=used_tool_call_ids,
             )
-        self.runs.complete_effect_run(
+        self._complete_effect(
             effect_run_id=effect_run_id,
             effect=final,
             model_call_count=model_call_count,
             tool_call_count=tool_call_count,
+            temporal_run=temporal_run,
+            freshness_mode=None,
+            degradation_reason=reason_code,
         )
         return final
 
@@ -736,20 +948,59 @@ class WriterEffector:
         tool_call_count: int,
         used_tool_call_ids: tuple[int, ...],
         reason_code: str,
+        temporal_run: TemporalRunState | None = None,
     ) -> FinalEffect:
         final = FinalEffect(
             kind=FinalEffectKind.SILENCE,
             reason_code=reason_code,
             persona=request.persona,
+            effect_run_id=effect_run_id,
+            execution_attempt=(
+                temporal_run.execution_attempt if temporal_run is not None else None
+            ),
             used_tool_call_ids=used_tool_call_ids,
         )
-        self.runs.complete_effect_run(
+        self._complete_effect(
             effect_run_id=effect_run_id,
             effect=final,
             model_call_count=model_call_count,
             tool_call_count=tool_call_count,
+            temporal_run=temporal_run,
+            freshness_mode=None,
+            degradation_reason=reason_code,
         )
         return final
+
+    def _complete_effect(
+        self,
+        *,
+        effect_run_id: int,
+        effect: FinalEffect,
+        model_call_count: int,
+        tool_call_count: int,
+        temporal_run: TemporalRunState | None,
+        freshness_mode: FreshnessMode | None,
+        context: TemporalContext | None = None,
+        latest_web_retrieved_at: datetime | None = None,
+        degradation_reason: str | None = None,
+    ) -> None:
+        if temporal_run is not None:
+            temporal_run.finalize(
+                final=effect,
+                freshness_mode=freshness_mode,
+                context=context,
+                latest_web_retrieved_at=latest_web_retrieved_at,
+                degradation_reason=degradation_reason,
+            )
+        self.runs.complete_effect_run(
+            effect_run_id=effect_run_id,
+            effect=effect,
+            model_call_count=model_call_count,
+            tool_call_count=tool_call_count,
+            execution_attempt=(
+                temporal_run.execution_attempt if temporal_run is not None else None
+            ),
+        )
 
     def _load_catalog(self, *, required: bool = False) -> ExpressionCatalog | None:
         if self.expression_catalog_provider is None:
@@ -800,6 +1051,33 @@ def _final_effect_validation_error(
             if isinstance(parsed, (dict, list)):
                 return "final_protocol_text"
     return None
+
+
+def _final_effect_validation_error_with_clock(
+    *,
+    request: EffectRequest,
+    bundle: CharacterBundle,
+    text: str | None,
+    clock: Callable[[], datetime],
+) -> str | None:
+    try:
+        completed_at = clock()
+    except Exception:  # noqa: BLE001 - final clock failures become a typed safe boundary
+        return "final_clock_unavailable"
+    if not isinstance(completed_at, datetime):
+        return "final_clock_invalid"
+    if completed_at.tzinfo is None or completed_at.utcoffset() is None:
+        return "final_clock_invalid"
+    try:
+        normalized = completed_at.astimezone(UTC)
+    except (OverflowError, ValueError):
+        return "final_clock_invalid"
+    return _final_effect_validation_error(
+        request=request,
+        bundle=bundle,
+        text=text,
+        completed_at=normalized,
+    )
 
 
 def _tool_result_fingerprint(result: ToolExecutionResult | WebToolExecutionResult) -> str:

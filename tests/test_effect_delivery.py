@@ -2,23 +2,29 @@ from __future__ import annotations
 
 import unittest
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from helpers import temporary_database
 
+from group_llm_agent.database import SQLiteDatabase
 from group_llm_agent.effect_bundle import BundleStatus, EffectBundleRepository
 from group_llm_agent.effect_delivery import ExternalEffectDelivery
 from group_llm_agent.events import (
+    EffectRequest,
     FinalEffect,
     FinalEffectKind,
     PersonaSnapshot,
     TelegramMessage,
+    TriggerCategory,
+    TriggerPath,
 )
 from group_llm_agent.expression import file_sha256, load_expression_catalog
 from group_llm_agent.messages import MessageRepository
 from group_llm_agent.platforms.telegram import SentMessage, TelegramApiError
 from group_llm_agent.runs import RunRepository
+from group_llm_agent.temporal import TemporalContextFactory
+from group_llm_agent.temporal_audit import TemporalAuditRepository
 
 _CATALOG_PATH = (
     Path(__file__).resolve().parents[1]
@@ -243,6 +249,116 @@ class ExternalEffectDeliveryTests(unittest.TestCase):
             self.assertEqual(BundleStatus.DEGRADED, record.status)
             self.assertEqual(["sent", "failed"], [item.status.value for item in record.components])
             self.assertEqual((1, 1), (client.stickers, client.messages))
+
+    def test_stale_attempt_cannot_claim_bundle_before_current_attempt(self) -> None:
+        catalog = _enabled_catalog()
+        event = _event()
+        request = EffectRequest(
+            request_id="effect:attempt-race",
+            trigger_path=TriggerPath.DIRECT,
+            trigger_category=TriggerCategory.DIRECT_PLATFORM,
+            trigger_reason="direct",
+            message=event,
+            persona=_final(catalog).persona,
+            deadline_at=event.timestamp + timedelta(seconds=30),
+        )
+        with temporary_database() as database:
+            stale = _complete_attempt(
+                database,
+                request=request,
+                final=replace(_final(catalog), reason_code="attempt_one"),
+                captured_at=datetime(2026, 8, 2, 0, 0, 1, tzinfo=UTC),
+            )
+            current = _complete_attempt(
+                database,
+                request=request,
+                final=replace(_final(catalog), reason_code="attempt_two"),
+                captured_at=datetime(2026, 8, 2, 0, 0, 2, tzinfo=UTC),
+            )
+            client = _Telegram()
+            delivery = self._delivery(database, client, catalog)
+
+            self.assertEqual(
+                "duplicate",
+                delivery.deliver(event=event, final=stale, active_persona=stale.persona),
+            )
+            self.assertEqual(0, client.stickers)
+            self.assertEqual(
+                "sticker_sent",
+                delivery.deliver(event=event, final=current, active_persona=current.persona),
+            )
+            self.assertEqual(1, client.stickers)
+
+            record = EffectBundleRepository(database).get(
+                chat_id=event.group_id,
+                trigger_event_id=event.event_id,
+            )
+            assert record is not None
+            self.assertEqual(current.effect_run_id, record.effect_run_id)
+            self.assertEqual(current.execution_attempt, record.execution_attempt)
+            self.assertEqual("attempt_two", record.reason_code)
+            with database.connect() as connection:
+                run = connection.execute(
+                    "SELECT id, execution_attempt, status, reason_code FROM effect_runs"
+                ).fetchone()
+                audit = connection.execute(
+                    "SELECT effect_run_id, execution_attempt, status FROM temporal_answer_audit"
+                ).fetchone()
+            self.assertEqual(
+                (current.effect_run_id, current.execution_attempt, "sticker", "attempt_two"),
+                tuple(run),
+            )
+            self.assertEqual(
+                (current.effect_run_id, current.execution_attempt, "completed"),
+                tuple(audit),
+            )
+            with self.assertRaisesRegex(ValueError, "already claimed"):
+                RunRepository(database).start_effect_attempt(request)
+
+
+def _complete_attempt(
+    database: SQLiteDatabase,
+    *,
+    request: EffectRequest,
+    final: FinalEffect,
+    captured_at: datetime,
+) -> FinalEffect:
+    runs = RunRepository(database)
+    attempt = runs.start_effect_attempt(request)
+    context = TemporalContextFactory(clock=lambda: captured_at).sample(
+        group_timezone="Asia/Shanghai"
+    )
+    audit = TemporalAuditRepository(database)
+    audit.record_sample(
+        effect_run_id=attempt.effect_run_id,
+        execution_attempt=attempt.execution_attempt,
+        model_call_ordinal=1,
+        context=context,
+    )
+    bound = replace(
+        final,
+        effect_run_id=attempt.effect_run_id,
+        execution_attempt=attempt.execution_attempt,
+    )
+    audit.finalize(
+        effect_run_id=attempt.effect_run_id,
+        execution_attempt=attempt.execution_attempt,
+        chat_id=request.chat_id,
+        trigger_event_id=request.trigger_event_id,
+        source_kind="inbound",
+        context=context,
+        freshness_mode=None,
+        web_requested=False,
+        status="completed",
+    )
+    runs.complete_effect_run(
+        effect_run_id=attempt.effect_run_id,
+        effect=bound,
+        model_call_count=1,
+        tool_call_count=0,
+        execution_attempt=attempt.execution_attempt,
+    )
+    return bound
 
 
 if __name__ == "__main__":

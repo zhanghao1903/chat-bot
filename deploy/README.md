@@ -105,7 +105,7 @@ TAVILY_PROJECT_ID=<optional id>
 TAVILY_TIMEOUT_SECONDS=8
 WEB_TOOL_LIMIT=5
 TOOL_RESULT_TOTAL_CHARS=16384
-EFFECT_MAX_MODEL_CALLS=11
+EFFECT_MAX_MODEL_CALLS=12
 SCHEDULED_EFFECT_DEADLINE_SECONDS=60
 ```
 
@@ -113,6 +113,22 @@ Web 与既有上下文工具分别最多 5 次，但共享截止时间和总结�
 只读，不登录、不提交、不执行脚本；失败时使用通用菜品或静默，普通聊天继续。先用
 `/food_status` 确认群配置和订阅，再等待受控的下一次 occurrence；不要通过修改系统时钟或
 数据库制造真实群消息。
+
+## 当前时间与时效信息发布检查
+
+时间感知不增加 capability 开关，但依赖宿主机提供准确 UTC 系统时钟和 IANA `tzdata`。
+发布前应确认宿主时间同步健康，不要通过修改系统时钟测试跨日或夏令时。群的回答时区继续
+来自现有自动化配置；缺少群配置时使用 `Asia/Shanghai`，不会建立第二份时区配置。
+
+升级会在现有 SQLite 上追加 migration 7 的时间样本和最终回答审计表。生产发布前必须停止
+写入、备份当前数据库，并在副本上启动候选版本；启动后确认迁移版本、执行
+`PRAGMA quick_check`，再恢复服务。出现迁移、时钟、时区或身份异常时停止发布并用备份和
+上一镜像恢复，不能删除或手工改写新表来掩盖失败。
+
+候选 smoke 至少覆盖：上海当前时间（不调用 Web）、群配置时区、一次明确其他 IANA 时区
+换算、稳定问题零 Web，以及已单独授权 Tavily 后的一次当前事实核验。时效回复应显示回答
+时区下的“截至”时间和 1–3 个来源；Tavily 不可用时应明确无法可靠核实。日志和审计只能
+出现上下文摘要、采集时间、时区、审计 ID 和理由码，不能包含完整 prompt、网页正文或 key。
 
 ## 图片理解、复合表情回复与默认头像 v0.3.1
 
@@ -226,6 +242,8 @@ deploy/manage.sh persona-smoke
 11. 自动化 capability 可用但群未启用时，确认没有 Writer、Tavily 或主动 Telegram 效果。
 12. 管理员启用且成员订阅后，确认一个工作日 occurrence 最多一条群级推荐；暂停、退订最后
     一人、周末和超过宽限均不发送。
+13. 用宿主真实同步时钟询问当前时间，确认分钟、日期、星期和群 IANA 时区一致且不产生 Web
+    调用；另一个时效事实 smoke 只有在 Tavily 外部调用另行获批后执行。
 
 模型人格评分和真实群 smoke 是运营证明，不会由仓库内 scripted-model 测试替代。
 

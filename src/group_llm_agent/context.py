@@ -113,8 +113,8 @@ class ContextAssembler:
         vision_error_code: str | None = None,
         at: datetime | None = None,
     ) -> EffectContext:
-        if not 1 <= model_calls_remaining <= 11:
-            raise ValueError("model_calls_remaining must be in [1, 11]")
+        if not 1 <= model_calls_remaining <= 12:
+            raise ValueError("model_calls_remaining must be in [1, 12]")
         if not 0 <= tool_calls_remaining <= 5:
             raise ValueError("tool_calls_remaining must be in [0, 5]")
         if deadline_at.tzinfo is None:
@@ -149,8 +149,8 @@ class ContextAssembler:
         web_tool_calls_remaining: int,
         deadline_at: datetime,
     ) -> EffectContext:
-        if not 1 <= model_calls_remaining <= 11:
-            raise ValueError("model_calls_remaining must be in [1, 11]")
+        if not 1 <= model_calls_remaining <= 12:
+            raise ValueError("model_calls_remaining must be in [1, 12]")
         if not 0 <= tool_calls_remaining <= 5:
             raise ValueError("tool_calls_remaining must be in [0, 5]")
         if not 0 <= web_tool_calls_remaining <= 5:

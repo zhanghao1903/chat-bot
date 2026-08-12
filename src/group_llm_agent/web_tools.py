@@ -14,7 +14,7 @@ from typing import cast
 from group_llm_agent.food_recommendation import FoodCitation
 from group_llm_agent.model import WriterDecision, WriterDecisionKind
 from group_llm_agent.runs import RunRepository
-from group_llm_agent.tavily import TavilyApiError, TavilyClient
+from group_llm_agent.tavily import TavilyApiError, TavilyClient, TavilySearchResult
 
 WEB_SEARCH = "web_search"
 WEB_FETCH = "web_fetch"
@@ -49,6 +49,18 @@ class WebToolExecutionResult:
         )
 
 
+@dataclass(frozen=True)
+class WebEvidence:
+    result_id: str
+    normalized_url: str
+    retrieved_at: datetime
+    published_at: datetime | None
+    updated_at: datetime | None
+    provider_time_text: str | None
+    search_audit_id: int
+    fetch_audit_id: int | None = None
+
+
 class WebToolSession:
     def __init__(
         self,
@@ -63,6 +75,7 @@ class WebToolSession:
         self.allowed_tools = WEB_TOOLS
         self._urls: dict[str, str] = {}
         self._citations: dict[str, FoodCitation] = {}
+        self._evidence: dict[str, WebEvidence] = {}
         self._searched_queries: set[str] = set()
         self._fetched_urls: set[str] = set()
         self._next_result_id = 1
@@ -74,6 +87,18 @@ class WebToolSession:
     @property
     def citations(self) -> dict[str, FoodCitation]:
         return dict(self._citations)
+
+    @property
+    def evidence(self) -> dict[str, WebEvidence]:
+        return dict(self._evidence)
+
+    def evidence_for(self, result_ids: tuple[str, ...]) -> tuple[WebEvidence, ...]:
+        if len(result_ids) > 3 or len(set(result_ids)) != len(result_ids):
+            raise ValueError("invalid Web evidence selection")
+        try:
+            return tuple(self._evidence[result_id] for result_id in result_ids)
+        except KeyError:
+            raise ValueError("unknown current-turn Web evidence") from None
 
     def execute(
         self,
@@ -185,6 +210,7 @@ class WebToolSession:
         self._searched_queries.add(normalized_query)
         response = self.client.search(query=query, deadline=scope.deadline_at)
         items: list[dict[str, object]] = []
+        pending_evidence: list[tuple[str, str, TavilySearchResult]] = []
         domains: set[str] = set()
         for result in response.results:
             try:
@@ -207,9 +233,18 @@ class WebToolSession:
                     "url": normalized,
                     "snippet": result.content,
                     "score": round(result.score, 6),
+                    "retrieved_at": response.retrieved_at.isoformat(),
+                    "published_at": (
+                        result.published_at.isoformat() if result.published_at is not None else None
+                    ),
+                    "updated_at": (
+                        result.updated_at.isoformat() if result.updated_at is not None else None
+                    ),
+                    "provider_time_text": result.provider_time_text,
                 }
             )
-        return self._result(
+            pending_evidence.append((result_id, normalized, result))
+        execution = self._result(
             scope=scope,
             capability=WEB_SEARCH,
             purpose_code=decision.tool_purpose_code or "unspecified",
@@ -226,6 +261,18 @@ class WebToolSession:
             domains=domains,
             retrieved_at=response.retrieved_at,
         )
+        if execution.status == "success":
+            for result_id, normalized, raw in pending_evidence:
+                self._evidence[result_id] = WebEvidence(
+                    result_id=result_id,
+                    normalized_url=normalized,
+                    retrieved_at=response.retrieved_at,
+                    published_at=raw.published_at,
+                    updated_at=raw.updated_at,
+                    provider_time_text=raw.provider_time_text,
+                    search_audit_id=execution.audit_id,
+                )
+        return execution
 
     def _fetch(
         self,
@@ -252,7 +299,7 @@ class WebToolSession:
             raise ValueError("extract URL drift")
         host = urllib.parse.urlsplit(url).hostname
         assert host is not None
-        return self._result(
+        execution = self._result(
             scope=scope,
             capability=WEB_FETCH,
             purpose_code=decision.tool_purpose_code or "unspecified",
@@ -262,6 +309,17 @@ class WebToolSession:
                 "result_id": result_id,
                 "url": url,
                 "retrieved_at": response.retrieved_at.isoformat(),
+                "published_at": (
+                    response.result.published_at.isoformat()
+                    if response.result.published_at is not None
+                    else None
+                ),
+                "updated_at": (
+                    response.result.updated_at.isoformat()
+                    if response.result.updated_at is not None
+                    else None
+                ),
+                "provider_time_text": response.result.provider_time_text,
                 "content": response.result.content,
             },
             result_count=1,
@@ -271,6 +329,20 @@ class WebToolSession:
             domains={host},
             retrieved_at=response.retrieved_at,
         )
+        if execution.status != "success":
+            return execution
+        prior = self._evidence[result_id]
+        self._evidence[result_id] = WebEvidence(
+            result_id=result_id,
+            normalized_url=url,
+            retrieved_at=response.retrieved_at,
+            published_at=response.result.published_at or prior.published_at,
+            updated_at=response.result.updated_at or prior.updated_at,
+            provider_time_text=response.result.provider_time_text or prior.provider_time_text,
+            search_audit_id=prior.search_audit_id,
+            fetch_audit_id=execution.audit_id,
+        )
+        return execution
 
     def _result(
         self,

@@ -4,6 +4,13 @@
 
 ### Added
 
+- Per-Writer-call authoritative UTC/IANA temporal context with effect-and-call-bound snapshot
+  identity, group-timezone reuse, one budget-free current-turn timezone selection, and explicit
+  message occurrence metadata.
+- Application-owned freshness provenance and bounded migration-7 audit records: current verified
+  replies use same-turn Web result IDs plus retrieval-time/source footers, while unavailable or
+  insufficient evidence fails closed without presenting model memory as current fact.
+
 - Default-disabled, administrator-governed weekday lunch/dinner automation with member opt-in,
   Shanghai-local scheduling, a 30-minute grace window, stable occurrences and at-most-once group
   delivery.
@@ -53,6 +60,9 @@
   and confirmed continuity anchor ID without extending raw-text retention.
 
 ### Changed
+
+- Writer model completions are capped at twelve so one timezone-selection round, independent
+  context 3/5 and Web 0–5 budgets, and a reserved final completion fit in one bounded loop.
 
 - Inbound persona replies may contain one text component followed by at most one enabled Lezhi
   sticker; scheduled food, control commands, tools, and other external writes remain single-effect.

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 from collections import deque
 from collections.abc import Iterator, Mapping, Sequence
@@ -64,4 +65,28 @@ class ScriptedModelClient:
         next_item = self.script.popleft()
         if isinstance(next_item, Exception):
             raise next_item
-        return next_item
+        if model_role is not ModelRole.WRITER:
+            return next_item
+        temporal_context_id = _temporal_context_id(messages)
+        if temporal_context_id is None:
+            return next_item
+        payload = dict(next_item.payload)
+        payload.setdefault("temporal_context_id", temporal_context_id)
+        if payload.get("kind") in {"reply", "reply_with_sticker"}:
+            payload.setdefault(
+                "freshness",
+                {"mode": "stable", "source_result_ids": []},
+            )
+        return StructuredModelResult(payload)
+
+
+def _temporal_context_id(messages: Sequence[ModelMessage]) -> str | None:
+    marker = "AUTHORITATIVE_TEMPORAL_CONTEXT="
+    for message in messages:
+        if message.role != "system" or marker not in message.content:
+            continue
+        encoded = message.content.split(marker, 1)[1].split("\n", 1)[0]
+        value = json.loads(encoded)
+        context_id = value.get("context_id") if isinstance(value, dict) else None
+        return context_id if isinstance(context_id, str) else None
+    return None
